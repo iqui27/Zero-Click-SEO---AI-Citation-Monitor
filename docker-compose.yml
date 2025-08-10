@@ -1,0 +1,69 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: seo
+      POSTGRES_PASSWORD: seo
+      POSTGRES_DB: seo_analyzer
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://seo:seo@db:5432/seo_analyzer
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: devsecret
+      PYTHONUNBUFFERED: "1"
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      SERPAPI_KEY: ${SERPAPI_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: bash -lc "celery -A celery_app.celery_app worker -Q runs -l info"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://seo:seo@db:5432/seo_analyzer
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: devsecret
+      PYTHONUNBUFFERED: "1"
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      SERPAPI_KEY: ${SERPAPI_KEY}
+    depends_on:
+      - db
+      - redis
+  frontend:
+    working_dir: /app
+    image: node:20-alpine
+    environment:
+      npm_config_update_notifier: "false"
+    command: sh -lc "rm -rf node_modules && npm cache clean --force && npm install --force && npx vite --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+volumes:
+  db_data:

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.venv/
+.env
+.env.*
+
+# Node
+node_modules/
+.dist/
+.next/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# IDEs
+.vscode/
+.idea/
