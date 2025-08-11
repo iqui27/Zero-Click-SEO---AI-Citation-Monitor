@@ -1,26 +1,81 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.pytest_cache/
-.venv/
-.env
-.env.*
-
-# Node
-node_modules/
-.dist/
-.next/
-build/
+## Root .gitignore — SEO Analyzer (monorepo FastAPI/Celery + React/Vite)
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Docker
+# Env files (keep example files tracked)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+.venv/
+venv/
+ENV/
+*.egg-info/
+.eggs/
+
+# Node/JS
+node_modules/
+# Also ignore accidental duplicates like "node_modules 2/", "node_modules 3/" anywhere
+node_modules*/
+# And nested duplicates (defensive)
+**/node_modules*/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp
+.pnp.js
+
+# Frontend builds (Vite/Next/etc.)
+dist/
+build/
+.next/
+out/
+storybook-static/
+
+# Test tooling / Playwright
+playwright-report/
+test-results/
+.playwright/
+.ms-playwright/
+
+# Docker & local services
+docker-compose.override.yml
+/.docker/
+/.compose/
 *.log
 
-# IDEs
+# Local databases / volumes (root-level only)
+/*.sqlite
+/*.sqlite3
+/*.db
+/*.db-journal
+/pgdata/
+/redis-data/
+/db-data/
+/data/
+
+# IDEs & editors
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Editor-specific caches
+.cursor/
