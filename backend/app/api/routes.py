@@ -37,6 +37,8 @@ from app.services.insights import generate_basic_insights
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.sql import case
+import os
+from pathlib import Path
 
 api_router = APIRouter()
 
@@ -274,6 +276,24 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
         )
 
     return created_runs
+
+
+@api_router.post("/projects/{project_id}/engines", response_model=EngineOut)
+def create_engine(project_id: str, payload: EngineCreate, db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    e = Engine(
+        project_id=project_id,
+        name=payload.name,
+        region=payload.region,
+        device=payload.device,
+        config_json=payload.config_json or {},
+    )
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    return EngineOut(id=e.id, project_id=project_id, name=e.name, region=e.region, device=e.device, config_json=e.config_json)
 
 
 @api_router.get("/runs/{run_id}/report", response_model=RunReport)
@@ -1121,12 +1141,89 @@ def setup_status() -> dict:
     has_env = os.path.exists(".env")
     keys = {
         "openai": bool(os.getenv("OPENAI_API_KEY")),
-        "gemini": bool(os.getenv("GOOGLE_API_KEY")),
+        # Aceita GOOGLE_API_KEY ou GEMINI_API_KEY
+        "gemini": bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")),
         "perplexity": bool(os.getenv("PERPLEXITY_API_KEY")),
         "serpapi": bool(os.getenv("SERPAPI_KEY")),
     }
     sandbox = not any(keys.values())
     return {"has_env": has_env, "keys": keys, "sandbox": sandbox}
+
+
+@api_router.post("/setup/save-keys")
+def save_keys(payload: dict = Body(...)) -> dict:
+    """Persiste chaves em .env e atualiza o ambiente do processo para efeito imediato."""
+    # Map de campos -> variáveis aceitas
+    key_map: dict[str, list[str]] = {
+        "openai_key": ["OPENAI_API_KEY"],
+        "gemini_key": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+        "perplexity_key": ["PERPLEXITY_API_KEY"],
+        "serpapi_key": ["SERPAPI_KEY"],
+    }
+
+    # Carregar .env existente (se houver)
+    env_path = Path(".env")
+    lines: list[str] = []
+    if env_path.exists():
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+
+    # Transformar em dict preservando ordem
+    existing: dict[str, str] = {}
+    order: list[str] = []
+    for ln in lines:
+        if not ln.strip() or ln.strip().startswith("#"):
+            order.append(ln)
+            continue
+        if "=" in ln:
+            k, v = ln.split("=", 1)
+            existing[k.strip()] = v
+            order.append(k.strip())
+        else:
+            order.append(ln)
+
+    # Atualizar valores
+    saved_vars: list[str] = []
+    for field, env_vars in key_map.items():
+        val = payload.get(field)
+        if val is None:
+            continue
+        for var in env_vars:
+            existing[var] = val
+            os.environ[var] = val
+            saved_vars.append(var)
+            if var not in order:
+                order.append(var)
+
+    # Reconstruir conteúdo preservando comentários e ordem
+    out_lines: list[str] = []
+    for it in order:
+        if not it:
+            out_lines.append("")
+        elif it.strip().startswith("#") or "=" not in it:
+            # linha original de comentário ou desconhecida
+            if it in existing:
+                out_lines.append(f"{it}={existing[it]}")
+            else:
+                out_lines.append(it)
+        else:
+            # era uma KEY
+            key = it.split("=", 1)[0].strip()
+            out_lines.append(f"{key}={existing.get(key, '')}")
+
+    # Acrescentar quaisquer chaves novas ausentes
+    for k, v in existing.items():
+        if not any(ln.startswith(f"{k}=") for ln in out_lines):
+            out_lines.append(f"{k}={v}")
+
+    try:
+        env_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha ao salvar .env: {str(e)[:200]}")
+
+    return {"ok": True, "saved": saved_vars}
 
 
 @api_router.post("/setup/test-connections")
