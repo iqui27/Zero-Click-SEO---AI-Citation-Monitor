@@ -58,6 +58,10 @@ export default function Runs() {
   const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('project_id') || '')
   const [subprojects, setSubprojects] = useState<Subproject[]>([])
   const [subprojectId, setSubprojectId] = useState<string>('')
+  const [dateFrom, setDateFrom] = useState<string>('')
+  const [dateTo, setDateTo] = useState<string>('')
+  const [page, setPage] = useState<number>(1)
+  const [pageSize, setPageSize] = useState<number>(50)
 
   const fetchRuns = async () => {
     const params: any = {}
@@ -65,6 +69,10 @@ export default function Runs() {
     if (subprojectId) params.subproject_id = subprojectId
     if (engineFilter) params.engine = engineFilter
     if (statusFilter) params.status = statusFilter
+    if (dateFrom) params.date_from = `${dateFrom}T00:00:00`
+    if (dateTo) params.date_to = `${dateTo}T23:59:59`
+    params.page = page
+    params.page_size = pageSize
     const res = await axios.get(`${API}/runs`, { params })
     setRuns(res.data)
   }
@@ -79,9 +87,9 @@ export default function Runs() {
     })
   }, [])
 
-  useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId])
-  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId])
-  useEffect(() => { if (projectId) fetchRuns() }, [projectId])
+  useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize])
+  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize])
+  useEffect(() => { if (projectId) { setPage(1); fetchRuns() } }, [projectId])
 
   useEffect(() => {
     if (!projectId) return
@@ -119,7 +127,27 @@ export default function Runs() {
           <option value="">Todos os status</option>
           {['queued','running','completed','failed'].map((s) => <option key={s} value={s}>{s}</option>)}
         </Select>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="opacity-70">De</span>
+          <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1) }} />
+          <span className="opacity-70">Até</span>
+          <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1) }} />
+        </div>
         <Input placeholder="Buscar por ID" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 text-sm">
+          <span className="opacity-70">Página</span>
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
+          <span className="px-2">{page}</span>
+          <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={runs.length < pageSize}>Próxima</Button>
+        </div>
+        <div className="flex items-center gap-1 text-sm ml-auto">
+          <span className="opacity-70">Itens por página</span>
+          <Select value={String(pageSize)} onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(1) }}>
+            {[25,50,100,150,200].map(n => <option key={n} value={n}>{n}</option>)}
+          </Select>
+        </div>
       </div>
       <div className="overflow-auto">
         <table className="min-w-full text-sm">
