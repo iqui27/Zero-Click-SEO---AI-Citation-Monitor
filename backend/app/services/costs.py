@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import math
 
 
 def _extract_tokens(usage: dict | None) -> tuple[Optional[int], Optional[int], Optional[int]]:
@@ -43,4 +44,20 @@ def compute_cost_usd(engine_config: dict | None, usage: dict | None) -> Optional
         total += (float(to) / 1000.0) * float(pricing.get("output_per_1k_usd"))
     return round(total, 6) if total > 0 else None
 
+
+def estimate_usage_from_text(text: str | None) -> dict | None:
+    """
+    Estima contagem de tokens a partir do tamanho do texto quando o provider não retorna usage.
+    Heurística simples: ~4 caracteres por token. Considera apenas saída (completion/output).
+    """
+    if not text:
+        return None
+    # Remover espaços extras para uma estimativa um pouco mais estável
+    compact = " ".join((text or "").split())
+    approx_tokens = max(1, math.ceil(len(compact) / 4))
+    return {
+        "input_tokens": 0,
+        "output_tokens": approx_tokens,
+        "total_tokens": approx_tokens,
+    }
 

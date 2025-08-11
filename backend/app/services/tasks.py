@@ -14,7 +14,7 @@ from app.models.models import Run, Evidence, Citation, Domain, Engine, RunEvent,
 from app.services.insights import generate_basic_insights
 from app.services.normalization import normalize_domain
 from app.services.engine_runner import run_engine
-from app.services.costs import compute_cost_usd
+from app.services.costs import compute_cost_usd, estimate_usage_from_text
 
 celery = Celery(
     "seo_monitor",
@@ -125,6 +125,8 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         try:
             meta = (last_parsed or {}).get("meta") if last_parsed else {}
             usage = (meta or {}).get("raw_usage") or (meta or {}).get("usage")
+            if not usage:
+                usage = estimate_usage_from_text((last_parsed or {}).get("text"))
             tokens_input = None
             tokens_output = None
             tokens_total = None
@@ -138,11 +140,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 tokens_total = int(tokens_input) + int(tokens_output or 0)
 
             citations_count = len(aggregated_extracted)
-            # dominios normalizados de todas as citações extraídas
             extracted_domains = [normalize_domain(c.get("url") or c.get("domain") or "") for c in aggregated_extracted]
             our_citations_count = sum(1 for d in extracted_domains if d and d in project_domains)
             unique_domains_count = len({d for d in extracted_domains if d})
-            # custo com base no pricing em engine.config_json
             cost_usd = compute_cost_usd(engine.config_json or {}, usage if isinstance(usage, dict) else None)
 
             run.tokens_input = int(tokens_input) if tokens_input is not None else None
@@ -159,7 +159,6 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
         run.status = "completed"
         run.finished_at = datetime.utcnow()
-        # gerar insights básicos
         try:
             for ins in generate_basic_insights(db, run):
                 db.add(ins)
