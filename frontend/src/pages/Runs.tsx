@@ -41,10 +41,11 @@ const TEMPLATES: { label: string; text: string }[] = [
 ]
 
 const ENGINE_OPTIONS = [
+  { label: 'OpenAI GPT-5 (web search)', name: 'openai', config_json: { model: 'gpt-5', web_search: true } },
+  { label: 'OpenAI GPT-4.1 (web search)', name: 'openai', config_json: { model: 'gpt-4.1', web_search: true } },
   { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro' } },
   { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
-  { label: 'OpenAI GPT-4o mini', name: 'openai', config_json: {} },
-  { label: 'Perplexity Sonar Pro', name: 'perplexity', config_json: { model: 'sonar-pro' } },
+  { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro' } },
   { label: 'Google SERP (SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true } },
 ]
 
@@ -62,6 +63,8 @@ export default function Runs() {
   const [dateTo, setDateTo] = useState<string>('')
   const [page, setPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(50)
+  const [orderBy, setOrderBy] = useState<string>('started_at')
+  const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc')
 
   const fetchRuns = async () => {
     const params: any = {}
@@ -73,6 +76,8 @@ export default function Runs() {
     if (dateTo) params.date_to = `${dateTo}T23:59:59`
     params.page = page
     params.page_size = pageSize
+    params.order_by = orderBy
+    params.order_dir = orderDir
     const res = await axios.get(`${API}/runs`, { params })
     setRuns(res.data)
   }
@@ -87,8 +92,8 @@ export default function Runs() {
     })
   }, [])
 
-  useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize])
-  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize])
+  useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
+  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
   useEffect(() => { if (projectId) { setPage(1); fetchRuns() } }, [projectId])
 
   useEffect(() => {
@@ -142,7 +147,21 @@ export default function Runs() {
           <span className="px-2">{page}</span>
           <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={runs.length < pageSize}>Próxima</Button>
         </div>
-        <div className="flex items-center gap-1 text-sm ml-auto">
+        <div className="flex items-center gap-2 text-sm ml-auto">
+          <span className="opacity-70">Ordenar por</span>
+          <Select value={orderBy} onChange={(e) => { setOrderBy(e.target.value); setPage(1) }}>
+            <option value="started_at">Início</option>
+            <option value="finished_at">Fim</option>
+            <option value="zcrs">ZCRS</option>
+            <option value="cost_usd">Custo</option>
+            <option value="tokens_total">Tokens</option>
+            <option value="status">Status</option>
+            <option value="engine">Engine</option>
+          </Select>
+          <Select value={orderDir} onChange={(e) => { setOrderDir(e.target.value as 'asc'|'desc'); setPage(1) }}>
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </Select>
           <span className="opacity-70">Itens por página</span>
           <Select value={String(pageSize)} onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(1) }}>
             {[25,50,100,150,200].map(n => <option key={n} value={n}>{n}</option>)}
