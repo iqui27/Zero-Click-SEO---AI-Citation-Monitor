@@ -317,6 +317,8 @@ def list_runs(
     date_to: str | None = None,
     page: int = 1,
     page_size: int = 100,
+    order_by: str | None = None,
+    order_dir: str | None = None,
 ):
     q = (
         db.query(
@@ -353,12 +355,25 @@ def list_runs(
     # paginação
     page = max(1, int(page or 1))
     page_size = max(10, min(int(page_size or 100), 200))
-    rows = (
-        q.order_by(Run.started_at.desc().nullslast(), Run.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    # ordenação dinâmica
+    sort_mapping = {
+        "started_at": Run.started_at,
+        "finished_at": Run.finished_at,
+        "cost_usd": Run.cost_usd,
+        "tokens_total": Run.tokens_total,
+        "zcrs": Run.zcrs,
+        "status": Run.status,
+        # atenção: ordenar por string agregadas exige repetir a expressão
+        "engine": Engine.name,
+    }
+    sort_col = sort_mapping.get((order_by or "started_at").lower(), Run.started_at)
+    dir_is_asc = (order_dir or "desc").lower() == "asc"
+    if dir_is_asc:
+        q = q.order_by(sort_col.asc().nullslast(), Run.id.asc())
+    else:
+        q = q.order_by(sort_col.desc().nullslast(), Run.id.desc())
+
+    rows = q.offset((page - 1) * page_size).limit(page_size).all()
     return [
         RunListItem(
             id=r.id,

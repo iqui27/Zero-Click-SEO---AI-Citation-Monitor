@@ -116,21 +116,6 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             _log(db, run.id, "extract", "ok")
 
         t1_all = time.perf_counter()
-            domain_norm = normalize_domain(c.get("url") or c.get("domain") or "")
-            is_ours = domain_norm in project_domains
-            db.add(
-                Citation(
-                    run_id=run.id,
-                    domain=domain_norm,
-                    url=c.get("url"),
-                    anchor=c.get("anchor"),
-                    position=c.get("position"),
-                    type=c.get("type"),
-                    is_ours=is_ours,
-                )
-            )
-        db.commit()
-        _log(db, run.id, "extract", "ok")
 
         # métricas finais
         try:
