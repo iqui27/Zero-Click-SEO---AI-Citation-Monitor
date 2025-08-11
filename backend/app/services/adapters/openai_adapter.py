@@ -17,7 +17,7 @@ class OpenAIAdapter:
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-5")
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
 
     async def fetch(self, input: FetchInput) -> RawEvidence:
@@ -31,9 +31,11 @@ class OpenAIAdapter:
             {"role": "system", "content": system},
             {"role": "user", "content": input["query"]},
         ]
-        resp = self.client.chat.completions.create(
+        resp = self.client.responses.create(
             model=self.model,
-            messages=messages,
+            input=messages,
+            tools=[{ "type": "web_search_preview" }],
+            max_output_tokens=1000,
         )
         return {"raw_url": None, "raw": resp.model_dump()}
 

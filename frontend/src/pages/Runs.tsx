@@ -41,10 +41,11 @@ const TEMPLATES: { label: string; text: string }[] = [
 ]
 
 const ENGINE_OPTIONS = [
+  { label: 'OpenAI GPT-5 (web search)', name: 'openai', config_json: { model: 'gpt-5', web_search: true } },
+  { label: 'OpenAI GPT-4.1 (web search)', name: 'openai', config_json: { model: 'gpt-4.1', web_search: true } },
   { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro' } },
   { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
-  { label: 'OpenAI GPT-4o mini', name: 'openai', config_json: {} },
-  { label: 'Perplexity Sonar Pro', name: 'perplexity', config_json: { model: 'sonar-pro' } },
+  { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro' } },
   { label: 'Google SERP (SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true } },
 ]
 
