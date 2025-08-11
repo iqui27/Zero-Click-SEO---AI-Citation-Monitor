@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import time
 from typing import Any
 
@@ -14,7 +15,7 @@ from app.models.models import Run, Evidence, Citation, Domain, Engine, RunEvent,
 from app.services.insights import generate_basic_insights
 from app.services.normalization import normalize_domain
 from app.services.engine_runner import run_engine
-from app.services.costs import compute_cost_usd, estimate_usage_from_text
+from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
 
 celery = Celery(
     "seo_monitor",
@@ -65,6 +66,41 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             "device": engine.device or "desktop",
             "config": engine.config_json or {},
         }
+
+        # Logar opções efetivas usadas no fetch para auditoria/debug
+        try:
+            cfg = (engine.config_json or {})
+
+            # Calcular web_search efetivo respeitando defaults por engine
+            def compute_effective_web_search(engine_name: str, cfg_dict: dict) -> bool:
+                name = (engine_name or "").lower()
+                if name == "gemini":
+                    # Gemini: default é True, a não ser que use_search === False
+                    if "use_search" in cfg_dict:
+                        return bool(cfg_dict.get("use_search"))
+                    if "web_search" in cfg_dict:
+                        return bool(cfg_dict.get("web_search"))
+                    return True
+                # Demais engines: considerar apenas web_search explícito (default False)
+                if "web_search" in cfg_dict:
+                    return bool(cfg_dict.get("web_search"))
+                return False
+
+            cfg_used = {
+                "model": cfg.get("model"),
+                # Mantém compatibilidade, mas agora reflete o default correto por engine
+                "web_search": compute_effective_web_search(engine.name, cfg),
+                # Reporta também o campo específico do Gemini quando presente
+                "use_search": cfg.get("use_search"),
+                "search_context_size": cfg.get("search_context_size"),
+                "reasoning_effort": cfg.get("reasoning_effort"),
+                "max_output_tokens": cfg.get("max_output_tokens"),
+                "web_search_force": cfg.get("web_search_force"),
+                "user_location": cfg.get("user_location"),
+            }
+            _log(db, run.id, "opts", "ok", json.dumps(cfg_used, ensure_ascii=False)[:4000])
+        except Exception:
+            pass
 
         total_cycles = max(1, int(cycles or 1))
         aggregated_extracted: list[dict[str, Any]] = []
@@ -130,10 +166,14 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             tokens_input = None
             tokens_output = None
             tokens_total = None
-            model_name = (meta or {}).get("model") or (meta or {}).get("engine") or (engine.config_json or {}).get("model")
+            # Definição do modelo usada (prioriza o configurado na Engine)
+            model_name = (engine.config_json or {}).get("model") or (meta or {}).get("model") or (meta or {}).get("engine") or engine.name
             if isinstance(usage, dict):
-                tokens_input = usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input")
-                tokens_output = usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output")
+                # Preferir tokens faturáveis calculados por costs._extract_tokens (com desconto de cache)
+                from app.services.costs import _extract_tokens as _extract_tokens_internal
+                ti, to, tt = _extract_tokens_internal(usage)
+                tokens_input = ti
+                tokens_output = to
                 if tokens_input is not None and tokens_output is not None:
                     tokens_total = int(tokens_input) + int(tokens_output)
             if tokens_total is None and tokens_input is not None:
@@ -143,7 +183,13 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             extracted_domains = [normalize_domain(c.get("url") or c.get("domain") or "") for c in aggregated_extracted]
             our_citations_count = sum(1 for d in extracted_domains if d and d in project_domains)
             unique_domains_count = len({d for d in extracted_domains if d})
-            cost_usd = compute_cost_usd(engine.config_json or {}, usage if isinstance(usage, dict) else None)
+            # Pricing: mesclar defaults por (engine, model) com config_json
+            base_cfg = dict(engine.config_json or {})
+            default_pricing_cfg = get_default_pricing(engine.name, str(model_name or "")) or {}
+            # merge raso: se usuário definiu pricing em config_json, mantém; senão aplica default
+            if default_pricing_cfg and not base_cfg.get("pricing"):
+                base_cfg.update(default_pricing_cfg)
+            cost_usd = compute_cost_usd(base_cfg, usage if isinstance(usage, dict) else None)
 
             run.tokens_input = int(tokens_input) if tokens_input is not None else None
             run.tokens_output = int(tokens_output) if tokens_output is not None else None

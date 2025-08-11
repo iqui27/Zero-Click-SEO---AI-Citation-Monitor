@@ -216,6 +216,7 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
             )
             .first()
         )
+        # Se não existir engine, cria com o config_json enviado
         if not engine:
             engine = Engine(
                 project_id=payload.project_id,
@@ -227,6 +228,22 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
             db.add(engine)
             db.commit()
             db.refresh(engine)
+        else:
+            # Se já existe, mas o config_json da requisição difere,
+            # criamos uma nova engine "variável" para esta run com o config novo.
+            req_cfg = engine_payload.config_json or None
+            cur_cfg = engine.config_json or None
+            if req_cfg is not None and req_cfg != cur_cfg:
+                engine = Engine(
+                    project_id=payload.project_id,
+                    name=engine_payload.name,
+                    region=engine_payload.region,
+                    device=engine_payload.device,
+                    config_json=req_cfg,
+                )
+                db.add(engine)
+                db.commit()
+                db.refresh(engine)
 
         run = Run(
             project_id=payload.project_id,
@@ -396,6 +413,98 @@ def list_runs(
 api_router.add_api_route("/runs", list_runs, methods=["GET"], response_model=list[RunListItem])
 
 
+@api_router.get("/runs/export.csv")
+def export_runs_csv(
+    db: Session = Depends(get_db),
+    project_id: str | None = None,
+    subproject_id: str | None = None,
+    engine: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    order_by: str | None = None,
+    order_dir: str | None = None,
+):
+    # Reuso da query do list_runs com mais colunas
+    q = (
+        db.query(
+            Run.id,
+            Engine.name.label("engine"),
+            Run.status,
+            Run.started_at,
+            Run.finished_at,
+            Run.model_name,
+            Run.cost_usd,
+            Run.tokens_input,
+            Run.tokens_output,
+            Run.tokens_total,
+            Run.latency_ms,
+        )
+        .join(Engine, Engine.id == Run.engine_id)
+    )
+    if project_id:
+        q = q.filter(Run.project_id == project_id)
+    if subproject_id:
+        q = q.filter(Run.subproject_id == subproject_id)
+    if engine:
+        q = q.filter(Engine.name == engine)
+    if status:
+        q = q.filter(Run.status == status)
+    if date_from:
+        q = q.filter(Run.started_at >= text(":df")).params(df=date_from)
+    if date_to:
+        q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
+
+    sort_mapping = {
+        "started_at": Run.started_at,
+        "finished_at": Run.finished_at,
+        "cost_usd": Run.cost_usd,
+        "tokens_total": Run.tokens_total,
+        "status": Run.status,
+        "engine": Engine.name,
+    }
+    sort_col = sort_mapping.get((order_by or "started_at").lower(), Run.started_at)
+    dir_is_asc = (order_dir or "desc").lower() == "asc"
+    if dir_is_asc:
+        q = q.order_by(sort_col.asc().nullslast(), Run.id.asc())
+    else:
+        q = q.order_by(sort_col.desc().nullslast(), Run.id.desc())
+
+    rows = q.all()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "id",
+        "engine",
+        "status",
+        "started_at",
+        "finished_at",
+        "model_name",
+        "tokens_input",
+        "tokens_output",
+        "tokens_total",
+        "latency_ms",
+        "cost_usd",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.id,
+            r.engine,
+            r.status,
+            r.started_at.isoformat() if r.started_at else "",
+            r.finished_at.isoformat() if r.finished_at else "",
+            r.model_name or "",
+            r.tokens_input if r.tokens_input is not None else "",
+            r.tokens_output if r.tokens_output is not None else "",
+            r.tokens_total if r.tokens_total is not None else "",
+            r.latency_ms if r.latency_ms is not None else "",
+            f"{float(r.cost_usd):.6f}" if r.cost_usd is not None else "",
+        ])
+    buf.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=runs_export.csv"}
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
+
+
 @api_router.get("/analytics/overview", response_model=OverviewAnalytics)
 def analytics_overview(db: Session = Depends(get_db)):
     total_runs = db.query(func.count(Run.id)).scalar() or 0
@@ -416,6 +525,9 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="Run não encontrado")
     engine = db.get(Engine, run.engine_id)
+    # recuperar prompt text
+    pv = db.get(PromptVersion, run.prompt_version_id)
+    prompt_text = pv.text if pv else None
     return RunDetailOut(
         id=run.id,
         project_id=run.project_id,
@@ -425,6 +537,7 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         started_at=run.started_at,
         finished_at=run.finished_at,
         subproject_id=run.subproject_id,
+        prompt_text=prompt_text,
         model_name=run.model_name,
         tokens_input=run.tokens_input,
         tokens_output=run.tokens_output,

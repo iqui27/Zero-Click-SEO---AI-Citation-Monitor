@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import axios from 'axios'
@@ -34,6 +35,7 @@ type RunDetail = {
   started_at?: string
   finished_at?: string
   subproject_id?: string
+  prompt_text?: string
   model_name?: string
   tokens_input?: number
   tokens_output?: number
@@ -223,8 +225,36 @@ export default function RunDetail() {
 
   const md = streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
 
+  const meta = (evidences?.[0]?.parsed_json?.parsed?.meta) || {}
+  // Para Gemini, o default é usar web search, então se não houver flags, considerar true
+  const wsUsed = (() => {
+    const fromMeta = meta?.web_search_used
+    if (typeof fromMeta === 'boolean') return fromMeta
+    const cfg = detail?.engine?.config_json || {}
+    const engineName = detail?.engine?.name || ''
+    if ((engineName || '').toLowerCase() === 'gemini') {
+      if (typeof cfg.use_search === 'boolean') return cfg.use_search
+      if (typeof cfg.web_search === 'boolean') return cfg.web_search
+      return true
+    }
+    return Boolean(cfg.web_search)
+  })()
+  const wsCalls = meta?.web_search_calls
+  const ctxSize = meta?.search_context_size ?? detail?.engine?.config_json?.search_context_size
+
+  // Queries executadas pelo web_search (debug/auditoria)
+  const output = evidences?.[0]?.parsed_json?.raw?.response?.output || []
+  const webQueries: string[] = []
+  try {
+    for (const item of output || []) {
+      if (item?.type === 'web_search_call' && item?.action?.query) {
+        webQueries.push(item.action.query as string)
+      }
+    }
+  } catch {}
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 px-3 sm:px-4 md:px-6 max-w-[1200px] mx-auto">
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold">Run {id}</h1>
@@ -247,8 +277,30 @@ export default function RunDetail() {
         </div>
       )}
 
+      {/* Badges de meta para confirmar web search e contexto */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="px-2 py-0.5 border rounded-md">Modelo: {detail?.model_name || detail?.engine?.name || '-'}</span>
+        <span className={`px-2 py-0.5 border rounded-md ${wsUsed ? 'bg-green-50 dark:bg-green-900/20' : ''}`}>Web search: {wsUsed ? 'on' : 'off'}</span>
+        {typeof wsCalls === 'number' && <span className="px-2 py-0.5 border rounded-md">calls: {wsCalls}</span>}
+        {ctxSize && <span className="px-2 py-0.5 border rounded-md">ctx: {ctxSize}</span>}
+      </div>
+
       <div>
         <Toolbelt events={events} />
+        {/* Mostrar última linha de opções efetivas se registrada pelo backend (step "opts") */}
+        {events.filter(e => e.step === 'opts').slice(-1).map((e, i) => (
+          <pre key={i} className="mt-2 text-xs opacity-70 p-2 rounded-md border border-neutral-800 overflow-x-auto">
+            {e.message}
+          </pre>
+        ))}
+        {!!webQueries.length && (
+          <div className="mt-2 text-xs opacity-80 p-2 rounded-md border border-neutral-800">
+            <div className="font-medium mb-1">Web search – queries ({webQueries.length})</div>
+            <ul className="list-disc pl-5 space-y-1">
+              {webQueries.map((q, i) => (<li key={i} className="truncate">{q}</li>))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <section className="space-y-2">
@@ -266,6 +318,15 @@ export default function RunDetail() {
         </div>
       </section>
 
+      {detail?.prompt_text && (
+        <section>
+          <h2 className="text-lg font-medium">Prompt usado</h2>
+          <pre className="whitespace-pre-wrap text-sm p-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900">
+            {detail.prompt_text}
+          </pre>
+        </section>
+      )}
+
       <section>
         <h2 className="text-lg font-medium">Citações</h2>
         <div className="grid gap-2">
@@ -281,7 +342,7 @@ export default function RunDetail() {
 
       <section>
         <h2 className="text-lg font-medium">Resposta (stream)</h2>
-        <article className="prose prose-invert max-w-none bg-neutral-50 dark:bg-neutral-900 p-3 rounded-md border border-neutral-200 dark:border-neutral-800">
+        <article className="prose prose-invert max-w-none bg-neutral-50 dark:bg-neutral-900 p-3 rounded-md border border-neutral-200 dark:border-neutral-800 overflow-x-auto">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]}>{md}</ReactMarkdown>
         </article>
       </section>

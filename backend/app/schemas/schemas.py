@@ -117,6 +117,8 @@ class RunDetailOut(BaseModel):
     started_at: Optional[datetime]
     finished_at: Optional[datetime]
     subproject_id: Optional[str] = None
+    # prompt
+    prompt_text: Optional[str] = None
     # observabilidade
     model_name: Optional[str] = None
     tokens_input: Optional[int] = None
