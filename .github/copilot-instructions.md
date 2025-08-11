@@ -1,57 +1,49 @@
-# Copilot instructions for Zero‑Click SEO — AI Citation Monitor
+## Copilot instructions for Zero‑Click SEO — AI Citation Monitor
 
-Purpose: make AI coding agents instantly productive in this repo by codifying architecture, workflows, conventions, and gotchas observed in the codebase.
+Purpose: make AI agents productive fast by encoding what matters in THIS repo: architecture, workflows, conventions, integrations, and workflows with Linear.
 
-## Big picture
-- Monorepo with three services via Docker Compose: FastAPI API + Celery worker + React/Vite frontend; infra uses Postgres and Redis.
-- Data flow: frontend calls API at /api (proxied by Vite) → backend persists with SQLAlchemy (Postgres) → long jobs go to Celery (Redis broker) → live UI subscribes to SSE at GET /api/runs/{id}/stream with polling fallback.
-- External adapters: OpenAI, Gemini, Perplexity for answers; SERP via Playwright (Chromium) with SerpAPI fallback.
+### Architecture (big picture)
+- Monorepo via Docker Compose with three services: FastAPI API, Celery worker, React/Vite frontend; Postgres + Redis.
+- Data flow: frontend calls /api → FastAPI persists via SQLAlchemy → long jobs → Celery (queue: runs) with Redis → UI streams via SSE GET /api/runs/{id}/stream (polling fallback).
+- External adapters: OpenAI, Gemini, Perplexity for answers; SERP scraping with Playwright (Chromium) and SerpAPI fallback.
 
-Key files
-- docker-compose.yml — services, env wiring, and the Celery queue name (runs).
-- backend/app/main.py — app startup, CORS, “light migrations”, router include.
-- backend/celery_app.py → app.services.tasks.celery — Celery app import point.
-- backend/Dockerfile — installs Python deps and Playwright + Chromium.
-- frontend/vite.config.ts — dev proxy for /api to backend:8000.
-- README.md and docs/README-UX.md — product/UX, endpoints, and ops hints.
+Key files to read
+- docker-compose.yml (service wiring, env, queues)
+- backend/app/main.py (startup, CORS, “light migrations”, router include)
+- backend/celery_app.py (Celery app bootstrap)
+- backend/requirements.txt (LLMs, Playwright)
+- frontend/vite.config.ts (dev proxy /api → :8000)
+- README.md and docs/README-UX.md (UX flows, endpoints, KPIs)
 
-## Run and debug locally
-- First run and rebuild
-```bash
-docker compose up -d --build
-```
-- Health and docs: API /health and /docs (Swagger). Frontend on http://localhost:5173.
-- Logs and restarts
-```bash
-docker compose logs -f backend|worker|frontend
-docker compose restart frontend  # fixes Vite/node_modules hiccups
-```
-- Minimal .env (Compose passes these through): PERPLEXITY_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, SERPAPI_KEY. Script: scripts/first-run.sh can scaffold a sandbox .env.
+### Local dev workflow
+- First run: docker compose up -d --build; API at :8000 (/docs), UI at :5173.
+- Logs: docker compose logs -f backend|worker|frontend; restart frontend if Vite deps glitch.
+- Env keys (in .env): PERPLEXITY_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY, SERPAPI_KEY. Optional helper: scripts/first-run.sh.
 
-## Conventions and patterns
-- API prefix is /api; add routes via app/api/... and aggregate under app.api.routes.api_router.
-- Pydantic v2 models (pydantic and pydantic-settings); prefer orjson for payloads.
-- DB: Base.metadata.create_all on startup; light “ALTER TABLE IF NOT EXISTS …” migrations are appended in main.py. There’s no Alembic.
-  - When adding columns, mirror the pattern in main.py by appending another statement to stmts.
-- Celery
-  - Worker starts with: celery -A celery_app.celery_app worker -Q runs -l info.
-  - Route long-running tasks to the runs queue (match the queue name).
-- Streaming
-  - Live timeline via SSE: GET /api/runs/{id}/stream; UI falls back to polling if 404.
-- Frontend
-  - React + Vite + Tailwind (darkMode: 'class'); TypeScript config is strict; /api proxied in dev.
+### Conventions you must follow
+- API: prefix /api, routers under backend/app/api, aggregate in app.api.routes.api_router.
+- Models: Pydantic v2; prefer orjson for JSON responses.
+- DB: No Alembic. Startup applies Base.metadata.create_all and a list of ALTER TABLE IF NOT EXISTS statements in main.py. When adding columns, append a new stmt there.
+- Celery: worker command is celery -A celery_app.celery_app worker -Q runs -l info. Route long tasks to queue runs.
+- Streaming: prefer emitting progress events to show in SSE timeline; UI auto-falls back to polling if SSE 404.
+- Frontend: React + Vite + Tailwind (dark mode via class). Dev proxy expects /api.
 
-## Integration points
-- LLMs: openai, google-generativeai, perplexity (see backend/requirements.txt); adapters normalize citations and metrics (AMR/DCR/ZCRS) per README.
-- SERP: Playwright headless Chromium is installed in the backend image; SerpAPI is a fallback.
-- KPIs/analytics endpoints are documented in README.md; export CSV is GET /api/analytics/subprojects/{id}/export.csv.
+### Integration specifics
+- LLMs: openai, google-generativeai, perplexity. Prefer GPT‑5 (Preview) where available; fall back to project-defaults if not.
+- SERP: Prefer Playwright (Chromium) bundled in the backend image; use SerpAPI only as fallback.
+- Analytics export: GET /api/analytics/subprojects/{id}/export.csv; KPIs AMR/DCR/ZCRS are computed per run.
 
-## Tips and gotchas
-- If frontend hot-reload or install issues occur, the container re-installs deps on boot; restart the frontend service.
-- Playwright’s first Chromium install takes time; check backend logs.
-- CORS is permissive for local dev; keep /api path to leverage Vite proxy in dev.
+### Linear workflow (mandatory)
+- All work must map to a Linear issue. Reference the Linear issue ID in PR titles and commit messages, e.g., "feat(analytics): CSV export for subproject (LIN-123)".
+- Create/triage tasks in Linear before coding; keep status in sync (In Progress → Review → Done).
+- For ambiguous scope, open a "Spike" issue in Linear with timebox notes; link results in PR description.
 
-## Common tasks (examples by reference)
-- New endpoint: add a router under app/api/... and include it in app.api.routes.api_router; models in app/schemas, persistence in app/models/app/db.
-- New async job: define a Celery task under app/services (use queue='runs' if routing) and invoke from API layer; stream progress via events to SSE endpoint if applicable.
-- New DB field: add SQLAlchemy model change and extend the main.py startup migration stmts.
+### Common tasks (patterns from code)
+- New endpoint: create router in backend/app/api/... and include in app.api.routes.api_router; define Pydantic schema in backend/app/schemas; persist via backend/app/models and backend/app/db; extend startup stmts if schema changes.
+- New async job: add Celery task in backend/app/services, route to queue runs, emit progress events for SSE.
+- Frontend call to backend: use fetch/axios against /api path to leverage Vite proxy; keep types in sync with backend schemas.
+
+### Gotchas
+- First Playwright Chromium install is slow; check backend logs.
+- If frontend hot-reload fails, docker compose restart frontend usually fixes it.
+- Keep /api prefix to avoid CORS and to use the dev proxy.
