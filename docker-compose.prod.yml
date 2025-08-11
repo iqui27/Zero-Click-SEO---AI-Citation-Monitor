@@ -1,0 +1,149 @@
+version: "3.9"
+
+# Production stack: Caddy reverse proxy, static frontend, API (uvicorn),
+# Celery worker, Postgres, Redis. Includes ports, volumes, networks & healthchecks.
+
+name: seo-analyzer-prod
+
+networks:
+  public_net:
+    driver: bridge
+  internal_net:
+    driver: bridge
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  redis_data:
+
+services:
+  reverse-proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - public_net
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Static frontend (serve built artefacts from ./frontend/dist)
+  frontend:
+    image: nginx:alpine
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./deploy/nginx-default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Backend API (uvicorn) — built from existing backend Dockerfile
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      # Keep current credentials (adjust as needed)
+      - DATABASE_URL=postgresql+psycopg2://seo:seo@postgres:5432/seo_analyzer
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    # If your Dockerfile already starts uvicorn, you can remove the command below
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport sys,urllib.request\ntry:\n  r=urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)\n  sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n  sys.exit(1)\nPY"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # Celery worker (same image as API for now)
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://seo:seo@postgres:5432/seo_analyzer
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    command: bash -lc "celery -A celery_app.celery_app worker -Q runs -l info"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - internal_net
+    # Healthcheck options:
+    # 1) Celery ping (requires event perms, may fail depending on config)
+    # healthcheck:
+    #   test: ["CMD-SHELL", "celery -A celery_app.celery_app inspect ping -d celery@$HOSTNAME || exit 1"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=seo_analyzer
+      - POSTGRES_USER=seo
+      - POSTGRES_PASSWORD=seo
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seo -d seo_analyzer -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+

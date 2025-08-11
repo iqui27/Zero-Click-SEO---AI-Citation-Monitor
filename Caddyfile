@@ -1,0 +1,30 @@
+# Caddyfile for production
+# Domain: zero-click.iqui27.codes
+# TLS: Automatic via Let's Encrypt (HTTP-01)
+
+zero-click.iqui27.codes {
+  encode gzip zstd
+  tls {
+    # Optionally set an email for ACME account
+    # email you@example.com
+  }
+
+  @api path /api* /docs* /openapi.json
+  handle @api {
+    reverse_proxy api:8000
+  }
+
+  # Everything else to static frontend
+  handle {
+    reverse_proxy frontend:8080
+  }
+
+  # Security headers (optional hardening)
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+}
+
