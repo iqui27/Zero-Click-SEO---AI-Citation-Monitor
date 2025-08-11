@@ -67,19 +67,23 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         }
 
         total_cycles = max(1, int(cycles or 1))
-        aggregated_extracted = []
+        aggregated_extracted: list[dict[str, Any]] = []
+        project_domains = {normalize_domain(d.domain) for d in db.query(Domain).filter(Domain.project_id == run.project_id).all()}
         t0_all = time.perf_counter()
+        last_raw: dict[str, Any] | None = None
+        last_parsed: dict[str, Any] | None = None
         for i in range(total_cycles):
             _log(db, run.id, "fetch", "started", f"Engine: {engine.name} (cycle {i+1}/{total_cycles})")
-            t0 = time.perf_counter()
             raw, parsed, extracted = run_engine(engine.name, fetch_input)
-            t1 = time.perf_counter()
             _log(db, run.id, "fetch", "ok")
 
-        # stream simples do texto (chunk)
-        if parsed.get("text"):
-            _log(db, run.id, "chunk", "ok", (parsed.get("text") or "")[:4000])
+            last_raw, last_parsed = raw, parsed
 
+            # stream simples do texto (chunk)
+            if parsed.get("text"):
+                _log(db, run.id, "chunk", "ok", (parsed.get("text") or "")[:4000])
+
+            # persist evidence
             _log(db, run.id, "persist", "started")
             ev = Evidence(
                 run_id=run.id,
@@ -95,8 +99,8 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             db.commit()
             _log(db, run.id, "persist", "ok")
 
+            # extract citations
             _log(db, run.id, "extract", "started")
-            project_domains = {normalize_domain(d.domain) for d in db.query(Domain).filter(Domain.project_id == run.project_id).all()}
             for c in extracted:
                 aggregated_extracted.append(c)
                 domain_norm = normalize_domain(c.get("url") or c.get("domain") or "")
@@ -119,11 +123,12 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
         # métricas finais
         try:
-            usage = ((parsed.get("meta") or {}).get("raw_usage")) or ((parsed.get("meta") or {}).get("usage"))
+            meta = (last_parsed or {}).get("meta") if last_parsed else {}
+            usage = (meta or {}).get("raw_usage") or (meta or {}).get("usage")
             tokens_input = None
             tokens_output = None
             tokens_total = None
-            model_name = (parsed.get("meta") or {}).get("model") or (parsed.get("meta") or {}).get("engine")
+            model_name = (meta or {}).get("model") or (meta or {}).get("engine") or (engine.config_json or {}).get("model")
             if isinstance(usage, dict):
                 tokens_input = usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input")
                 tokens_output = usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output")
@@ -133,14 +138,10 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 tokens_total = int(tokens_input) + int(tokens_output or 0)
 
             citations_count = len(aggregated_extracted)
-            # project domains
-            our_domains = project_domains
-            our_citations_count = sum(1 for c in extracted if (c.get("domain") or "") in our_domains)
-            domains = set()
-            for c in extracted:
-                if c.get("domain"):
-                    domains.add(c.get("domain"))
-            unique_domains_count = len(domains)
+            # dominios normalizados de todas as citações extraídas
+            extracted_domains = [normalize_domain(c.get("url") or c.get("domain") or "") for c in aggregated_extracted]
+            our_citations_count = sum(1 for d in extracted_domains if d and d in project_domains)
+            unique_domains_count = len({d for d in extracted_domains if d})
             # custo com base no pricing em engine.config_json
             cost_usd = compute_cost_usd(engine.config_json or {}, usage if isinstance(usage, dict) else None)
 
