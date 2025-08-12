@@ -20,6 +20,9 @@ export default function TemplatesPage() {
   const [mode, setMode] = useState<Mode>(Mode.View)
   const [form, setForm] = useState<Partial<Template>>({ category: '', name: '', text: '' })
   const [loading, setLoading] = useState(false)
+  const [customCats, setCustomCats] = useState<string[]>([])
+  const [showNewCat, setShowNewCat] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
 
   const refresh = async () => {
     if (!projectId) return
@@ -39,6 +42,7 @@ export default function TemplatesPage() {
   }, [])
 
   const categories = useMemo(() => Array.from(new Set(items.map(i => i.category))).sort(), [items])
+  const catOptions = useMemo(() => Array.from(new Set([...(categories||[]), ...(customCats||[])])).filter(Boolean).sort(), [categories, customCats])
 
   const save = async () => {
     if (!projectId) return toast.error('Selecione um projeto')
@@ -103,7 +107,28 @@ export default function TemplatesPage() {
           <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-[min(780px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800">
             <h2 className="text-lg font-semibold">Novo Template</h2>
             <div className="grid gap-2">
-              <Input placeholder="Categoria" value={form.category || ''} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+              <div className="grid gap-1">
+                <div className="flex items-center gap-2">
+                  <Select value={form.category || ''} onChange={(e)=>setForm({ ...form, category: e.target.value })} className="min-w-[240px]">
+                    <option value="">Selecione uma categoria</option>
+                    {catOptions.map(c => (<option key={c} value={c}>{c}</option>))}
+                  </Select>
+                  <Button variant="outline" size="sm" onClick={()=>setShowNewCat(v=>!v)}>{showNewCat ? 'Cancelar' : '+ Nova categoria'}</Button>
+                </div>
+                {showNewCat && (
+                  <div className="flex items-center gap-2">
+                    <Input placeholder="Nome da categoria" value={newCatName} onChange={(e)=>setNewCatName(e.target.value)} />
+                    <Button size="sm" onClick={()=>{
+                      const name = newCatName.trim()
+                      if (!name) return
+                      if (!catOptions.includes(name)) setCustomCats(prev => [...prev, name])
+                      setForm(f => ({ ...f, category: name }))
+                      setNewCatName('')
+                      setShowNewCat(false)
+                    }}>Adicionar</Button>
+                  </div>
+                )}
+              </div>
               <Input placeholder="Nome" value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               <textarea placeholder="Texto do prompt" value={form.text || ''} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={8} className="border rounded-md px-2 py-2 bg-transparent"></textarea>
               <div className="flex gap-2 justify-end">

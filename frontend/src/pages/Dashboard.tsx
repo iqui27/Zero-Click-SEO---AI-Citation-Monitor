@@ -19,7 +19,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     axios.get(`${API}/analytics/overview`).then((r) => setOverview(r.data))
-    const sp = localStorage.getItem('subproject_focus')
+    const sp = localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus')
     if (sp) {
       axios.get(`${API}/analytics/subprojects/${sp}/series`).then(r => setSeries(r.data))
       axios.get(`${API}/analytics/subprojects/${sp}/top-domains`).then(r => setTopDomains(r.data))
@@ -36,6 +36,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
+      <ActiveContextBar />
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-semibold">Analytics</h1>
         <Button variant="secondary" className="ml-auto" onClick={() => window.location.href = '/runs'}>Nova Run</Button>
@@ -126,6 +127,24 @@ export default function Dashboard() {
           </div>
         ) : <Skeleton className="h-[260px]" />}
       </div>
+    </div>
+  )
+}
+
+function ActiveContextBar() {
+  const [project, setProject] = useState<string>('')
+  const [theme, setTheme] = useState<string>('')
+  useEffect(() => {
+    setProject(localStorage.getItem('project_id') || '')
+    setTheme(localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || '')
+  }, [])
+  if (!project && !theme) return null
+  return (
+    <div className="text-xs px-2 py-1 border rounded-md flex items-center gap-2">
+      {project && <span>Projeto: <span className="font-medium">{project}</span></span>}
+      {theme && <span>Tema: <span className="font-medium">{theme}</span></span>}
+      <a href="/settings" className="ml-auto underline">alterar</a>
+      <button className="underline" onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}>limpar</button>
     </div>
   )
 }

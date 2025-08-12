@@ -84,13 +84,15 @@ export default function SubprojectsPage() {
   }
 
   const setFocus = (id: string) => {
+    localStorage.setItem('theme_focus', id)
     localStorage.setItem('subproject_focus', id)
-    alert('Foco definido para o dashboard.')
+    alert('Foco do tema definido para o dashboard.')
   }
 
   return (
     <div className="space-y-3">
-      <h1 className="text-2xl font-semibold">Subprojetos</h1>
+      <ActiveContextBar />
+      <h1 className="text-2xl font-semibold">Temas</h1>
       <div className="flex flex-wrap gap-2 items-center">
         <Select value={projectId} onChange={(e) => { setProjectId(e.target.value); localStorage.setItem('project_id', e.target.value); refresh() }}>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
@@ -98,20 +100,20 @@ export default function SubprojectsPage() {
         <Button variant="secondary" onClick={refresh}>Atualizar</Button>
         <Button variant="outline" onClick={createQuickProject}>Criar rápido</Button>
         <div className="ml-auto" />
-        <Button onClick={() => setShowCreate(true)}>+ Novo Subprojeto</Button>
+        <Button onClick={() => setShowCreate(true)}>+ Novo Tema</Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         {items.map(sp => (
           <SubprojectCard key={sp.id} sp={sp} kpi={kpis[sp.id]} onFocus={setFocus} />
         ))}
-        {!items.length && <div className="text-sm opacity-70">Nenhum subprojeto.</div>}
+        {!items.length && <div className="text-sm opacity-70">Nenhum tema.</div>}
       </div>
 
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 grid place-items-center p-4">
           <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-[min(560px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800">
-            <h2 className="text-lg font-semibold">Novo Subprojeto</h2>
+            <h2 className="text-lg font-semibold">Novo Tema</h2>
             <Input placeholder="Nome" value={name} onChange={(e) => setName(e.target.value)} />
             <Input placeholder="Descrição (opcional)" value={desc} onChange={(e) => setDesc(e.target.value)} />
             <div className="flex justify-end gap-2">
@@ -121,6 +123,24 @@ export default function SubprojectsPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function ActiveContextBar() {
+  const [project, setProject] = useState<string>('')
+  const [theme, setTheme] = useState<string>('')
+  useEffect(() => {
+    setProject(localStorage.getItem('project_id') || '')
+    setTheme(localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || '')
+  }, [])
+  if (!project && !theme) return null
+  return (
+    <div className="text-xs px-2 py-1 border rounded-md flex items-center gap-2">
+      {project && <span>Projeto: <span className="font-medium">{project}</span></span>}
+      {theme && <span>Tema: <span className="font-medium">{theme}</span></span>}
+      <a href="/settings" className="ml-auto underline">alterar</a>
+      <button className="underline" onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}>limpar</button>
     </div>
   )
 }
@@ -139,7 +159,7 @@ function SubprojectCard({ sp, kpi, onFocus }: { sp: Subproject; kpi?: KPIs; onFo
   const zcrs = Math.round((kpi?.zcrs_avg || 0))
   const totalRuns = kpi?.total_runs || 0
   return (
-    <div className="border rounded-xl p-4 space-y-3">
+    <div className="border rounded-xl p-4 space-y-3 bg-white dark:bg-neutral-900 shadow-sm">
       <div className="flex items-start gap-3">
         <div className="text-lg font-semibold flex-1">{sp.name}</div>
         <div className="flex items-center gap-1">

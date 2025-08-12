@@ -37,6 +37,13 @@ from app.services.insights import generate_basic_insights
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.sql import case
+from typing import Any, Dict, List
+
+# LLM (OpenAI) para geração de insights agregados
+try:
+    from openai import OpenAI  # type: ignore
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
 import os
 from pathlib import Path
 
@@ -1135,6 +1142,472 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
     headers = {"Content-Disposition": f"attachment; filename=subproject_{subproject_id}.csv"}
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
+
+@api_router.post("/analytics/subprojects/{subproject_id}/generate-insights")
+def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_db)):
+    """Gera um insight agregado do subprojeto usando um LLM (quando disponível).
+
+    Retorna um payload com seções estruturadas: resumo, recomendações, ações, tópicos, keywords e wordcloud.
+    """
+    # Coleta de dados básicos do subprojeto
+    runs = (
+        db.query(
+            Run.id,
+            Run.status,
+            Run.started_at,
+            Run.finished_at,
+            Run.zcrs,
+            Run.cost_usd,
+            Run.tokens_total,
+            Run.amr_flag,
+            Run.dcr_flag,
+            Run.model_name,
+            Engine.name.label("engine"),
+            Engine.config_json.label("engine_config"),
+            Run.project_id,
+            PromptVersion.text.label("prompt_text"),
+        )
+        .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .filter(Run.subproject_id == subproject_id)
+        .order_by(Run.started_at.desc().nullslast())
+        .limit(200)
+        .all()
+    )
+    citations = (
+        db.query(Citation.run_id, Citation.domain, Citation.url)
+        .join(Run, Run.id == Citation.run_id)
+        .filter(Run.subproject_id == subproject_id)
+        .limit(1000)
+        .all()
+    )
+
+    # Anexar evidências (resposta e links) e opts efetivos por run
+    run_ids = [r.id for r in runs]
+    ev_map: Dict[str, Dict[str, Any]] = {}
+    if run_ids:
+        ev_rows = (
+            db.query(Evidence)
+            .filter(Evidence.run_id.in_(run_ids))
+            .order_by(Evidence.id.desc())
+            .all()
+        )
+        for ev in ev_rows:
+            if ev.run_id not in ev_map:
+                ev_map[ev.run_id] = ev.parsed_json or {}
+    opts_map: Dict[str, Any] = {}
+    if run_ids:
+        evt_rows = (
+            db.query(RunEvent)
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.step == "opts")
+            .order_by(RunEvent.created_at.desc())
+            .all()
+        )
+        import json as _json
+        for e in evt_rows:
+            if e.run_id in opts_map:
+                continue
+            try:
+                opts_map[e.run_id] = _json.loads(e.message or "{}")
+            except Exception:
+                opts_map[e.run_id] = {"raw": (e.message or "")[:500]}
+
+    def _subset_cfg(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not isinstance(cfg, dict):
+            return {}
+        keys = [
+            "model",
+            "web_search",
+            "use_search",
+            "search_context_size",
+            "reasoning_effort",
+            "max_output_tokens",
+            "user_location",
+            "web_search_force",
+        ]
+        return {k: cfg.get(k) for k in keys if k in cfg}
+
+    def _trim(s: Any, n: int) -> Any:
+        if isinstance(s, str) and len(s) > n:
+            return s[:n] + "…"
+        return s
+
+    # Estruturar contexto enxuto para LLM
+    runs_ctx: List[Dict[str, Any]] = []
+    for r in runs:
+        rid = r.id
+        ev = ev_map.get(rid) or {}
+        parsed = ev.get("parsed") or {}
+        meta = parsed.get("meta") or {}
+        text = parsed.get("text") or ""
+        links = parsed.get("links") or []
+        # compor config efetiva (engine.config + opts logados)
+        engine_cfg = _subset_cfg(r.engine_config or {})
+        if rid in opts_map and isinstance(opts_map[rid], dict):
+            engine_cfg.update(_subset_cfg(opts_map[rid]))
+        runs_ctx.append({
+            "id": rid,
+            "status": r.status,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "zcrs": float(r.zcrs or 0),
+            "cost_usd": float(r.cost_usd or 0),
+            "tokens_total": int(r.tokens_total or 0),
+            "engine": r.engine,
+            "model": (r.model_name or meta.get("model") or meta.get("engine") or r.engine),
+            "prompt": _trim(r.prompt_text or "", 3000),
+            "response": _trim(text or "", 6000),
+            "links": links,
+            "amr_flag": bool(r.amr_flag) if r.amr_flag is not None else None,
+            "dcr_flag": bool(r.dcr_flag) if r.dcr_flag is not None else None,
+            "project_id": r.project_id,
+            "engine_config": engine_cfg,
+        })
+
+    cits_ctx: List[Dict[str, Any]] = [
+        {"run_id": rid, "domain": dom or "", "url": url or ""} for (rid, dom, url) in citations
+    ]
+
+    # Prompt de sistema para orientar estilo e seções
+    system = (
+        "Você é um analista sênior de SEO para Zero‑Click/AI Overviews. "
+        "Escreva um insight executivo e prático, sem perguntas. Em português. "
+        "Respeite a estrutura de saída JSON pedida."
+    )
+    user_prompt = {
+        "task": "Gerar insights agregados sobre Zero‑Click para um subprojeto",
+        "requirements": [
+            "Resumo executivo (3-5 bullets)",
+            "Principais recomendações priorizadas (impacto x esforço)",
+            "Ações rápidas (quick wins)",
+            "Tópicos recorrentes e lacunas (com base nas respostas/citações)",
+            "Palavras‑chave sugeridas (lista)",
+            "Esboço de nuvem de palavras (wordcloud: {token, weight})",
+        ],
+        "data": {
+            "runs": runs_ctx,
+            "citations": cits_ctx,
+        },
+        "output_schema": {
+            "summary": ["string"],
+            "recommendations": [{"title": "string", "impact": "low|medium|high", "effort": "low|medium|high"}],
+            "quick_wins": ["string"],
+            "topics": ["string"],
+            "keywords": ["string"],
+            "wordcloud": [{"token": "string", "weight": "number"}]
+        }
+    }
+
+    # Fallback caso não haja chave/SDK: retorna um esqueleto com heurísticas leves
+    if OpenAI is None or not os.getenv("OPENAI_API_KEY"):
+        # Heurística simples: top domínios e palavras básicas a partir de URLs
+        from collections import Counter
+        doms = [d or "" for (_rid, d, _u) in citations]
+        top = Counter(doms).most_common(8)
+        wc = [{"token": k[:24], "weight": int(v)} for k, v in top if k]
+        return {
+            "summary": [
+                "Resumo indisponível (LLM não configurado).",
+                f"Runs consideradas: {len(runs_ctx)}; Citações: {len(cits_ctx)}.",
+            ],
+            "recommendations": [],
+            "quick_wins": ["Configure a chave OPENAI_API_KEY para insights completos."],
+            "topics": [],
+            "keywords": [],
+            "wordcloud": wc,
+        }
+
+    # Chamada ao LLM (Responses API) com um formato enxuto
+    try:
+        import json
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))  # type: ignore
+        schema = {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "summary": {"type": "array", "items": {"type": "string"}},
+                "recommendations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "impact": {"type": "string"},
+                            "effort": {"type": "string"}
+                        },
+                        "required": ["title"],
+                    }
+                },
+                "quick_wins": {"type": "array", "items": {"type": "string"}},
+                "topics": {"type": "array", "items": {"type": "string"}},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "wordcloud": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "token": {"type": "string"},
+                            "weight": {"type": "number"}
+                        },
+                        "required": ["token", "weight"]
+                    }
+                }
+            },
+            "required": ["summary", "recommendations", "quick_wins", "topics", "keywords", "wordcloud"]
+        }
+        instructions = (
+            system
+            + "\n\nIMPORTANTE: Responda apenas com JSON válido (sem markdown e sem ```), obedecendo ao schema a seguir. "
+            + json.dumps(schema, ensure_ascii=False)
+        )
+        resp = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-5"),
+            instructions=instructions,
+            input=(
+                "Analise os dados a seguir e gere APENAS o JSON final.\nDADOS:\n"
+                + json.dumps(user_prompt, ensure_ascii=False)
+            ),
+            max_output_tokens=1024,
+            reasoning={"effort": "low"},
+        )
+        text = getattr(resp, "output_text", None) or ""
+        if not text:
+            # Tentar extrair de output[].content[]
+            try:
+                d = resp.model_dump()  # type: ignore[attr-defined]
+                out = d.get("output") or []
+                parts: List[str] = []
+                for it in out:
+                    if isinstance(it, dict) and it.get("type") == "message":
+                        for c in (it.get("content") or []):
+                            t = c.get("text") or c.get("content")
+                            if isinstance(t, str):
+                                parts.append(t)
+                if parts:
+                    text = "\n".join(parts)
+            except Exception:
+                text = ""
+        # Parsing robusto com saneamento
+        import re as _re
+        def _try_parse(txt: str):
+            return json.loads(txt)
+        def _sanitize(txt: str) -> str:
+            s = (txt or "").strip()
+            # remover fences ```json ... ```
+            if s.startswith("```"):
+                s = s[s.find("\n") + 1 :] if "\n" in s else s.replace("```", "")
+                s = s.replace("```", "")
+            # recortar bloco JSON principal
+            if '{' in s and '}' in s:
+                start = s.find('{')
+                end = s.rfind('}')
+                if end > start:
+                    s = s[start:end+1]
+            # normalizar aspas “ ” ‘ ’ -> "
+            s = s.replace('“', '"').replace('”', '"').replace('’', '"').replace("‘", '"')
+            # normalizar NaN/Infinity
+            s = s.replace('NaN', '0').replace('Infinity', '0').replace('-Infinity', '0')
+            # remover vírgulas à direita antes de } ou ]
+            s = _re.sub(r",\s*([}\]])", r"\1", s)
+            # remover comentários estilo //...
+            s = _re.sub(r"^\s*//.*$", "", s, flags=_re.MULTILINE)
+            return s
+        def _parse_markdown(txt: str) -> dict:
+            # Extrair seções por headings e listas
+            s = (txt or "").replace('\r', '')
+            lines = s.split('\n')
+            current = None
+            buckets: dict[str, list[str]] = {"summary": [], "recommendations": [], "quick_wins": [], "topics": [], "keywords": [], "wordcloud": []}
+            def _norm(h: str) -> str:
+                h = h.lower().strip()
+                if 'resumo' in h: return 'summary'
+                if 'recomenda' in h: return 'recommendations'
+                if 'quick' in h or 'ações rápidas' in h: return 'quick_wins'
+                if 'tópico' in h or 'lacuna' in h: return 'topics'
+                if 'palavras' in h: return 'keywords'
+                if 'wordcloud' in h or 'nuvem' in h: return 'wordcloud'
+                return ''
+            for ln in lines:
+                if ln.lstrip().startswith('#'):
+                    header = ln.lstrip('#').strip()
+                    current = _norm(header)
+                    continue
+                if current:
+                    stripped = ln.strip()
+                    if stripped.startswith(('-', '*')) or _re.match(r"^\d+\.\s", stripped):
+                        item = stripped.lstrip('-* ').strip()
+                        buckets[current].append(item)
+            # Construir estrutura destino
+            import math
+            out: dict[str, any] = {
+                "summary": buckets["summary"],
+                "recommendations": [],
+                "quick_wins": buckets["quick_wins"],
+                "topics": buckets["topics"],
+                "keywords": buckets["keywords"],
+                "wordcloud": []
+            }
+            # Recommendations: tentar extrair impacto/esforço
+            for itm in buckets['recommendations']:
+                impact = None
+                effort = None
+                m1 = _re.search(r"impacto\s*[:=-]\s*([a-zA-Z]+)", itm, flags=_re.IGNORECASE)
+                m2 = _re.search(r"esforç[o|o]\s*[:=-]\s*([a-zA-Z]+)", itm, flags=_re.IGNORECASE)
+                if m1: impact = m1.group(1).lower()
+                if m2: effort = m2.group(1).lower()
+                title = _re.sub(r"\(.*?\)|\[.*?\]|impacto.*$|esforço.*$", "", itm, flags=_re.IGNORECASE).strip(" -–—;:")
+                out['recommendations'].append({"title": title or itm, **({"impact": impact} if impact else {}), **({"effort": effort} if effort else {})})
+            # Wordcloud: token: peso | token (peso)
+            for itm in buckets['wordcloud']:
+                m = _re.search(r"^(.+?)[\s:（\(]+([0-9]+(?:\.[0-9]+)?)\)?$", itm.strip())
+                if m:
+                    token = m.group(1).strip().strip('-:').strip()
+                    try:
+                        weight = float(m.group(2))
+                    except Exception:
+                        weight = 1.0
+                else:
+                    token, weight = itm.strip(), 1.0
+                if token:
+                    out['wordcloud'].append({"token": token[:48], "weight": weight})
+            return out
+        data: dict = {}
+        try:
+            data = _try_parse(text)
+        except Exception:
+            s1 = _sanitize(text)
+            try:
+                data = _try_parse(s1)
+            except Exception:
+                # segunda passagem: remover quebras de linha entre chaves e vírgulas sobrando
+                s2 = _re.sub(r",\s*(\n|\r)+\s*([}\]])", r"\2", s1)
+                try:
+                    data = _try_parse(s2)
+                except Exception:
+                    # fallback: parser de markdown estruturado
+                    data = _parse_markdown(text)
+        # Sanitizar campos esperados e enriquecer com heurísticas se vier vazio
+        payload = {
+            "summary": list(data.get("summary", []))[:10],
+            "recommendations": data.get("recommendations", [])[:10],
+            "quick_wins": list(data.get("quick_wins", []))[:10],
+            "topics": list(data.get("topics", []))[:20],
+            "keywords": list(data.get("keywords", []))[:30],
+            "wordcloud": data.get("wordcloud", [])[:40],
+        }
+
+        def enrich_if_empty(p: Dict[str, Any]) -> Dict[str, Any]:
+            from collections import Counter
+            import re
+            # agregados básicos
+            total_runs = len(runs_ctx)
+            avg_zcrs = round(sum(r.get("zcrs", 0) for r in runs_ctx) / total_runs, 1) if total_runs else 0.0
+            total_cost = round(sum(r.get("cost_usd", 0.0) for r in runs_ctx), 4)
+            total_tokens = int(sum(r.get("tokens_total", 0) for r in runs_ctx))
+            amr_vals = [1 for r in runs_ctx if r.get("amr_flag") is True]
+            dcr_vals = [1 for r in runs_ctx if r.get("dcr_flag") is True]
+            amr_avg = round(len(amr_vals) / total_runs, 2) if total_runs else 0.0
+            dcr_avg = round(len(dcr_vals) / total_runs, 2) if total_runs else 0.0
+
+            # domains do projeto para separar concorrentes
+            project_id = None
+            for r in runs_ctx:
+                if r.get("project_id"):
+                    project_id = r["project_id"]
+                    break
+            project_domains = set()
+            if project_id:
+                for d in db.query(Domain).filter(Domain.project_id == project_id).all():
+                    if d.domain:
+                        project_domains.add(d.domain)
+
+            # top domains e tokens
+            dom_counter = Counter()
+            token_counter = Counter()
+            url_re = re.compile(r"https?://([^/]+)(/[^\s]*)?", re.IGNORECASE)
+            word_re = re.compile(r"[A-Za-zÀ-ÿ0-9]{3,}")
+            stop = set([
+                "www","com","br","net","org","de","pt","http","https","html","htm","php","amp","blog","news","www2",
+                "para","como","que","qual","mais","melhor","sobre","isso","isto","essa","esse","aquele","uma","um",
+                "de","da","do","das","dos","e","a","o","os","as","em","no","na","nas","nos","por","com","ao","à","às","aos"
+            ])
+            for _rid, dom, url in citations:
+                host = (dom or "").lower()
+                if host:
+                    dom_counter[host] += 1
+                    for part in host.replace(".", " ").split():
+                        w = part.strip()
+                        if w and w not in stop and word_re.fullmatch(w):
+                            token_counter[w] += 1
+                u = (url or "")
+                m = url_re.match(u)
+                if m:
+                    path = (m.group(2) or "").lower()
+                    for w in word_re.findall(path):
+                        if w not in stop:
+                            token_counter[w] += 1
+
+            top_tokens = [t for t, _c in token_counter.most_common(30)]
+            top_wc = [{"token": t, "weight": float(c)} for t, c in token_counter.most_common(20)]
+            top_competitor = None
+            for d, _c in dom_counter.most_common():
+                if d not in project_domains:
+                    top_competitor = d
+                    break
+
+            # preencher se vazio
+            if not p.get("summary"):
+                p["summary"] = [
+                    f"Runs analisadas: {total_runs}",
+                    f"ZCRS médio: {avg_zcrs}",
+                    f"Custo total: ${total_cost}",
+                    f"Tokens totais: {total_tokens}",
+                    f"AMR médio: {amr_avg} · DCR médio: {dcr_avg}",
+                ]
+            if not p.get("recommendations"):
+                recs = []
+                if avg_zcrs < 50:
+                    recs.append({"title": "Aumentar relevância do conteúdo para elevar ZCRS", "impact": "high", "effort": "medium"})
+                if amr_avg < 0.3:
+                    recs.append({"title": "Melhorar match com intenção (AMR baixo)", "impact": "medium", "effort": "medium"})
+                if top_competitor:
+                    recs.append({"title": f"Criar/otimizar comparativos com {top_competitor}", "impact": "high", "effort": "low"})
+                if total_tokens > 300000:
+                    recs.append({"title": "Reduzir contexto e otimizar consultas (tokens altos)", "impact": "medium", "effort": "low"})
+                p["recommendations"] = recs[:6]
+            if not p.get("quick_wins"):
+                q = [
+                    "Adicionar seções FAQ/HowTo nas páginas foco",
+                    "Garantir dados estruturados atualizados (FAQ/HowTo)",
+                    "Revisar headings e entidades principais nas páginas Top",
+                ]
+                if top_competitor:
+                    q.insert(0, f"Publicar página 'Nossa marca vs {top_competitor}'")
+                p["quick_wins"] = q[:6]
+            if not p.get("topics"):
+                p["topics"] = top_tokens[:8]
+            if not p.get("keywords"):
+                p["keywords"] = top_tokens[:15]
+            if not p.get("wordcloud"):
+                p["wordcloud"] = top_wc
+            return p
+
+        return enrich_if_empty(payload)
+    except Exception as e:
+        return {
+            "summary": [
+                "Falha ao gerar via LLM.",
+                str(e)[:200],
+            ],
+            "recommendations": [],
+            "quick_wins": [],
+            "topics": [],
+            "keywords": [],
+            "wordcloud": [],
+        }
 
 @api_router.get("/setup/status")
 def setup_status() -> dict:

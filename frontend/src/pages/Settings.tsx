@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Select } from '../components/ui/select'
 import { Toaster, toast } from 'sonner'
 
 const API = '/api'
@@ -12,6 +13,7 @@ type Engine = { id: string; name: string; region?: string; device?: string; conf
 
 export default function SettingsPage() {
   const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('project_id') || '')
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([])
   const [domains, setDomains] = useState<Domain[]>([])
   const [engines, setEngines] = useState<Engine[]>([])
   const [newDomain, setNewDomain] = useState('')
@@ -49,6 +51,16 @@ export default function SettingsPage() {
     }
   }
   useEffect(() => { refresh() }, [projectId])
+
+  useEffect(() => {
+    axios.get(`${API}/projects`).then(r => {
+      setProjects(r.data || [])
+      if (!projectId && r.data?.[0]?.id) {
+        setProjectId(r.data[0].id)
+        localStorage.setItem('project_id', r.data[0].id)
+      }
+    }).catch(()=>{})
+  }, [])
 
   const saveKeys = async () => {
     try {
@@ -142,37 +154,53 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-4 px-3 sm:px-4 md:px-6 max-w-[1200px] mx-auto">
+    <div className="space-y-4">
       <Toaster richColors position="top-right" />
-      <h1 className="text-2xl font-semibold">Settings</h1>
-      <div className="flex gap-2 items-center">
-        <Input placeholder="Project ID" value={projectId} onChange={(e)=>{ setProjectId(e.target.value); localStorage.setItem('project_id', e.target.value) }} />
-        <Button variant="secondary" onClick={refresh}>Atualizar</Button>
-      </div>
+      <h1 className="text-2xl font-semibold">Configurações</h1>
 
-      <section className="space-y-2">
-        <h2 className="text-lg font-medium">Chaves de API</h2>
-        <div className="border rounded-md p-3 grid gap-3">
-          <div className="grid gap-2 md:grid-cols-2">
-            <KeyField label="OpenAI" placeholder="sk-..." value={keys.openai} onChange={(v)=>setKeys(k=>({ ...k, openai: v }))} present={!!keysStatus?.keys?.openai} tested={testResults?.openai} />
-            <KeyField label="Gemini (Google)" placeholder="AIza..." value={keys.gemini} onChange={(v)=>setKeys(k=>({ ...k, gemini: v }))} present={!!keysStatus?.keys?.gemini} tested={testResults?.gemini} />
-            <KeyField label="Perplexity" placeholder="ppx-..." value={keys.perplexity} onChange={(v)=>setKeys(k=>({ ...k, perplexity: v }))} present={!!keysStatus?.keys?.perplexity} tested={testResults?.perplexity} />
-            <KeyField label="SerpAPI" placeholder="api_key" value={keys.serpapi} onChange={(v)=>setKeys(k=>({ ...k, serpapi: v }))} present={!!keysStatus?.keys?.serpapi} tested={testResults?.serpapi} />
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Coluna 1: Integrações (API Keys) */}
+        <section className="space-y-2 lg:col-span-2">
+          <h2 className="text-lg font-medium">Integrações (API Keys)</h2>
+          <div className="border rounded-md p-3 grid gap-3">
+            <div className="text-sm opacity-70">Preencha apenas o que for usar. Você pode testar antes de salvar.</div>
+            <div className="grid gap-2 md:grid-cols-2">
+              <KeyField label="OpenAI" placeholder="sk-..." value={keys.openai} onChange={(v)=>setKeys(k=>({ ...k, openai: v }))} present={!!keysStatus?.keys?.openai} tested={testResults?.openai} />
+              <KeyField label="Gemini (Google)" placeholder="AIza..." value={keys.gemini} onChange={(v)=>setKeys(k=>({ ...k, gemini: v }))} present={!!keysStatus?.keys?.gemini} tested={testResults?.gemini} />
+              <KeyField label="Perplexity" placeholder="ppx-..." value={keys.perplexity} onChange={(v)=>setKeys(k=>({ ...k, perplexity: v }))} present={!!keysStatus?.keys?.perplexity} tested={testResults?.perplexity} />
+              <KeyField label="SerpAPI" placeholder="api_key" value={keys.serpapi} onChange={(v)=>setKeys(k=>({ ...k, serpapi: v }))} present={!!keysStatus?.keys?.serpapi} tested={testResults?.serpapi} />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={testConnections} disabled={testing}>{testing ? 'Testando…' : 'Testar conexões'}</Button>
+              <Button onClick={saveKeys}>Salvar chaves</Button>
+            </div>
+            {keysStatus && (
+              <div className="text-xs opacity-70">.env: {keysStatus.has_env ? 'detectado' : 'não encontrado'} · Sandbox: {keysStatus.sandbox ? 'on' : 'off'}</div>
+            )}
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={testConnections} disabled={testing}>{testing ? 'Testando…' : 'Testar conexões'}</Button>
-            <Button onClick={saveKeys}>Salvar chaves</Button>
+        </section>
+
+        {/* Coluna 2: Projeto/Diagnóstico */}
+        <aside className="space-y-2">
+          <h3 className="text-lg font-medium">Projeto</h3>
+          <div className="border rounded-md p-3 grid gap-2">
+            <div className="text-sm opacity-70">Projeto ativo</div>
+            <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setProjectId(e.target.value); localStorage.setItem('project_id', e.target.value); }}>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+              ))}
+            </Select>
+            <div className="flex justify-end">
+              <Button variant="secondary" onClick={refresh}>Atualizar</Button>
+            </div>
           </div>
-          {keysStatus && (
-            <div className="text-xs opacity-70">.env: {keysStatus.has_env ? 'detectado' : 'não encontrado'} · Sandbox: {keysStatus.sandbox ? 'on' : 'off'}</div>
-          )}
-        </div>
-      </section>
+        </aside>
+      </div>
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Domínios alvo</h2>
         <div className="border rounded-md p-3 grid gap-2">
-          <div className="grid gap-2 md:grid-cols-4">
+          <div className="grid gap-2 md:grid-cols-2">
             <Input placeholder="domínio (ex.: exemplo.com.br)" value={newDomain} onChange={e=>setNewDomain(e.target.value)} />
             <Input placeholder="regex (opcional)" value={pattern} onChange={e=>setPattern(e.target.value)} />
             <label className="flex items-center gap-2"><input type="checkbox" checked={isPrimary} onChange={e=>setIsPrimary(e.target.checked)} /> Primário</label>
@@ -191,21 +219,21 @@ export default function SettingsPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Nova Engine Gemini</h2>
+        <h2 className="text-lg font-medium">Engines — Gemini</h2>
         <div className="border rounded-md p-3 grid gap-3 text-sm">
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs opacity-70">Modelo</label>
-              <select className="w-full border rounded px-2 py-1 bg-transparent"
+              <Select
                 value={newGemini.model}
-                onChange={(e)=>setNewGemini(s=>({ ...s, model: e.target.value }))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setNewGemini(s=>({ ...s, model: e.target.value }))}
               >
                 <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                 <option value="gemini-2.5-pro">gemini-2.5-pro</option>
                 <option value="gemini-1.5-pro">gemini-1.5-pro</option>
                 <option value="gemini-1.5-flash">gemini-1.5-flash</option>
                 <option value="gemini-1.5-flash-8b">gemini-1.5-flash-8b</option>
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs opacity-70">Max output tokens</label>
@@ -222,13 +250,13 @@ export default function SettingsPage() {
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs opacity-70">Modo de retrieval</label>
-                <select className="w-full border rounded px-2 py-1 bg-transparent" value={newGemini.dynamic_mode}
-                  onChange={(e)=>setNewGemini(s=>({ ...s, dynamic_mode: e.target.value }))}
+                <Select value={newGemini.dynamic_mode}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setNewGemini(s=>({ ...s, dynamic_mode: e.target.value }))}
                 >
                   <option value="MODE_DYNAMIC">MODE_DYNAMIC</option>
                   <option value="MODE_AUTO">MODE_AUTO</option>
                   <option value="MODE_DISABLED">MODE_DISABLED</option>
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="text-xs opacity-70">Limite dinâmico (0–1)</label>
@@ -240,13 +268,13 @@ export default function SettingsPage() {
           )}
           <div>
             <label className="text-xs opacity-70">Tamanho do contexto de busca</label>
-            <select className="w-full border rounded px-2 py-1 bg-transparent" value={newGemini.search_context_size}
-              onChange={(e)=>setNewGemini(s=>({ ...s, search_context_size: e.target.value }))}
+            <Select value={newGemini.search_context_size}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setNewGemini(s=>({ ...s, search_context_size: e.target.value }))}
             >
               <option value="low">low</option>
               <option value="medium">medium</option>
               <option value="high">high</option>
-            </select>
+            </Select>
           </div>
           <div className="flex justify-end">
             <Button onClick={createGeminiEngine}>Criar engine</Button>
@@ -272,14 +300,12 @@ export default function SettingsPage() {
 
 function EngineCard({ engine, onSave }: { engine: Engine; onSave: (e: Engine, cfg: string) => void }) {
   const [cfg, setCfg] = useState(JSON.stringify(engine.config_json || {}, null, 2))
-  const example = {
-    pricing: {
-      input_per_1k_usd: 0.003,
-      output_per_1k_usd: 0.006,
-      per_call_usd: 0.0,
-    },
-  }
+  const [expanded, setExpanded] = useState<boolean>(false)
   const isGemini = (engine.name || '').toLowerCase() === 'gemini'
+  const prettyPairs: Array<{ k: string; v: string }> = Object.entries(engine.config_json || {}).map(([k, v]) => ({
+    k: String(k),
+    v: typeof v === 'string' ? v : JSON.stringify(v),
+  }))
   return (
     <div className="border rounded-md p-3 grid gap-2 text-sm">
       <div className="flex items-center gap-2">
@@ -290,12 +316,41 @@ function EngineCard({ engine, onSave }: { engine: Engine; onSave: (e: Engine, cf
         <GeminiConfigEditor initial={engine.config_json || {}} onSave={(obj)=>onSave(engine, JSON.stringify(obj))} />
       ) : (
         <>
-          <div className="text-xs opacity-70">Dica: configure <code>pricing</code> para estimar custos. Exemplo:</div>
-          <pre className="text-xs bg-neutral-50 dark:bg-neutral-900 p-2 rounded border overflow-auto">{JSON.stringify(example, null, 2)}</pre>
-          <textarea value={cfg} onChange={e=>setCfg(e.target.value)} rows={8} className="border rounded-md px-2 py-2 bg-transparent font-mono" />
-          <div className="flex justify-end">
-            <Button variant="secondary" onClick={()=>onSave(engine, cfg)}>Salvar</Button>
-          </div>
+          {!expanded && (
+            <div className="grid gap-2">
+              <div className="text-xs opacity-70">Configuração atual</div>
+              <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/40 p-2">
+                {prettyPairs.length ? (
+                  <div className="grid gap-1">
+                    {prettyPairs.map(({ k, v }) => (
+                      <div key={k} className="flex items-start gap-2 text-xs">
+                        <span className="min-w-[140px] font-medium text-neutral-700 dark:text-neutral-300 break-words">{k}</span>
+                        <span className="flex-1 font-mono break-words text-neutral-900 dark:text-neutral-100">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs opacity-70">Sem configuração.</div>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => { setCfg(JSON.stringify(engine.config_json || {}, null, 2)); setExpanded(true) }}>Configurar</Button>
+              </div>
+            </div>
+          )}
+          {expanded && (
+            <>
+              <div className="text-xs opacity-70">Configuração (chave/valor). Valores aceitam JSON (ex.: números, objetos).</div>
+              <KeyValueEditor
+                initialObject={engine.config_json || {}}
+                onChangeObject={(obj)=> setCfg(JSON.stringify(obj, null, 2))}
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => { setCfg(JSON.stringify(engine.config_json || {}, null, 2)); setExpanded(false) }}>Cancelar</Button>
+                <Button variant="secondary" onClick={() => { onSave(engine, cfg); setExpanded(false) }}>Salvar</Button>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -322,13 +377,13 @@ function GeminiConfigEditor({ initial, onSave }: { initial: any; onSave: (cfg: a
       <div className="grid sm:grid-cols-2 gap-3">
         <div>
           <label className="text-xs opacity-70">Modelo</label>
-          <select className="w-full border rounded px-2 py-1 bg-transparent" value={model} onChange={(e)=>setModel(e.target.value)}>
+          <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setModel(e.target.value)}>
             <option value="gemini-2.5-flash">gemini-2.5-flash</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro</option>
             <option value="gemini-1.5-pro">gemini-1.5-pro</option>
             <option value="gemini-1.5-flash">gemini-1.5-flash</option>
             <option value="gemini-1.5-flash-8b">gemini-1.5-flash-8b</option>
-          </select>
+          </Select>
         </div>
         <div>
           <label className="text-xs opacity-70">Max output tokens</label>
@@ -343,11 +398,11 @@ function GeminiConfigEditor({ initial, onSave }: { initial: any; onSave: (cfg: a
         <div className="grid sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs opacity-70">Modo de retrieval</label>
-            <select className="w-full border rounded px-2 py-1 bg-transparent" value={dynMode} onChange={(e)=>setDynMode(e.target.value)}>
+            <Select value={dynMode} onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setDynMode(e.target.value)}>
               <option value="MODE_DYNAMIC">MODE_DYNAMIC</option>
               <option value="MODE_AUTO">MODE_AUTO</option>
               <option value="MODE_DISABLED">MODE_DISABLED</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="text-xs opacity-70">Limite dinâmico (0–1)</label>
@@ -357,11 +412,11 @@ function GeminiConfigEditor({ initial, onSave }: { initial: any; onSave: (cfg: a
       )}
       <div>
         <label className="text-xs opacity-70">Tamanho do contexto de busca</label>
-        <select className="w-full border rounded px-2 py-1 bg-transparent" value={searchContextSize} onChange={(e)=>setSearchContextSize(e.target.value)}>
+        <Select value={searchContextSize} onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setSearchContextSize(e.target.value)}>
           <option value="low">low</option>
           <option value="medium">medium</option>
           <option value="high">high</option>
-        </select>
+        </Select>
       </div>
       <div className="flex justify-between items-center">
         <div className="text-xs opacity-70">Dica: incentive a listagem de fontes com URLs completas no final da resposta.</div>
@@ -384,6 +439,48 @@ function KeyField({ label, placeholder, value, onChange, present, tested }: { la
         )}
       </div>
       <Input placeholder={placeholder} value={value} onChange={(e)=>onChange(e.target.value)} />
+    </div>
+  )
+}
+
+function KeyValueEditor({ initialObject, onChangeObject }: { initialObject: any; onChangeObject: (obj: any) => void }) {
+  const toPairs = (obj: any): Array<{ key: string; value: string }> => {
+    const entries = Object.entries(obj || {}) as Array<[string, any]>
+    return entries.map(([k, v]) => ({ key: String(k), value: typeof v === 'string' ? v : JSON.stringify(v) }))
+  }
+  const [pairs, setPairs] = useState<Array<{ key: string; value: string }>>(() => toPairs(initialObject))
+
+  useEffect(() => {
+    // Emit as object on change
+    const obj: any = {}
+    for (const { key, value } of pairs) {
+      if (!key) continue
+      try {
+        obj[key] = JSON.parse(value)
+      } catch {
+        obj[key] = value
+      }
+    }
+    onChangeObject(obj)
+  }, [pairs])
+
+  const addPair = () => setPairs(p => [...p, { key: '', value: '' }])
+  const removePair = (idx: number) => setPairs(p => p.filter((_, i) => i !== idx))
+
+  return (
+    <div className="grid gap-2">
+      {pairs.map((p, i) => (
+        <div key={i} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center">
+          <Input placeholder="chave" value={p.key} onChange={(e)=> setPairs(prev => prev.map((it, idx) => idx===i ? { ...it, key: e.target.value } : it))} className="sm:col-span-2" />
+          <Input placeholder="valor (string ou JSON)" value={p.value} onChange={(e)=> setPairs(prev => prev.map((it, idx) => idx===i ? { ...it, value: e.target.value } : it))} className="sm:col-span-3" />
+          <div className="flex justify-end sm:col-span-5">
+            <Button variant="outline" size="sm" onClick={()=>removePair(i)}>Remover</Button>
+          </div>
+        </div>
+      ))}
+      <div>
+        <Button variant="outline" size="sm" onClick={addPair}>+ Adicionar</Button>
+      </div>
     </div>
   )
 }

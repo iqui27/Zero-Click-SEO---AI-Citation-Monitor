@@ -64,7 +64,7 @@ export default function SetupWizard() {
       const p = await axios.post(`${API}/projects`, { name: projName, country: 'BR', language: 'pt-BR', timezone: 'America/Sao_Paulo' })
       setProjectId(p.data.id)
       localStorage.setItem('project_id', p.data.id)
-      const sp = await axios.post(`${API}/projects/${p.data.id}/subprojects`, { name: 'Inicial', description: 'Subprojeto criado pelo wizard' })
+        const sp = await axios.post(`${API}/projects/${p.data.id}/subprojects`, { name: 'Inicial', description: 'Tema criado pelo wizard' })
       setSubprojectId(sp.data.id)
       toast.success('Projeto criado')
     } catch (e: any) {
@@ -145,7 +145,7 @@ export default function SetupWizard() {
 
       {step === 3 && (
         <div className="border rounded-lg p-4 grid gap-3">
-          <div className="text-sm opacity-70">Selecione as consultas para o Smoke Test (até 5)</div>
+          <div className="text-sm opacity-70">Selecione as consultas para o Smoke Test (até 5) — serão executadas no tema "Inicial"</div>
           <div className="grid gap-1">
             {queries.map((q) => (
               <label key={q.text} className="flex items-center gap-2 text-sm">
