@@ -254,7 +254,7 @@ export default function RunDetail() {
   } catch {}
 
   return (
-    <div className="space-y-4 px-3 sm:px-4 md:px-6 max-w-[1200px] mx-auto">
+    <div className="space-y-4">
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold">Run {id}</h1>

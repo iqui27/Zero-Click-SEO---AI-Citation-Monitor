@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
+import RunsFilter from '../components/RunsFilter'
+import { EngineLogo } from '../components/EngineLogo'
 import { Toaster, toast } from 'sonner'
 import { RefreshCw, Plus } from 'lucide-react'
 
@@ -52,6 +55,8 @@ const ENGINE_OPTIONS = [
 ]
 
 export default function Runs() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [runs, setRuns] = useState<RunItem[]>([])
   const [showModal, setShowModal] = useState(false)
   const [engineFilter, setEngineFilter] = useState<string>('')
@@ -94,6 +99,14 @@ export default function Runs() {
     })
   }, [])
 
+  useEffect(() => {
+    const p = new URLSearchParams(location.search)
+    const q = p.get('q') || ''
+    const openNew = p.get('new') === '1'
+    setQuery(q)
+    if (openNew) setShowModal(true)
+  }, [location.search])
+
   useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
   useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
   useEffect(() => { if (projectId) { setPage(1); fetchRuns() } }, [projectId])
@@ -110,46 +123,70 @@ export default function Runs() {
     return list
   }, [runs, query])
 
+  const projectName = useMemo(() => projects.find(p => p.id === projectId)?.name || '', [projects, projectId])
+  const themeName = useMemo(() => subprojects.find(s => s.id === subprojectId)?.name || '', [subprojects, subprojectId])
+
+  const clearThemeFocus = () => {
+    setSubprojectId('')
+    localStorage.removeItem('theme_focus')
+    localStorage.removeItem('subproject_focus')
+  }
+
   return (
-    <div className="space-y-3 px-3 sm:px-4 md:px-6 max-w-[1400px] mx-auto">
+    <div className="space-y-3">
       <Toaster richColors position="top-right" />
+      <div className="text-xs px-3 py-2 border rounded-md flex flex-wrap items-center gap-2 bg-white dark:bg-neutral-900">
+        {projectName && (
+          <span>
+            Projeto: <span className="font-medium">{projectName}</span>
+          </span>
+        )}
+        {themeName && (
+          <span>
+            Tema: <span className="font-medium">{themeName}</span>
+          </span>
+        )}
+        <a href="/settings" className="ml-auto underline">alterar</a>
+        {themeName && (
+          <button className="underline" onClick={clearThemeFocus}>limpar</button>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-semibold">Runs</h1>
         <Button variant="outline" size="sm" onClick={() => { fetchRuns().then(()=>toast.success('Atualizado')) }} className="ml-2"><RefreshCw className="h-4 w-4" /></Button>
         <Button className="ml-auto" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
       </div>
-      <div className="flex flex-wrap gap-2 items-center">
-        <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setProjectId(e.target.value)}>
-          {projects.map((p: Project) => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
-        </Select>
-        <Select value={subprojectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSubprojectId(e.target.value)}>
-          <option value="">Todos os subprojetos</option>
-          {subprojects.map((sp: Subproject) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
-        </Select>
-        <Select value={engineFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEngineFilter(e.target.value)}>
-          <option value="">Todas as engines</option>
-          {engines.map((e: string) => <option key={e} value={e}>{e}</option>)}
-        </Select>
-        <Select value={statusFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStatusFilter(e.target.value)}>
-          <option value="">Todos os status</option>
-          {['queued','running','completed','failed'].map((s: string) => <option key={s} value={s}>{s}</option>)}
-        </Select>
-        <div className="flex items-center gap-1 text-xs">
-          <span className="opacity-70">De</span>
-          <Input type="date" value={dateFrom} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setDateFrom(e.target.value); setPage(1) }} />
-          <span className="opacity-70">Até</span>
-          <Input type="date" value={dateTo} onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setDateTo(e.target.value); setPage(1) }} />
-        </div>
-        <Input placeholder="Buscar por ID" value={query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)} />
-      </div>
-      <div className="flex items-center gap-2">
+      <RunsFilter
+        projects={projects}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        subprojects={subprojects}
+        subprojectId={subprojectId}
+        setSubprojectId={setSubprojectId}
+        engines={engines}
+        engineFilter={engineFilter}
+        setEngineFilter={setEngineFilter}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        dateFrom={dateFrom}
+        setDateFrom={setDateFrom}
+        dateTo={dateTo}
+        setDateTo={setDateTo}
+        query={query}
+        setQuery={setQuery}
+        onSearch={() => navigate(`/runs?q=${encodeURIComponent(query)}`)}
+        onRefresh={fetchRuns}
+        totalResults={filtered.length}
+      />
+      
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1 text-sm">
           <span className="opacity-70">Página</span>
           <Button variant="outline" size="sm" onClick={() => setPage((p: number) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
           <span className="px-2">{page}</span>
           <Button variant="outline" size="sm" onClick={() => setPage((p: number) => p + 1)} disabled={runs.length < pageSize}>Próxima</Button>
         </div>
-        <div className="flex items-center gap-2 text-sm ml-auto">
+        <div className="flex items-center gap-3 text-sm ml-auto mt-2 sm:mt-0">
           <span className="opacity-70">Ordenar por</span>
           <Select value={orderBy} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setOrderBy(e.target.value); setPage(1) }}>
             <option value="started_at">Início</option>
@@ -164,16 +201,16 @@ export default function Runs() {
             <option value="desc">Desc</option>
             <option value="asc">Asc</option>
           </Select>
-          <span className="opacity-70">Itens por página</span>
+          <span className="opacity-70 ml-2">Itens por página</span>
           <Select value={String(pageSize)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setPageSize(parseInt(e.target.value)); setPage(1) }}>
             {[25,50,100,150,200].map((n: number) => <option key={n} value={n}>{n}</option>)}
           </Select>
         </div>
       </div>
-      <div className="overflow-auto rounded-md border border-neutral-200 dark:border-neutral-800">
+      <div className="overflow-auto rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm">
         <table className="min-w-full text-sm table-fixed">
-          <thead>
-            <tr className="text-neutral-500 text-xs">
+          <thead className="bg-neutral-50 dark:bg-neutral-900 z-10">
+            <tr className="text-neutral-500 text-xs sticky top-0 z-10">
               <Th>ID</Th>
               <Th>Engine</Th>
               <Th>Status</Th>
@@ -183,16 +220,21 @@ export default function Runs() {
               <Th>AMR</Th>
               <Th>DCR</Th>
               <Th>Template</Th>
-              <Th>Subprojeto</Th>
+              <Th>Tema</Th>
               <Th>Custo</Th>
               <Th>Tokens</Th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r: RunItem) => (
-              <tr key={r.id} className="border-t border-neutral-200 dark:border-neutral-800">
+            {filtered.map((r: RunItem, idx: number) => (
+              <tr key={r.id} className={`border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900/40 ${idx % 2 === 1 ? 'bg-neutral-50/40 dark:bg-neutral-900/30' : ''}`}>
                 <Td><a className="text-blue-600" href={`/runs/${r.id}`}>{r.id}</a></Td>
-                <Td>{r.engine}</Td>
+                <Td>
+                  <div className="flex items-center gap-2">
+                    <EngineLogo name={r.engine} className="h-5 w-5" />
+                    <span className="font-medium tracking-tight">{r.engine}</span>
+                  </div>
+                </Td>
                 <Td>
                   <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
                     r.status === 'completed' ? 'bg-green-100 text-green-800' :
@@ -217,7 +259,148 @@ export default function Runs() {
           </tbody>
         </table>
       </div>
-      {showModal && <NewRunModal onClose={() => { setShowModal(false); fetchRuns() }} />}
+      {showModal && <NewRunModal onClose={() => { setShowModal(false); fetchRuns(); navigate('/runs', { replace: true }) }} />}
+    </div>
+  )
+}
+
+function ActiveContextBar() {
+  const [project, setProject] = useState<string>('')
+  const [theme, setTheme] = useState<string>('')
+  useEffect(() => {
+    setProject(localStorage.getItem('project_id') || '')
+    setTheme(localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || '')
+  }, [])
+  if (!project && !theme) return null
+  return (
+    <div className="text-xs px-2 py-1 border rounded-md flex items-center gap-2">
+      {project && <span>Projeto: <span className="font-medium">{project}</span></span>}
+      {theme && <span>Tema: <span className="font-medium">{theme}</span></span>}
+      <a href="/settings" className="ml-auto underline">alterar</a>
+      <button className="underline" onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}>limpar</button>
+    </div>
+  )
+}
+
+function FilterBar(props: {
+  projects: Project[]
+  projectId: string
+  setProjectId: (v: string) => void
+  subprojects: Subproject[]
+  subprojectId: string
+  setSubprojectId: (v: string) => void
+  engines: string[]
+  engineFilter: string
+  setEngineFilter: (v: string) => void
+  statusFilter: string
+  setStatusFilter: (v: string) => void
+  dateFrom: string
+  setDateFrom: (v: string) => void
+  dateTo: string
+  setDateTo: (v: string) => void
+  query: string
+  setQuery: (v: string) => void
+  onSearch: () => void
+}) {
+  const [open, setOpen] = useState<boolean>(false)
+  const projectName = props.projects.find(p => p.id === props.projectId)?.name
+  const themeName = props.subprojects.find(s => s.id === props.subprojectId)?.name
+
+  const fmtChipDate = (s: string) => {
+    if (!s) return ''
+    try {
+      const d = new Date(s)
+      const dd = String(d.getDate()).padStart(2, '0')
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      return `${dd}/${mm}`
+    } catch {
+      return s
+    }
+  }
+
+  const activeChips: Array<{ key: string; label: string; onClear: () => void }> = []
+  if (projectName) activeChips.push({ key: 'project', label: `Projeto: ${projectName}`, onClear: () => {} })
+  if (themeName) activeChips.push({ key: 'theme', label: `Tema: ${themeName}`, onClear: () => props.setSubprojectId('') })
+  if (props.engineFilter) activeChips.push({ key: 'engine', label: `Engine: ${props.engineFilter}`, onClear: () => props.setEngineFilter('') })
+  if (props.statusFilter) activeChips.push({ key: 'status', label: `Status: ${props.statusFilter}`, onClear: () => props.setStatusFilter('') })
+  if (props.dateFrom) activeChips.push({ key: 'from', label: `De: ${fmtChipDate(props.dateFrom)}`, onClear: () => props.setDateFrom('') })
+  if (props.dateTo) activeChips.push({ key: 'to', label: `Até: ${fmtChipDate(props.dateTo)}`, onClear: () => props.setDateTo('') })
+  if (props.query) activeChips.push({ key: 'q', label: `ID: ${props.query}`, onClear: () => props.setQuery('') })
+
+  const setQuickRange = (range: 'today' | 7 | 30 | 'all') => {
+    if (range === 'all') { props.setDateFrom(''); props.setDateTo(''); return }
+    const now = new Date()
+    const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+    const start = new Date(end)
+    if (range === 'today') {
+      // start == end
+    } else {
+      start.setUTCDate(start.getUTCDate() - (range as number))
+    }
+    const fmt = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`
+    props.setDateFrom(fmt(start))
+    props.setDateTo(fmt(end))
+  }
+
+  const resetAll = () => {
+    // Mantém projeto, limpa demais filtros
+    props.setSubprojectId('')
+    props.setEngineFilter('')
+    props.setStatusFilter('')
+    props.setDateFrom('')
+    props.setDateTo('')
+    props.setQuery('')
+  }
+
+  return (
+    <div className="border rounded-md">
+      <div className="p-2 flex items-center gap-2">
+        <div className="text-sm font-medium">Filtros</div>
+        <div className="flex flex-wrap gap-1">
+          {activeChips.length ? activeChips.map(ch => (
+            <button key={ch.key} className="text-xs px-2 py-0.5 border rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800" onClick={ch.onClear}>
+              {ch.label} ×
+            </button>
+          )) : <span className="text-xs opacity-60">Nenhum filtro ativo</span>}
+        </div>
+        <div className="ml-auto flex items-center gap-1 text-xs">
+          <Button variant="outline" size="sm" onClick={() => setQuickRange('today')}>Hoje</Button>
+          <Button variant="outline" size="sm" onClick={() => setQuickRange(7)}>7d</Button>
+          <Button variant="outline" size="sm" onClick={() => setQuickRange(30)}>30d</Button>
+          <Button variant="outline" size="sm" onClick={() => setQuickRange('all')}>Tudo</Button>
+          <Button variant="outline" size="sm" onClick={resetAll}>Limpar</Button>
+          <Button variant="outline" size="sm" onClick={() => setOpen(v=>!v)}>{open ? 'Ocultar' : 'Mostrar'}</Button>
+        </div>
+      </div>
+      {open && (
+        <div className="p-2 grid gap-2 items-center" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
+          <Select value={props.projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setProjectId(e.target.value)} className="col-span-12 sm:col-span-3">
+            {props.projects.map((p: Project) => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
+          </Select>
+          <Select value={props.subprojectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setSubprojectId(e.target.value)} className="col-span-12 sm:col-span-3">
+            <option value="">Todos os temas</option>
+            {props.subprojects.map((sp: Subproject) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+          </Select>
+          <Select value={props.engineFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setEngineFilter(e.target.value)} className="col-span-6 sm:col-span-2">
+            <option value="">Todas as engines</option>
+            {props.engines.map((e: string) => <option key={e} value={e}>{e}</option>)}
+          </Select>
+          <Select value={props.statusFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setStatusFilter(e.target.value)} className="col-span-6 sm:col-span-2">
+            <option value="">Todos os status</option>
+            {['queued','running','completed','failed'].map((s: string) => <option key={s} value={s}>{s}</option>)}
+          </Select>
+          <div className="col-span-12 sm:col-span-2 flex items-center gap-1 text-xs">
+            <span className="opacity-70">De</span>
+            <Input type="date" value={props.dateFrom} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setDateFrom(e.target.value)} />
+            <span className="opacity-70">Até</span>
+            <Input type="date" value={props.dateTo} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setDateTo(e.target.value)} />
+          </div>
+          <div className="col-span-12 sm:col-span-4 flex items-center gap-2">
+            <Input placeholder="Buscar por ID" value={props.query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setQuery(e.target.value)} onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') props.onSearch() }} />
+            <Button variant="secondary" size="sm" onClick={props.onSearch}>Buscar</Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -399,8 +582,8 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 grid place-items-center p-4">
-      <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-[min(820px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800">
+    <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
+      <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w:[min(820px,100%)] w-[min(820px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800 shadow-lg">
         <h2 className="text-lg font-semibold">Nova Run</h2>
         <div className="grid gap-3">
           <div className="grid gap-1">

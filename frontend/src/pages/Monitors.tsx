@@ -77,8 +77,8 @@ export default function MonitorsPage() {
       <div className="border rounded-md p-3 grid gap-2">
         <div className="text-sm opacity-70">Criar monitor</div>
         <Input placeholder="Nome" value={name} onChange={(e) => setName(e.target.value)} />
-        <Select value={subprojectId} onChange={(e) => setSubprojectId(e.target.value)}>
-          <option value="">(Sem subprojeto)</option>
+         <Select value={subprojectId} onChange={(e) => setSubprojectId(e.target.value)}>
+           <option value="">(Sem tema)</option>
           {subprojects.map(sp => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
         </Select>
         <Input placeholder="CRON (opcional)" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
@@ -94,7 +94,7 @@ export default function MonitorsPage() {
               <span className="text-xs opacity-70">{m.id}</span>
               <Button variant="secondary" onClick={() => runNow(m.id)}>Executar agora</Button>
             </div>
-            <div className="text-xs opacity-70">Subprojeto: {m.subproject_id || '—'} | Engines: {JSON.stringify(m.engines_json.engines)}</div>
+            <div className="text-xs opacity-70">Tema: {m.subproject_id || '—'} | Engines: {JSON.stringify(m.engines_json.engines)}</div>
             <div className="grid gap-1">
               <div className="text-sm opacity-70">Vincular template</div>
               <div className="flex flex-wrap gap-2">

@@ -58,6 +58,7 @@ services:
     image: node:20-alpine
     environment:
       npm_config_update_notifier: "false"
+      VITE_PROXY_TARGET: "http://backend:8000"
     # Usa volume anônimo para node_modules dentro do contêiner e evita remoções perigosas
     command: sh -lc "npm install --force --no-audit --no-fund && npx vite --host 0.0.0.0"
     volumes:
