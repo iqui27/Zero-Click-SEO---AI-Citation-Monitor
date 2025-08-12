@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '../components/ui/button'
+import { AiOverview } from '../components/AiOverview'
 import { Toaster, toast } from 'sonner'
 import { Search, Bot, Camera, Globe } from 'lucide-react'
 
@@ -223,6 +224,11 @@ export default function RunDetail() {
     toast.success(format === 'md' ? 'Markdown copiado' : 'HTML copiado')
   }
 
+  // Util
+  const getHost = (url?: string) => {
+    try { if (!url) return ''; return new URL(url).hostname } catch { return '' }
+  }
+
   const md = streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
 
   const meta = (evidences?.[0]?.parsed_json?.parsed?.meta) || {}
@@ -277,46 +283,63 @@ export default function RunDetail() {
         </div>
       )}
 
-      {/* Badges de meta para confirmar web search e contexto */}
+      {/* Badges de meta */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="px-2 py-0.5 border rounded-md">Modelo: {detail?.model_name || detail?.engine?.name || '-'}</span>
-        <span className={`px-2 py-0.5 border rounded-md ${wsUsed ? 'bg-green-50 dark:bg-green-900/20' : ''}`}>Web search: {wsUsed ? 'on' : 'off'}</span>
+        <span className={`px-2 py-0.5 rounded-md border ${wsUsed ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'border-neutral-300 dark:border-neutral-700'}`}>Web search: {wsUsed ? 'on' : 'off'}</span>
         {typeof wsCalls === 'number' && <span className="px-2 py-0.5 border rounded-md">calls: {wsCalls}</span>}
         {ctxSize && <span className="px-2 py-0.5 border rounded-md">ctx: {ctxSize}</span>}
       </div>
 
-      <div>
+      <section className="grid gap-2">
         <Toolbelt events={events} />
-        {/* Mostrar última linha de opções efetivas se registrada pelo backend (step "opts") */}
-        {events.filter(e => e.step === 'opts').slice(-1).map((e, i) => (
-          <pre key={i} className="mt-2 text-xs opacity-70 p-2 rounded-md border border-neutral-800 overflow-x-auto">
-            {e.message}
-          </pre>
-        ))}
-        {!!webQueries.length && (
-          <div className="mt-2 text-xs opacity-80 p-2 rounded-md border border-neutral-800">
-            <div className="font-medium mb-1">Web search – queries ({webQueries.length})</div>
-            <ul className="list-disc pl-5 space-y-1">
-              {webQueries.map((q, i) => (<li key={i} className="truncate">{q}</li>))}
-            </ul>
-          </div>
-        )}
-      </div>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-medium">Progresso</h2>
-        <div className="flex flex-col gap-1">
-          {events.length === 0 && !hasLiveEvents && <div className="text-sm opacity-70">Aguardando eventos…</div>}
-          {events.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs">
-              <span className={`h-2 w-2 rounded-full ${e.status==='ok'?'bg-green-500':e.status==='started'?'bg-blue-500':'bg-red-500'}`} />
-              <span className="font-mono opacity-70">{new Date(e.created_at).toLocaleTimeString()}</span>
-              <span className="px-2 py-0.5 rounded-md border border-neutral-600">{e.step}</span>
-              {e.message && <span className="opacity-80 truncate">{e.message}</span>}
+        {/* Opções efetivas (badges) */}
+        {(() => {
+          const last = events.filter(e => e.step === 'opts').slice(-1)[0]
+          if (!last?.message) return null
+          let obj: any = null
+          try { obj = JSON.parse(last.message) } catch {}
+          if (!obj || typeof obj !== 'object') return null
+          const entries = Object.entries(obj as Record<string, any>)
+          if (!entries.length) return null
+          return (
+            <div className="text-xs flex flex-wrap items-center gap-1">
+              {entries.map(([k, v]) => {
+                const str = v === null ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+                const tone = (typeof v === 'boolean') ? (v ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-neutral-50 dark:bg-neutral-900/30 border-neutral-300 dark:border-neutral-700') : 'bg-neutral-50 dark:bg-neutral-900/30 border-neutral-300 dark:border-neutral-700'
+                return (
+                  <span key={k} className={`px-2 py-0.5 rounded-md border ${tone}`}>{k}: <span className="font-medium">{str}</span></span>
+                )
+              })}
             </div>
-          ))}
-        </div>
+          )
+        })()}
+
+        {/* Progresso minimalista (colapsável) */}
+        <details className="rounded-md border border-neutral-200 dark:border-neutral-800">
+          <summary className="text-xs px-2 py-1 cursor-pointer select-none">Progresso ({events.length})</summary>
+          <div className="p-2 grid gap-1 text-xs">
+            {events.slice(-8).map((e, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className={`h-1.5 w-1.5 rounded-full ${e.status==='ok'?'bg-green-500':e.status==='started'?'bg-blue-500':'bg-red-500'}`} />
+                <span className="font-mono opacity-70">{new Date(e.created_at).toLocaleTimeString()}</span>
+                <span className="px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700">{e.step}</span>
+                {e.message && e.step !== 'chunk' && <span className="opacity-70 truncate">{e.message}</span>}
+              </div>
+            ))}
+            {!!webQueries.length && (
+              <div className="mt-1">
+                <div className="font-medium mb-1">Web search – queries ({webQueries.length})</div>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {webQueries.slice(-6).map((q, i) => (<li key={i} className="truncate">{q}</li>))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </details>
       </section>
+
+      {/* Progresso detalhado removido (mantido apenas o bloco minimalista colapsável acima) */}
 
       {detail?.prompt_text && (
         <section>
@@ -327,22 +350,49 @@ export default function RunDetail() {
         </section>
       )}
 
+      {/* AI Overview / Orgânicos (modo Google) — posicionado logo abaixo do Prompt usado */}
+      <section>
+        {(() => {
+          const raw = evidences?.[0]?.parsed_json?.raw || {}
+          const source = meta?.source as string | undefined
+          const ai = (raw?.serpapi_ai || null)
+          const organics = (raw?.serpapi?.organic_results || raw?.serpapi_search?.organic_results || [])
+          return (
+            <AiOverview source={source} ai={ai} organics={organics} />
+          )
+        })()}
+      </section>
+
       <section>
         <h2 className="text-lg font-medium">Citações</h2>
-        <div className="grid gap-2">
-          {report?.citations.map((c, i) => (
-            <a key={i} href={c.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-2 border rounded-md">
-              <img src={getFavicon(c.url)} alt="" className="h-4 w-4" />
-              <span className="truncate flex-1">{titles[c.url || ''] || c.url}</span>
-              {c.is_ours && <span className="text-xs px-2 py-0.5 border rounded-md">nosso</span>}
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(report?.citations || []).map((c, i) => (
+            <a key={i} href={c.url} target="_blank" rel="noreferrer" className="group p-3 border rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-900/40 transition-colors">
+              <div className="flex items-start gap-2">
+                <img src={getFavicon(c.url)} alt="" className="h-4 w-4 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate group-hover:underline">{titles[c.url || ''] || c.url}</div>
+                  <div className="text-xs opacity-60 truncate">{getHost(c.url)}</div>
+                </div>
+                {c.is_ours && <span className="text-[10px] px-2 py-0.5 rounded-full border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300">nosso</span>}
+              </div>
             </a>
-          )) || <div>Nenhuma citação</div>}
+          ))}
+          {!report?.citations?.length && (
+            <div className="text-sm opacity-70 border rounded-lg p-4">Nenhuma citação.</div>
+          )}
         </div>
       </section>
 
       <section>
-        <h2 className="text-lg font-medium">Resposta (stream)</h2>
-        <article className="prose prose-invert max-w-none bg-neutral-50 dark:bg-neutral-900 p-3 rounded-md border border-neutral-200 dark:border-neutral-800 overflow-x-auto">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-medium flex-1">Resposta (stream)</h2>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" onClick={() => copyAs('md')}>Copiar MD</Button>
+            <Button variant="outline" size="sm" onClick={() => copyAs('html')}>Copiar HTML</Button>
+          </div>
+        </div>
+        <article className="prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-neutral-900 p-4 rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-x-auto">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]}>{md}</ReactMarkdown>
         </article>
       </section>
@@ -359,10 +409,7 @@ export default function RunDetail() {
           </div>
         </section>
       )}
-      <div className="flex gap-2 justify-end">
-        <Button onClick={() => copyAs('md')} className="px-2 py-1 border rounded-md text-xs">Copiar Markdown</Button>
-        <Button onClick={() => copyAs('html')} className="px-2 py-1 border rounded-md text-xs">Copiar HTML</Button>
-      </div>
+      {/* Removido: botões de cópia duplicados no rodapé para reduzir poluição visual */}
     </div>
   )
 }
