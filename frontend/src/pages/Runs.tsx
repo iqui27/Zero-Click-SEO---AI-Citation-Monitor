@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { Button } from '../components/ui/button'
+import { formatNumberCompact } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import RunsFilter from '../components/RunsFilter'
-import { EngineLogo } from '../components/EngineLogo'
 import { Toaster, toast } from 'sonner'
 import { RefreshCw, Plus } from 'lucide-react'
 
@@ -47,6 +47,7 @@ const TEMPLATES: { label: string; text: string }[] = [
 
 const ENGINE_OPTIONS = [
   { label: 'OpenAI GPT-5 (web search — low context)', name: 'openai', config_json: { model: 'gpt-5', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
+  { label: 'OpenAI GPT-5 mini (web search — low context)', name: 'openai', config_json: { model: 'gpt-5-mini', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
   { label: 'OpenAI GPT-4.1 (web search — low context)', name: 'openai', config_json: { model: 'gpt-4.1', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
   { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro' } },
   { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
@@ -230,10 +231,7 @@ export default function Runs() {
               <tr key={r.id} className={`border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900/40 ${idx % 2 === 1 ? 'bg-neutral-50/40 dark:bg-neutral-900/30' : ''}`}>
                 <Td><a className="text-blue-600" href={`/runs/${r.id}`}>{r.id}</a></Td>
                 <Td>
-                  <div className="flex items-center gap-2">
-                    <EngineLogo name={r.engine} className="h-5 w-5" />
-                    <span className="font-medium tracking-tight">{r.engine}</span>
-                  </div>
+                  <span className="font-medium tracking-tight">{r.engine}</span>
                 </Td>
                 <Td>
                   <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
@@ -253,7 +251,7 @@ export default function Runs() {
                 <Td>{r.template_name || '-'}</Td>
                 <Td>{r.subproject_name || '-'}</Td>
                 <Td>{typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</Td>
-                <Td>{typeof r.tokens_total === 'number' ? r.tokens_total : '-'}</Td>
+                <Td>{typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</Td>
               </tr>
             ))}
           </tbody>

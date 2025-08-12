@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '../components/ui/button'
+import { formatNumberCompact } from '../lib/utils'
 import { AiOverview } from '../components/AiOverview'
 import { Toaster, toast } from 'sonner'
 import { Search, Bot, Camera, Globe } from 'lucide-react'
@@ -217,6 +218,7 @@ export default function RunDetail() {
     }
   }
 
+
   const copyAs = (format: 'md'|'html') => {
     const text = streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
     if (format === 'md') navigator.clipboard.writeText(text)
@@ -279,7 +281,7 @@ export default function RunDetail() {
           {report && <Card title="DCR" value={report.dcr.toFixed(2)} />}
           {report && <Card title="ZCRS" value={report.zcrs.toFixed(1)} />}
           {typeof detail?.cost_usd === 'number' && <Card title="Custo" value={`$${detail.cost_usd.toFixed(4)}`} />}
-          {typeof detail?.tokens_total === 'number' && <Card title="Tokens" value={detail.tokens_total} />}        
+          {typeof detail?.tokens_total === 'number' && <Card title="Tokens" value={formatNumberCompact(detail.tokens_total)} />}        
         </div>
       )}
 
@@ -358,7 +360,16 @@ export default function RunDetail() {
           const ai = (raw?.serpapi_ai || null)
           const organics = (raw?.serpapi?.organic_results || raw?.serpapi_search?.organic_results || [])
           return (
-            <AiOverview source={source} ai={ai} organics={organics} />
+            <AiOverview
+              source={source}
+              ai={ai}
+              organics={organics}
+              runId={id}
+              projectId={detail?.project_id}
+              promptVersionId={detail?.prompt_version_id}
+              engineName={detail?.engine?.name}
+              subprojectId={detail?.subproject_id}
+            />
           )
         })()}
       </section>
@@ -403,9 +414,9 @@ export default function RunDetail() {
             <Card title="Modelo" value={detail.model_name || detail.engine?.name} />
             <Card title="Latência" value={typeof detail.latency_ms === 'number' ? `${detail.latency_ms} ms` : '-'} />
             <Card title="Custo" value={typeof detail.cost_usd === 'number' ? `$${detail.cost_usd.toFixed(4)}` : '-'} />
-            <Card title="Tokens (in)" value={typeof detail.tokens_input === 'number' ? detail.tokens_input : '-'} />
-            <Card title="Tokens (out)" value={typeof detail.tokens_output === 'number' ? detail.tokens_output : '-'} />
-            <Card title="Tokens (total)" value={typeof detail.tokens_total === 'number' ? detail.tokens_total : '-'} />
+            <Card title="Tokens (in)" value={typeof detail.tokens_input === 'number' ? formatNumberCompact(detail.tokens_input) : '-'} />
+            <Card title="Tokens (out)" value={typeof detail.tokens_output === 'number' ? formatNumberCompact(detail.tokens_output) : '-'} />
+            <Card title="Tokens (total)" value={typeof detail.tokens_total === 'number' ? formatNumberCompact(detail.tokens_total) : '-'} />
           </div>
         </section>
       )}

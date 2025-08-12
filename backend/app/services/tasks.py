@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.models import Run, Evidence, Citation, Domain, Engine, RunEvent, Insight
 from app.services.insights import generate_basic_insights
+from app.services.kpis import compute_run_report
 from app.services.normalization import normalize_domain
 from app.services.engine_runner import run_engine
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
@@ -200,6 +201,12 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             run.our_citations_count = our_citations_count
             run.unique_domains_count = unique_domains_count
             run.cost_usd = cost_usd
+        except Exception:
+            pass
+
+        # KPI (AMR/DCR/ZCRS) – calcular e persistir ao final da run para alimentar os painéis
+        try:
+            _ = compute_run_report(db, run.id)
         except Exception:
             pass
 
