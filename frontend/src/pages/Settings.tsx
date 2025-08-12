@@ -34,6 +34,12 @@ export default function SettingsPage() {
     dynamic_threshold: 0.7,
     search_context_size: 'low',
   })
+  // Google SERP — criação rápida
+  const [newSerp, setNewSerp] = useState({
+    use_serpapi: true,
+    serpapi_ai_overview: true,
+    serpapi_no_cache: false,
+  })
 
   const refresh = async () => {
     try {
@@ -117,6 +123,27 @@ export default function SettingsPage() {
       }
       const res = await axios.post(`${API}/projects/${projectId}/engines`, payload)
       toast.success(`Engine Gemini criada: ${res.data.id}`)
+      await refresh()
+    } catch (e: any) {
+      toast.error('Falha ao criar engine: ' + e.message)
+    }
+  }
+
+  const createSerpEngine = async () => {
+    if (!projectId) { toast.error('Defina o Project ID acima'); return }
+    try {
+      const payload = {
+        name: 'google_serp',
+        region: 'BR',
+        device: 'desktop',
+        config_json: {
+          use_serpapi: !!newSerp.use_serpapi,
+          serpapi_ai_overview: !!newSerp.serpapi_ai_overview,
+          serpapi_no_cache: !!newSerp.serpapi_no_cache,
+        },
+      }
+      const res = await axios.post(`${API}/projects/${projectId}/engines`, payload)
+      toast.success(`Engine Google SERP criada: ${res.data.id}`)
       await refresh()
     } catch (e: any) {
       toast.error('Falha ao criar engine: ' + e.message)
@@ -281,6 +308,23 @@ export default function SettingsPage() {
           </div>
           <div className="text-xs opacity-70">
             Recomendações: para pesquisas rápidas, use <code>gemini-2.5-flash</code> e ative web search. Para respostas mais robustas e melhor grounding, use <code>gemini-2.5-pro</code>.
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Engines — Google SERP</h2>
+        <div className="border rounded-md p-3 grid gap-3 text-sm">
+          <div className="grid sm:grid-cols-3 gap-2">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={newSerp.use_serpapi} onChange={(e)=>setNewSerp(s=>({ ...s, use_serpapi: e.target.checked }))} /> Usar SerpApi</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={newSerp.serpapi_ai_overview} onChange={(e)=>setNewSerp(s=>({ ...s, serpapi_ai_overview: e.target.checked }))} /> Preferir AI Overview</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={newSerp.serpapi_no_cache} onChange={(e)=>setNewSerp(s=>({ ...s, serpapi_no_cache: e.target.checked }))} /> Ignorar cache (no_cache)</label>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={createSerpEngine}>Criar engine</Button>
+          </div>
+          <div className="text-xs opacity-70">
+            Requer chave SerpApi salva em Configurações. O adaptador fará busca padrão e, se existir, usará AI Overview embutido ou via page_token com `engine=google_ai_overview`.
           </div>
         </div>
       </section>

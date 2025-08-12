@@ -51,7 +51,7 @@ const ENGINE_OPTIONS = [
   { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro' } },
   { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
   { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro' } },
-  { label: 'Google SERP (SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true } },
+  { label: 'Google SERP (AI Overview via SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true, serpapi_ai_overview: true, serpapi_no_cache: false } },
 ]
 
 export default function Runs() {
@@ -438,6 +438,11 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [country, setCountry] = useState<string>('')
   const [city, setCity] = useState<string>('')
   const [region, setRegion] = useState<string>('')
+  // Google SERP opções
+  const isGoogleSerp = ENGINE_OPTIONS[engineIdx]?.name === 'google_serp'
+  const [serpUseSerpapi, setSerpUseSerpapi] = useState<boolean>(true)
+  const [serpAiOverview, setSerpAiOverview] = useState<boolean>(true)
+  const [serpNoCache, setSerpNoCache] = useState<boolean>(false)
 
   useEffect(() => {
     axios.get<Project[]>(`${API}/projects`).then((r) => {
@@ -494,6 +499,13 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             ...((country || city || region) ? { user_location: { type: 'approximate', country: country || undefined, city: city || undefined, region: region || undefined } } : {}),
             ...(systemPrompt ? { system: systemPrompt } : {}),
           }
+        } else if (engine.name === 'google_serp') {
+          cfg = {
+            ...cfg,
+            use_serpapi: serpUseSerpapi,
+            serpapi_ai_overview: serpAiOverview,
+            serpapi_no_cache: serpNoCache,
+          }
         }
         await axios.post(`${API}/runs`, {
           project_id: projectId,
@@ -528,6 +540,13 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             ...((country || city || region) ? { user_location: { type: 'approximate', country: country || undefined, city: city || undefined, region: region || undefined } } : {}),
             ...(systemPrompt ? { system: systemPrompt } : {}),
           }
+        } else if (engine.name === 'google_serp') {
+          cfg = {
+            ...cfg,
+            use_serpapi: serpUseSerpapi,
+            serpapi_ai_overview: serpAiOverview,
+            serpapi_no_cache: serpNoCache,
+          }
         }
         await axios.post(`${API}/runs`, {
           project_id: projectId,
@@ -560,6 +579,13 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             ...(forceTool ? { web_search_force: true } : {}),
             ...((country || city || region) ? { user_location: { type: 'approximate', country: country || undefined, city: city || undefined, region: region || undefined } } : {}),
             ...(systemPrompt ? { system: systemPrompt } : {}),
+          }
+        } else if (engine.name === 'google_serp') {
+          cfg = {
+            ...cfg,
+            use_serpapi: serpUseSerpapi,
+            serpapi_ai_overview: serpAiOverview,
+            serpapi_no_cache: serpNoCache,
           }
         }
         await axios.post(`${API}/runs`, {
@@ -679,6 +705,21 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
                 <textarea value={systemPrompt} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setSystemPrompt(e.target.value)} className="min-h-[80px] p-2 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent" />
               </label>
               <div className="text-[11px] opacity-60">Dica: use search_context_size = low para reduzir tokens (in).</div>
+            </div>
+          )}
+          {isGoogleSerp && (
+            <div className="grid gap-2 p-3 rounded-md border border-neutral-200 dark:border-neutral-800">
+              <div className="text-sm font-medium">Google SERP – SerpApi / AI Overview</div>
+              <label className="text-sm flex items-center gap-2">
+                <input type="checkbox" checked={serpUseSerpapi} onChange={(e) => setSerpUseSerpapi(e.target.checked)} /> Usar SerpApi
+              </label>
+              <label className="text-sm flex items-center gap-2">
+                <input type="checkbox" checked={serpAiOverview} onChange={(e) => setSerpAiOverview(e.target.checked)} /> Preferir AI Overview
+              </label>
+              <label className="text-sm flex items-center gap-2">
+                <input type="checkbox" checked={serpNoCache} onChange={(e) => setSerpNoCache(e.target.checked)} /> Ignorar cache (no_cache)
+              </label>
+              <div className="text-[11px] opacity-60">Requer chave SerpApi válida em Configurações. AI Overview será usado quando disponível; caso contrário, cai para resultados orgânicos ou Playwright.</div>
             </div>
           )}
           <label className="grid gap-1">
