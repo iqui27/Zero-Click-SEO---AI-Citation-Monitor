@@ -1,0 +1,17 @@
+# SEO Analyzer Automated Tasks
+# Copy this file to /etc/cron.d/seo-analyzer-cron
+#
+# Format: minute hour day month weekday user command
+
+# Daily database backup at 2:30 AM
+30 2 * * * root /opt/seo-analyzer/scripts/backup-database.sh local >> /var/log/seo-analyzer-backup.log 2>&1
+
+# Weekly health check and service restart if needed (every Sunday at 3:00 AM)
+0 3 * * 0 root /opt/seo-analyzer/scripts/monitor-services.sh health >> /var/log/seo-analyzer-health.log 2>&1
+
+# Monthly cleanup of old log files (first day of month at 4:00 AM)
+0 4 1 * * root find /var/log -name "seo-analyzer-*.log" -mtime +30 -delete
+
+# Example for automated updates (commented out - uncomment if you want automatic updates)
+# Weekly automatic update every Sunday at 1:00 AM
+# 0 1 * * 0 root /opt/seo-analyzer/scripts/update-app.sh >> /var/log/seo-analyzer-update.log 2>&1
