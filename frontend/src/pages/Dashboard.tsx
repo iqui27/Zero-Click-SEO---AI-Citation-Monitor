@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { formatNumberCompact } from '../lib/utils'
 import axios from 'axios'
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts'
 import { Button } from '../components/ui/button'
@@ -34,6 +35,19 @@ export default function Dashboard() {
     axios.get(`${API}/analytics/costs`).then(r => setCosts(r.data)).catch(()=>{})
   }, [])
 
+  const fmtDate = (s: string) => {
+    try {
+      const d = new Date(s)
+      if (!isNaN(d.getTime())) return d.toLocaleDateString('pt-BR')
+      return (s || '').split('T')[0]
+    } catch { return (s || '').split('T')[0] }
+  }
+  const fmtNum = (n: any, decimals = 2) => {
+    const v = Number(n)
+    if (!isFinite(v)) return n
+    return v.toFixed(decimals)
+  }
+
   return (
     <div className="space-y-4">
       <ActiveContextBar />
@@ -60,7 +74,7 @@ export default function Dashboard() {
         {costs ? (
           <>
             <KpiCard title="Custo (30d)" value={`$${(costs.total_cost_usd || 0).toFixed(4)}`} subtitle="Soma aproximada" barColor="bg-amber-500" />
-            <KpiCard title="Tokens (30d)" value={String(costs.total_tokens || 0)} subtitle="Total estimado" barColor="bg-zinc-500" />
+            <KpiCard title="Tokens (30d)" value={formatNumberCompact(costs.total_tokens || 0)} subtitle="Total estimado" barColor="bg-zinc-500" />
             <KpiCard title="Média por Run" value={`$${(costs.avg_cost_per_run || 0).toFixed(4)}`} subtitle="Ticket médio" barColor="bg-sky-500" />
           </>
         ) : (
@@ -72,16 +86,16 @@ export default function Dashboard() {
         )}
       </div>
       <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
-        <div className="border rounded-md p-2">
-          <div className="text-sm opacity-70 px-2 py-1">Evolução Temporal</div>
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+          <div className="text-sm opacity-70 mb-2">Evolução Temporal</div>
           {series ? (
-            <div style={{ height: 260 }}>
+            <div style={{ height: 280 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series}>
+                <LineChart data={series} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" hide />
                   <YAxis domain={[0, 100]} />
-                  <Tooltip />
+                  <Tooltip formatter={(value) => fmtNum(value)} labelFormatter={(label) => fmtDate(String(label))} />
                   <Legend />
                   <Line type="monotone" dataKey="zcrs_avg" name="ZCRS" stroke="#8b5cf6" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="amr_avg" name="AMR" stroke="#3b82f6" strokeWidth={2} dot={false} />
@@ -91,16 +105,16 @@ export default function Dashboard() {
             </div>
           ) : <Skeleton className="h-[260px]" />}
         </div>
-        <div className="border rounded-md p-2">
-          <div className="text-sm opacity-70 px-2 py-1">Top Domínios Citados</div>
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+          <div className="text-sm opacity-70 mb-2">Top Domínios Citados</div>
           {topDomains ? (
-            <div style={{ height: 260 }}>
+            <div style={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topDomains} layout="vertical">
+                <BarChart data={topDomains} layout="vertical" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="domain" width={140} />
-                  <Tooltip />
+                  <YAxis type="category" dataKey="domain" width={240} tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value) => fmtNum(value, 0)} />
                   <Bar dataKey="count" fill="#111827" />
                 </BarChart>
               </ResponsiveContainer>
@@ -108,16 +122,16 @@ export default function Dashboard() {
           ) : <Skeleton className="h-[260px]" />}
         </div>
       </div>
-      <div className="border rounded-md p-2">
-        <div className="text-sm opacity-70 px-2 py-1">Desempenho por Engine</div>
+      <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+        <div className="text-sm opacity-70 mb-2">Desempenho por Engine</div>
         {perf ? (
-          <div style={{ height: 260 }}>
+          <div style={{ height: 300 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={perf}>
+              <BarChart data={perf} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="engine" />
                 <YAxis domain={[0, 100]} />
-                <Tooltip />
+                <Tooltip formatter={(value) => fmtNum(value)} />
                 <Legend />
                 <Bar dataKey="amr_avg" name="AMR" fill="#3b82f6" />
                 <Bar dataKey="dcr_avg" name="DCR" fill="#22c55e" />
@@ -132,19 +146,80 @@ export default function Dashboard() {
 }
 
 function ActiveContextBar() {
-  const [project, setProject] = useState<string>('')
-  const [theme, setTheme] = useState<string>('')
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([])
+  const [projectId, setProjectId] = useState<string>('')
+  const [themes, setThemes] = useState<Array<{ id: string; name: string }>>([])
+  const [themeId, setThemeId] = useState<string>('')
+
   useEffect(() => {
-    setProject(localStorage.getItem('project_id') || '')
-    setTheme(localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || '')
+    const pid = localStorage.getItem('project_id') || ''
+    const sp = localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || ''
+    setProjectId(pid)
+    setThemeId(sp)
+    axios.get('/api/projects').then(r => setProjects(r.data || []))
   }, [])
-  if (!project && !theme) return null
+
+  useEffect(() => {
+    if (!projectId) { setThemes([]); return }
+    axios.get(`/api/projects/${projectId}/subprojects`).then(r => setThemes(r.data || []))
+  }, [projectId])
+
+  const onChangeProject = (id: string) => {
+    setProjectId(id)
+    localStorage.setItem('project_id', id)
+    setThemeId('')
+    localStorage.removeItem('theme_focus')
+    localStorage.removeItem('subproject_focus')
+    window.location.reload()
+  }
+
+  const onChangeTheme = (id: string) => {
+    setThemeId(id)
+    if (id) {
+      localStorage.setItem('theme_focus', id)
+      localStorage.setItem('subproject_focus', id)
+    } else {
+      localStorage.removeItem('theme_focus')
+      localStorage.removeItem('subproject_focus')
+    }
+    window.location.reload()
+  }
+
+  const projectName = projects.find(p => p.id === projectId)?.name || projectId
+  const themeName = themes.find(t => t.id === themeId)?.name || themeId
+
   return (
-    <div className="text-xs px-2 py-1 border rounded-md flex items-center gap-2">
-      {project && <span>Projeto: <span className="font-medium">{project}</span></span>}
-      {theme && <span>Tema: <span className="font-medium">{theme}</span></span>}
-      <a href="/settings" className="ml-auto underline">alterar</a>
-      <button className="underline" onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}>limpar</button>
+    <div className="text-xs px-2 py-2 border rounded-md flex flex-wrap items-center gap-2 bg-white dark:bg-neutral-900">
+      <div className="flex items-center gap-2">
+        <span className="opacity-70">Projeto:</span>
+        <select
+          className="px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent"
+          value={projectId}
+          onChange={(e) => onChangeProject(e.target.value)}
+        >
+          <option value="">— selecionar —</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="opacity-70">Tema:</span>
+        <select
+          className="px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent"
+          value={themeId}
+          onChange={(e) => onChangeTheme(e.target.value)}
+          disabled={!projectId}
+        >
+          <option value="">— todos —</option>
+          {themes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </div>
+      <span className="ml-auto" />
+      {projectId && <span className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700">{projectName}</span>}
+      {themeId && <span className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700">{themeName}</span>}
+      <button
+        className="underline"
+        onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}
+      >limpar</button>
     </div>
   )
 }

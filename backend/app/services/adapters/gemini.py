@@ -107,12 +107,46 @@ class GeminiAdapter:
                     data = resp.to_dict()  # structured dict with candidates + groundingMetadata
                 except Exception:
                     data = {"text": getattr(resp, "text", ""), "raw": str(resp)}
+                # Se não extrairmos texto de imediato, tentar um minimal fallback pedindo saída textual
+                try:
+                    cand = (data.get("candidates") or [{}])[0]
+                    parts = cand.get("content", {}).get("parts", [])
+                    has_text = any((p.get("text") or "").strip() for p in parts)
+                except Exception:
+                    has_text = bool(data.get("text"))
+                if not has_text:
+                    try:
+                        resp2 = self.client.models.generate_content(
+                            model=model_name,
+                            contents="Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final.",
+                            config=config,
+                        )
+                        d2 = resp2.to_dict()
+                        # anexar ao payload para o parse ter alternativas
+                        data["fallback"] = d2
+                    except Exception:
+                        pass
                 return {"raw_url": None, "raw": data}
             except Exception as e:
                 msg = str(e)
                 errors.append(f"{strategy}: {msg}")
-                # Continue only for tool/field/argument issues
-                if any(t in msg for t in ("Unknown field", "INVALID_ARGUMENT", "not recognized", "unrecognized")):
+                # Continue for tool/field issues OR transient/server errors (5xx/timeouts)
+                lower = msg.lower()
+                transient_markers = (
+                    "internal server error",
+                    "unavailable",
+                    "deadline exceeded",
+                    "timeout",
+                    "temporarily",
+                    "bad gateway",
+                    "gateway timeout",
+                    "503",
+                    "502",
+                    "500",
+                )
+                if any(t in msg for t in ("Unknown field", "INVALID_ARGUMENT", "not recognized", "unrecognized")) or any(
+                    t in lower for t in transient_markers
+                ):
                     continue
                 return {"raw_url": None, "raw": {"error": "fetch_failed", "message": msg, "request": input}}
 
@@ -132,6 +166,13 @@ class GeminiAdapter:
             # Fallback if present
             if not text and isinstance(data.get("text"), str):
                 text = data.get("text") or ""
+            # Fallback 2: tentar payload de fallback
+            if not text and isinstance(data.get("fallback"), dict):
+                fc = data.get("fallback") or {}
+                c2 = (fc.get("candidates") or [{}])[0]
+                p2 = c2.get("content", {}).get("parts", [])
+                if p2:
+                    text = "".join(x.get("text") or "" for x in p2)
         except Exception:
             text = data.get("text") or ""
 
@@ -141,7 +182,7 @@ class GeminiAdapter:
             cand0 = (data.get("candidates") or [{}])[0]
             gm = cand0.get("groundingMetadata", {}) or cand0.get("grounding_metadata", {})
             # Grounding chunks
-            for ch in gm.get("groundingChunks", []):
+            for ch in gm.get("groundingChunks", []) + gm.get("grounding_chunks", []):
                 web = ch.get("web") or {}
                 uri = web.get("uri") or web.get("url")
                 if uri:

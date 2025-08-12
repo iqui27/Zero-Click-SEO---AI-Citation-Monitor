@@ -51,7 +51,8 @@ def compute_run_report(db: Session, run_id: str) -> RunReport:
     engine = db.get(Engine, run.engine_id)
     project = db.get(Project, run.project_id)
     domains = db.query(Domain).filter(Domain.project_id == project.id).all()
-    our_domains = {d.domain for d in domains}
+    # Normalizar domínios do projeto para compatibilizar com Citation.domain normalizado
+    our_domains = {normalize_domain(d.domain) for d in domains if d.domain}
 
     amr = compute_amr(citations, our_domains)
     dcr = compute_dcr(citations, our_domains)

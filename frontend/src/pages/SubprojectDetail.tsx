@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom'
 import axios from 'axios'
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts'
 import { Button } from '../components/ui/button'
+import { formatNumberCompact } from '../lib/utils'
+import KpiExplainer from '../components/KpiExplainer'
 import { Toaster, toast } from 'sonner'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
@@ -42,6 +44,7 @@ export default function SubprojectDetail() {
   const [perf, setPerf] = useState<PerfByEngine[]>([])
   const [projectName, setProjectName] = useState<string>('')
   const [projectId, setProjectId] = useState<string>('')
+  const [projectDomains, setProjectDomains] = useState<{ id: string; domain: string; is_primary: boolean }[]>([])
   const [subprojectName, setSubprojectName] = useState<string>('')
   const [tab, setTab] = useState<'overview'|'runs'|'insights'>('overview')
   const [statusFilter, setStatusFilter] = useState<string>('')
@@ -82,6 +85,10 @@ export default function SubprojectDetail() {
             setProjectName(p.name)
             setProjectId(p.id)
             if (!subprojectName) setSubprojectName(found.name)
+            try {
+              const dom = await axios.get(`${API}/projects/${p.id}/domains`).then(r => r.data)
+              setProjectDomains(dom.map((d: any) => ({ id: d.id, domain: d.domain, is_primary: !!d.is_primary })))
+            } catch {}
             break
           }
         }
@@ -168,7 +175,7 @@ export default function SubprojectDetail() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 md:space-y-6">
       {/* Cabeçalho e ações */}
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold">{subprojectName || `Tema ${id}`}</h1>
@@ -188,14 +195,28 @@ export default function SubprojectDetail() {
         </div>
       </div>
 
+      {/* Domínios do projeto */}
+      {!!projectDomains.length && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs opacity-70 mr-1">Domínios do projeto:</span>
+          {projectDomains.map(d => (
+            <span key={d.id} className={`text-xs px-2 py-0.5 rounded-full border ${d.is_primary ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'border-neutral-300 dark:border-neutral-700'}`}>
+              {d.domain}{d.is_primary ? ' (primário)' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
         <Card title="Total Runs" value={ov?.total_runs ?? 0} />
         <Card title="AMR médio" value={(ov?.amr_avg ?? 0).toFixed(2)} />
         <Card title="DCR médio" value={(ov?.dcr_avg ?? 0).toFixed(2)} />
         <Card title="ZCRS médio" value={(ov?.zcrs_avg ?? 0).toFixed(1)} />
         <Card title="Custo (amostra)" value={`$${sampleCost.toFixed(4)}`} />
-        <Card title="Tokens (amostra)" value={sampleTokens} />
+        <Card title="Tokens (amostra)" value={formatNumberCompact(sampleTokens)} />
       </div>
+
+      <KpiExplainer />
 
       {/* Tabs */}
       <div className="flex items-center gap-2 border-b border-neutral-200 dark:border-neutral-800">
@@ -212,10 +233,10 @@ export default function SubprojectDetail() {
 
       {tab === 'overview' && (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="col-span-2 border rounded-md p-2">
-              <div className="text-sm opacity-70 mb-1">ZCRS médio por dia</div>
-              <div style={{ height: 260 }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="col-span-2 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+          <div className="text-sm opacity-70 mb-2">ZCRS médio por dia</div>
+          <div style={{ height: 280 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={series}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -227,8 +248,8 @@ export default function SubprojectDetail() {
                 </ResponsiveContainer>
               </div>
             </div>
-            <div className="border rounded-md p-2">
-              <div className="text-sm opacity-70 mb-1">Domínios mais citados</div>
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+          <div className="text-sm opacity-70 mb-2">Domínios mais citados</div>
               <div className="grid gap-2 text-sm">
                 {tops.map((t, i) => (
                   <div key={i} className="grid gap-1">
@@ -236,8 +257,8 @@ export default function SubprojectDetail() {
                       <span className="truncate">{t.domain}</span>
                       <span className="opacity-70">{t.count}</span>
                     </div>
-                    <div className="h-1.5 bg-neutral-200 dark:bg-neutral-800 rounded">
-                      <div className="h-1.5 bg-neutral-900 dark:bg-neutral-100 rounded" style={{ width: `${Math.min(100, Math.round((t.count / maxTop) * 100))}%` }} />
+                <div className="h-2 bg-neutral-200 dark:bg-neutral-800 rounded">
+                  <div className="h-2 bg-neutral-900 dark:bg-neutral-100 rounded" style={{ width: `${Math.min(100, Math.round((t.count / maxTop) * 100))}%` }} />
                     </div>
                   </div>
                 ))}
@@ -246,10 +267,10 @@ export default function SubprojectDetail() {
             </div>
           </div>
 
-          {!!perf.length && (
-            <div className="border rounded-md p-2">
-              <div className="text-sm opacity-70 mb-2">Performance por Engine</div>
-              <div style={{ height: 260 }}>
+      {!!perf.length && (
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
+          <div className="text-sm opacity-70 mb-2">Performance por Engine</div>
+          <div style={{ height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={perf}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -269,7 +290,7 @@ export default function SubprojectDetail() {
       )}
 
       {!!perf.length && (
-        <div className="border rounded-md p-2">
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
           <div className="text-sm opacity-70 mb-2">Performance por Engine</div>
           <div className="overflow-auto">
             <table className="min-w-full text-sm">

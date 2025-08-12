@@ -119,7 +119,8 @@ export default function SettingsPage() {
         name: 'gemini',
         region: 'BR',
         device: 'desktop',
-        config_json: cfg,
+        // Engines criadas via Settings são "principais"
+        config_json: { _main: true, ...cfg },
       }
       const res = await axios.post(`${API}/projects/${projectId}/engines`, payload)
       toast.success(`Engine Gemini criada: ${res.data.id}`)
@@ -136,7 +137,9 @@ export default function SettingsPage() {
         name: 'google_serp',
         region: 'BR',
         device: 'desktop',
+        // Engines criadas via Settings são "principais"
         config_json: {
+          _main: true,
           use_serpapi: !!newSerp.use_serpapi,
           serpapi_ai_overview: !!newSerp.serpapi_ai_overview,
           serpapi_no_cache: !!newSerp.serpapi_no_cache,
@@ -144,6 +147,24 @@ export default function SettingsPage() {
       }
       const res = await axios.post(`${API}/projects/${projectId}/engines`, payload)
       toast.success(`Engine Google SERP criada: ${res.data.id}`)
+      await refresh()
+    } catch (e: any) {
+      toast.error('Falha ao criar engine: ' + e.message)
+    }
+  }
+
+  const createOpenAIEngineMini = async () => {
+    if (!projectId) { toast.error('Defina o Project ID acima'); return }
+    try {
+      const payload = {
+        name: 'openai',
+        region: 'BR',
+        device: 'desktop',
+        // Engines criadas via Settings são "principais"
+        config_json: { _main: true, model: 'gpt-5-mini', web_search: true, search_context_size: 'low', reasoning_effort: 'low' },
+      }
+      const res = await axios.post(`${API}/projects/${projectId}/engines`, payload)
+      toast.success(`Engine OpenAI GPT-5 mini criada: ${res.data.id}`)
       await refresh()
     } catch (e: any) {
       toast.error('Falha ao criar engine: ' + e.message)
@@ -177,6 +198,20 @@ export default function SettingsPage() {
       toast.success('Engine atualizada')
     } catch (err: any) {
       toast.error('JSON inválido para config_json')
+    }
+  }
+
+  const deleteEngine = async (e: Engine) => {
+    try {
+      const res = await axios.delete(`${API}/engines/${e.id}`)
+      if (res.data?.archived) {
+        toast.success('Engine arquivada (existem runs associadas)')
+      } else {
+        toast.success('Engine excluída')
+      }
+      await refresh()
+    } catch (err: any) {
+      toast.error('Falha ao remover engine: ' + err.message)
     }
   }
 
@@ -242,6 +277,17 @@ export default function SettingsPage() {
             ))}
             {!domains.length && <div className="text-sm opacity-70">Nenhum domínio cadastrado.</div>}
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Engines — OpenAI</h2>
+        <div className="border rounded-md p-3 grid gap-3 text-sm">
+          <div className="text-sm">Criar engine padrão para <code>gpt-5-mini</code> com web search.</div>
+          <div className="flex justify-end">
+            <Button onClick={createOpenAIEngineMini}>Criar GPT‑5 mini</Button>
+          </div>
+          <div className="text-xs opacity-70">Observação: alguns modelos não aceitam parâmetro de raciocínio; o backend já contorna automaticamente.</div>
         </div>
       </section>
 
@@ -333,7 +379,7 @@ export default function SettingsPage() {
         <h2 className="text-lg font-medium">Engines</h2>
         <div className="grid gap-2">
           {engines.map(e => (
-            <EngineCard key={e.id} engine={e} onSave={updateEngine} />
+            <EngineCard key={e.id} engine={e} onSave={updateEngine} onDelete={deleteEngine} />
           ))}
           {!engines.length && <div className="text-sm opacity-70">Nenhuma engine cadastrada ainda (é criada na primeira run).</div>}
         </div>
@@ -342,7 +388,7 @@ export default function SettingsPage() {
   )
 }
 
-function EngineCard({ engine, onSave }: { engine: Engine; onSave: (e: Engine, cfg: string) => void }) {
+function EngineCard({ engine, onSave, onDelete }: { engine: Engine; onSave: (e: Engine, cfg: string) => void; onDelete: (e: Engine) => void }) {
   const [cfg, setCfg] = useState(JSON.stringify(engine.config_json || {}, null, 2))
   const [expanded, setExpanded] = useState<boolean>(false)
   const isGemini = (engine.name || '').toLowerCase() === 'gemini'
@@ -353,8 +399,12 @@ function EngineCard({ engine, onSave }: { engine: Engine; onSave: (e: Engine, cf
   return (
     <div className="border rounded-md p-3 grid gap-2 text-sm">
       <div className="flex items-center gap-2">
-        <strong className="flex-1">{engine.name}</strong>
-        <span className="opacity-70">{engine.id}</span>
+        <div className="flex flex-col flex-1">
+          <strong>{engine.name}</strong>
+          <span className="text-[11px] opacity-60">{engine.region || '—'} · {engine.device || '—'}</span>
+        </div>
+        <span className="opacity-50 text-[11px] mr-2">{engine.id}</span>
+        <Button variant="outline" size="sm" onClick={()=>onDelete(engine)}>Remover</Button>
       </div>
       {isGemini ? (
         <GeminiConfigEditor initial={engine.config_json || {}} onSave={(obj)=>onSave(engine, JSON.stringify(obj))} />

@@ -79,9 +79,10 @@ class OpenAIAdapter:
                 "input": input["query"],
                 "max_output_tokens": max_output_tokens,
             }
-            # Reduzir gasto só em raciocínio e garantir resposta
+            # Raciocínio: alguns modelos (ex.: gpt-4.1) não aceitam o campo reasoning
             reasoning_effort = (cfg.get("reasoning_effort") or "low")
-            kwargs["reasoning"] = {"effort": reasoning_effort}
+            if isinstance(model, str) and model.lower().startswith("gpt-5"):
+                kwargs["reasoning"] = {"effort": reasoning_effort}
             if tools:
                 kwargs["tools"] = tools
                 # tool_choice configurable
@@ -92,7 +93,33 @@ class OpenAIAdapter:
                     kwargs["tool_choice"] = {"type": "web_search_preview"}
                 else:
                     kwargs["tool_choice"] = "auto"
-            resp = self.client.responses.create(**kwargs)  # type: ignore[attr-defined]
+            def _create_with(kwargs_: Dict[str, Any]):
+                return self.client.responses.create(**kwargs_)  # type: ignore[attr-defined]
+
+            # Estratégia de tentativas progressivas: full → sem reasoning → sem tools
+            last_err: Exception | None = None
+            resp = None
+            for attempt in ("full", "no_reasoning", "no_tools"):
+                try:
+                    if attempt == "no_reasoning":
+                        kwargs.pop("reasoning", None)
+                    if attempt == "no_tools":
+                        kwargs.pop("tools", None)
+                        kwargs.pop("tool_choice", None)
+                    resp = _create_with(kwargs)
+                    break
+                except Exception as e_first:
+                    last_err = e_first
+                    # heurística: se erro não parecer relacionado a reasoning/tools, não continuar
+                    msg = str(e_first)
+                    if attempt == "full" and ("reasoning" in msg or "Unsupported parameter" in msg or "unrecognized" in msg or "tool" in msg):
+                        continue
+                    if attempt == "no_reasoning" and ("unrecognized" in msg or "tool" in msg):
+                        continue
+                    # outros erros: abortar
+                    break
+            if resp is None and last_err is not None:
+                raise last_err
             # Extrair de forma robusta o dict completo da resposta
             raw_dict: Dict[str, Any] = {}
             try:

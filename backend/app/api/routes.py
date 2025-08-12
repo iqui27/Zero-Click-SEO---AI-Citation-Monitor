@@ -243,12 +243,19 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
             req_cfg = engine_payload.config_json or None
             cur_cfg = engine.config_json or None
             if req_cfg is not None and req_cfg != cur_cfg:
+                # marcar como efêmera para não poluir a listagem de engines do projeto
+                tmp_cfg = dict(req_cfg)
+                try:
+                    tmp_cfg.setdefault("_ephemeral", True)
+                    tmp_cfg.pop("_main", None)
+                except Exception:
+                    tmp_cfg = req_cfg
                 engine = Engine(
                     project_id=payload.project_id,
                     name=engine_payload.name,
                     region=engine_payload.region,
                     device=engine_payload.device,
-                    config_json=req_cfg,
+                    config_json=tmp_cfg,
                 )
                 db.add(engine)
                 db.commit()
@@ -290,12 +297,19 @@ def create_engine(project_id: str, payload: EngineCreate, db: Session = Depends(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    # As engines criadas via Settings são consideradas "principais" por padrão
+    cfg = payload.config_json or {}
+    try:
+        if isinstance(cfg, dict):
+            cfg.setdefault("_main", True)
+    except Exception:
+        pass
     e = Engine(
         project_id=project_id,
         name=payload.name,
         region=payload.region,
         device=payload.device,
-        config_json=payload.config_json or {},
+        config_json=cfg,
     )
     db.add(e)
     db.commit()
@@ -590,6 +604,40 @@ def list_run_events(run_id: str, db: Session = Depends(get_db)):
         for e in evs
     ]
 
+
+@api_router.post("/runs/{run_id}/link-ai-overview")
+def link_ai_overview(run_id: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    src = db.get(Run, run_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Run não encontrado")
+    target_id = (payload or {}).get("target_run_id")
+    if not target_id:
+        raise HTTPException(status_code=400, detail="target_run_id requerido")
+    tgt = db.get(Run, target_id)
+    if not tgt:
+        raise HTTPException(status_code=404, detail="Run alvo não encontrado")
+    # Registrar como evento para manter histórico e evitar migração de schema
+    ev = RunEvent(run_id=run_id, step="ai_overview_link", status="ok", message=target_id)
+    db.add(ev)
+    db.commit()
+    return {"ok": True, "linked_run_id": target_id}
+
+
+@api_router.get("/runs/{run_id}/ai-overview-source")
+def get_ai_overview_source(run_id: str, db: Session = Depends(get_db)):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrado")
+    engine = db.get(Engine, run.engine_id)
+    if engine and (engine.name or "").lower() == "google_serp":
+        return {"run_id": run_id}
+    ev = (
+        db.query(RunEvent)
+        .filter(RunEvent.run_id == run_id, RunEvent.step == "ai_overview_link")
+        .order_by(RunEvent.created_at.desc())
+        .first()
+    )
+    return {"run_id": (ev.message if ev else None)}
 
 @api_router.get("/runs/{run_id}/stream")
 async def stream_run(run_id: str):
@@ -1032,7 +1080,43 @@ def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
 
 @api_router.get("/projects/{project_id}/engines")
 def list_engines(project_id: str, db: Session = Depends(get_db)):
+    """Lista apenas engines principais para o projeto.
+
+    Regras:
+    - Oculta engines efêmeras (config_json._ephemeral == true).
+    - Deduplica por "name", escolhendo a melhor candidata por prioridade:
+      1) config_json._main == true
+      2) region == 'BR' e device == 'desktop'
+      3) primeira ocorrência
+    """
     engs = db.query(Engine).filter(Engine.project_id == project_id).all()
+    # agrupar por nome com heurística de escolha
+    best_by_name: dict[str, Engine] = {}
+
+    def is_ephemeral(cfg: dict | None) -> bool:
+        return bool(isinstance(cfg, dict) and cfg.get("_ephemeral"))
+    def is_archived(cfg: dict | None) -> bool:
+        return bool(isinstance(cfg, dict) and cfg.get("_archived"))
+
+    def score(e: Engine) -> tuple[int, int]:
+        cfg = e.config_json or {}
+        # maior é melhor
+        s_main = 1 if (isinstance(cfg, dict) and cfg.get("_main") is True) else 0
+        s_brdesk = 1 if (str(e.region or "").upper() == "BR" and str(e.device or "").lower() == "desktop") else 0
+        return (s_main, s_brdesk)
+
+    for e in engs:
+        if is_ephemeral(e.config_json) or is_archived(e.config_json):
+            continue
+        cur = best_by_name.get(e.name)
+        if cur is None:
+            best_by_name[e.name] = e
+        else:
+            if score(e) > score(cur):
+                best_by_name[e.name] = e
+
+    # Ordenar alfabeticamente por nome para estabilidade
+    chosen = [best_by_name[k] for k in sorted(best_by_name.keys())]
     return [
         {
             "id": e.id,
@@ -1041,8 +1125,29 @@ def list_engines(project_id: str, db: Session = Depends(get_db)):
             "device": e.device,
             "config_json": e.config_json,
         }
-        for e in engs
+        for e in chosen
     ]
+
+
+@api_router.delete("/engines/{engine_id}")
+def delete_engine(engine_id: str, db: Session = Depends(get_db)):
+    e = db.get(Engine, engine_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Engine não encontrada")
+    runs_count = db.query(func.count(Run.id)).filter(Run.engine_id == engine_id).scalar() or 0
+    if runs_count > 0:
+        # Se há runs associadas, arquiva em vez de deletar para não quebrar FK
+        cfg = e.config_json or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg["_archived"] = True
+        e.config_json = cfg
+        db.commit()
+        db.refresh(e)
+        return {"archived": True, "runs": int(runs_count)}
+    db.delete(e)
+    db.commit()
+    return {"deleted": True}
 
 
 @api_router.patch("/engines/{engine_id}")
