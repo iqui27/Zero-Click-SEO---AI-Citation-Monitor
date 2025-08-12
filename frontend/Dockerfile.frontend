@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.6
+
+############################################
+# Stage 1: Build frontend with Node + Alpine
+############################################
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
+
+# Required by some Node modules on Alpine
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# Only copy lockfile and package manifest first to leverage Docker layer cache
+COPY package.json package-lock.json ./
+
+# Use BuildKit cache for npm cache directory
+# Do not set NODE_ENV=production here; we need devDeps to build
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+# Copy the rest of the source and build
+COPY . .
+RUN npm run build
+
+############################################
+# Stage 2: Runtime with Caddy (serving /srv)
+############################################
+FROM caddy:alpine AS runtime
+
+# Copy build artifacts to /srv as requested
+COPY --from=builder /app/dist /srv
+
+# Provide a minimal Caddyfile to serve static assets from /srv
+# Includes SPA fallback for client-side routing (e.g., React Router)
+RUN <<'EOF' cat > /etc/caddy/Caddyfile
+:80 {
+  root * /srv
+  encode zstd gzip
+  file_server
+  try_files {path} /index.html
+}
+EOF
+
+EXPOSE 80
+
+# Caddy is the entrypoint in the base image; the config is auto-discovered at /etc/caddy/Caddyfile
+# No additional CMD needed
+

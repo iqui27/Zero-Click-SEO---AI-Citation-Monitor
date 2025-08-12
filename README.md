@@ -107,5 +107,69 @@ docker compose restart frontend
 - Subir/derrubar: `docker compose up -d --build` / `docker compose down`
 - Logs: `docker compose logs -f backend|worker|frontend`
 
+## Deploy (DigitalOcean)
+
+Passo a passo para subir em um Droplet usando Docker Compose em produção.
+
+1) Copiar artefatos para o servidor (via scp) para `/opt/seo-analyzer`:
+- Exemplos (ajuste usuário/host e a lista de arquivos):
+```
+# a partir da sua máquina local
+scp -r docker-compose.prod.yml .env USER@HOST:/opt/seo-analyzer/
+# (opcional) outros artefatos necessários
+# scp -r backend frontend docker USER@HOST:/opt/seo-analyzer/
+```
+
+2) Conectar por SSH e criar volumes/diretórios (persistência e logs):
+```
+ssh USER@HOST <<'EOF'
+  sudo mkdir -p /opt/seo-analyzer/{data/postgres,data/redis,data/storage,logs}
+  sudo chown -R $USER:$USER /opt/seo-analyzer
+EOF
+```
+
+3) Subir os serviços em modo produção (build + detach):
+```
+ssh USER@HOST "cd /opt/seo-analyzer && docker compose -f docker-compose.prod.yml up -d --build"
+```
+
+4) Smoke tests (validação rápida):
+- Verificar containers:
+```
+ssh USER@HOST "cd /opt/seo-analyzer && docker compose -f docker-compose.prod.yml ps"
+```
+- Backend respondendo (Swagger):
+```
+# de fora do servidor (na sua máquina), troque HOST pelo IP/DNS
+curl -I http://HOST:8000/docs
+```
+- Endpoint de analytics responde JSON:
+```
+curl -sSf http://HOST:8000/api/analytics/overview | head -c 500
+```
+- Teste utilitário simples (título de página):
+```
+curl -s "http://HOST:8000/api/utils/url-title?url=https://example.com"
+```
+- Logs rápidos (se necessário):
+```
+ssh USER@HOST "cd /opt/seo-analyzer && docker compose -f docker-compose.prod.yml logs --tail=100 --no-color backend"
+```
+
+Rollback
+- Se algo der errado, derrube os serviços e volte para a tag anterior do repositório no servidor:
+```
+ssh USER@HOST <<'EOF'
+  set -e
+  cd /opt/seo-analyzer
+  docker compose -f docker-compose.prod.yml down
+  # opcional: verifique as tags disponíveis
+  # git tag --list | tail -n 20
+  git checkout <tag-anterior>
+  docker compose -f docker-compose.prod.yml up -d --build
+EOF
+```
+- Observação: se você não mantém o repositório Git no servidor (apenas artefatos copiados), restaure os arquivos anteriores (ex.: `docker-compose.prod.yml` e `.env`) e execute novamente o `docker compose -f docker-compose.prod.yml up -d --build`.
+
 ---
 Contribuições: PRs e issues bem‑vindas. Ajuste as chaves em `.env` para maximizar as citações e a qualidade do grounding.
