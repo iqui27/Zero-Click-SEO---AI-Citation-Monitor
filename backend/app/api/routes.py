@@ -10,7 +10,7 @@ import csv
 import os
 
 from app.db.session import SessionLocal
-from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate
+from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, Insight
 from app.schemas.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -33,7 +33,7 @@ from app.schemas.schemas import (
 )
 from app.services.tasks import enqueue_run
 from app.services.kpis import compute_run_report
-from app.services.insights import generate_basic_insights
+from app.services.insights import generate_basic_insights, generate_subproject_insights as svc_generate_subproject_insights
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.sql import case
@@ -1373,6 +1373,34 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
         {"run_id": rid, "domain": dom or "", "url": url or ""} for (rid, dom, url) in citations
     ]
 
+    # Heurísticas por run (reuso de app.services.insights) para enriquecer o contexto do LLM
+    heuristics_data: List[Dict[str, Any]] = []
+    try:
+        runs_full = (
+            db.query(Run)
+            .filter(Run.subproject_id == subproject_id)
+            .order_by(Run.started_at.desc().nullslast())
+            .limit(200)
+            .all()
+        )
+        for r in runs_full:
+            try:
+                hs = generate_basic_insights(db, r)
+                for h in hs:
+                    heuristics_data.append({
+                        "run_id": h.run_id,
+                        "title": h.title,
+                        "description": h.description,
+                        "impact": h.impact,
+                        "effort": h.effort,
+                        "status": h.status,
+                    })
+            except Exception:
+                # heurística é auxiliar: seguir sem bloquear
+                continue
+    except Exception:
+        heuristics_data = []
+
     # Prompt de sistema para orientar estilo e seções
     system = (
         "Você é um analista sênior de SEO para Zero‑Click/AI Overviews. "
@@ -1392,6 +1420,7 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
         "data": {
             "runs": runs_ctx,
             "citations": cits_ctx,
+            "heuristics": heuristics_data,
         },
         "output_schema": {
             "summary": ["string"],
@@ -1682,6 +1711,22 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
                     recs.append({"title": f"Criar/otimizar comparativos com {top_competitor}", "impact": "high", "effort": "low"})
                 if total_tokens > 300000:
                     recs.append({"title": "Reduzir contexto e otimizar consultas (tokens altos)", "impact": "medium", "effort": "low"})
+                # aproveitar heurísticas por run
+                def _map_level(n: int | None) -> str | None:
+                    if n is None:
+                        return None
+                    return {1: "low", 2: "medium", 3: "high"}.get(int(n), None)
+                seen_titles: set[str] = set(r["title"] for r in recs)
+                for h in heuristics_data[:10]:
+                    title = (h.get("title") or "").strip()
+                    if not title or title in seen_titles:
+                        continue
+                    recs.append({
+                        "title": title,
+                        **({"impact": _map_level(h.get("impact"))} if _map_level(h.get("impact")) else {}),
+                        **({"effort": _map_level(h.get("effort"))} if _map_level(h.get("effort")) else {}),
+                    })
+                    seen_titles.add(title)
                 p["recommendations"] = recs[:6]
             if not p.get("quick_wins"):
                 q = [
@@ -1691,6 +1736,9 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
                 ]
                 if top_competitor:
                     q.insert(0, f"Publicar página 'Nossa marca vs {top_competitor}'")
+                # se heurística "Por que não citou?" apareceu, priorizar ação correspondente
+                if any((h.get("title") or "").lower().startswith("por que não citou") for h in heuristics_data):
+                    q.insert(0, "Investigar por que o domínio não foi citado e reforçar sinais E-E-A-T em páginas foco")
                 p["quick_wins"] = q[:6]
             if not p.get("topics"):
                 p["topics"] = top_tokens[:8]
