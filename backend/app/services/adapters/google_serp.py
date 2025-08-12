@@ -183,6 +183,21 @@ class GoogleSerpAdapter:
                     continue
                 links.append({"url": url, "title": title})
 
+            # Fallback: se AI Overview não trouxe 'references', usar organic_results da busca normal
+            used_fallback = False
+            if not links:
+                search_payload = (raw.get("raw") or {}).get("serpapi_search") or {}
+                for item in (search_payload.get("organic_results") or [])[:20]:
+                    url = resolve_known_redirects(item.get("link") or "")
+                    title = item.get("title")
+                    if not url:
+                        continue
+                    parsed_url = urlparse(url)
+                    if parsed_url.netloc in BLOCKED_HOSTS:
+                        continue
+                    links.append({"url": url, "title": title})
+                used_fallback = len(links) > 0
+
             # texto consolidado dos text_blocks
             def _flatten_blocks(blocks) -> str:
                 parts = []
@@ -212,7 +227,7 @@ class GoogleSerpAdapter:
                 "text": text_content,
                 "blocks": text_blocks,
                 "links": links,
-                "meta": {"engine": self.name, "source": src},
+                "meta": {"engine": self.name, "source": ("serpapi_ai_no_refs" if used_fallback else src)},
             }
 
         # 2) Resultados orgânicos via SerpApi (engine=google)
