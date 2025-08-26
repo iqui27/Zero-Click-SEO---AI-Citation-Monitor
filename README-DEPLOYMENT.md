@@ -2,32 +2,35 @@
 
 ## 🚀 Quick Start
 
-### 1. Manual Deployment
-```bash
-# Build and deploy manually
-./scripts/deploy.sh
+### 1. Automated Deployment (Recommended) 🤖
 
-# Or step by step
-./scripts/deploy.sh build    # Build frontend only
-./scripts/deploy.sh deploy   # Deploy to Oracle Cloud
-./scripts/deploy.sh verify   # Verify deployment
-```
-
-### 2. Automated Deployment (Recommended)
+**GitHub Actions** deploy automaticamente quando você faz push para as branches:
+- `main` - Deploy para produção
+- `production` - Deploy para produção
+- `POC` - Deploy para testes
 
 #### Setup GitHub Actions (One-time)
-1. Add these secrets to your GitHub repository:
+1. **Configure Repository Secrets** em GitHub → Settings → Secrets and variables → Actions:
    ```
-   ORACLE_SSH_KEY          # Content of /Users/hrocha/Documents/SSH Oracle/oci_ed25519
-   POSTGRES_PASSWORD       # Database password (e.g., seo123!@#)
-   SECRET_KEY             # Django/FastAPI secret key
-   OPENAI_API_KEY         # Your OpenAI API key
-   GEMINI_API_KEY         # Your Google Gemini API key
-   PERPLEXITY_API_KEY     # Your Perplexity API key
-   SERPAPI_KEY            # Your SerpAPI key
+   ORACLE_SSH_KEY          # Conteúdo da chave privada SSH
+   DATABASE_URL            # Azure SQL connection string
+   SECRET_KEY              # Chave secreta da aplicação
+   OPENAI_API_KEY          # Sua chave OpenAI (opcional)
+   GEMINI_API_KEY          # Sua chave Gemini (opcional)
+   PERPLEXITY_API_KEY      # Sua chave Perplexity (opcional)
+   SERPAPI_KEY             # Sua chave SerpAPI (opcional)
    ```
 
-2. Push to `main` branch - deployment happens automatically!
+2. **Deploy automático**: Faça push para qualquer branch configurada!
+   ```bash
+   git add .
+   git commit -m "Deploy changes"
+   git push origin POC  # ou main/production
+   ```
+
+3. **Acompanhe o deploy** em GitHub → Actions
+
+### 2. Manual Deployment
 
 #### Setup Webhook Server (Optional - for instant deployment)
 ```bash
@@ -49,8 +52,9 @@ Then configure GitHub webhook:
 - **Nginx**: Reverse proxy + static file serving
 - **FastAPI**: Backend API (Python/Uvicorn)
 - **Celery**: Background task processing
-- **PostgreSQL**: Primary database
+- **Azure SQL**: Primary database (cloud)
 - **Redis**: Cache + message broker
+- **React**: Frontend SPA (Vite build)
 
 ### Network Configuration
 - **Port 80**: HTTP (Nginx)
@@ -126,8 +130,8 @@ curl -f http://129.148.63.199/health
 
 #### 2. Database Connection Issues
 ```bash
-# Check PostgreSQL
-sudo docker compose -f docker-compose.prod.yml exec postgres pg_isready -U seoanalyzer
+# Check Azure SQL connection
+sudo docker compose -f docker-compose.prod.yml exec api python -c "from app.db.database import engine; print('DB OK' if engine else 'DB Error')"
 
 # Run migrations manually
 sudo docker compose -f docker-compose.prod.yml exec api python -c "
@@ -181,11 +185,11 @@ sudo docker stats
 
 ### Database Backup
 ```bash
-# Create backup
-sudo docker compose -f docker-compose.prod.yml exec postgres pg_dump -U seoanalyzer seoanalyzer > backup.sql
+# Azure SQL backup (via Azure Portal ou CLI)
+az sql db export --resource-group myResourceGroup --server myServer --name seoanalyzer --storage-uri https://mystorageaccount.blob.core.windows.net/backups/backup.bacpac
 
-# Restore backup
-sudo docker compose -f docker-compose.prod.yml exec -T postgres psql -U seoanalyzer seoanalyzer < backup.sql
+# Local backup script
+./scripts/backup-database.sh
 ```
 
 ### Full System Backup
@@ -198,9 +202,16 @@ sudo docker run --rm -v seo-analyzer-prod_app_data:/data -v $(pwd):/backup alpin
 ## 📞 Support
 
 ### Oracle Cloud Resources
-- **Instance**: instance-20250825-1241 (129.148.63.199)
-- **Region**: sa-saopaulo-1
-- **SSH**: `ssh -i "/Users/hrocha/Documents/SSH Oracle/oci_ed25519" ubuntu@129.148.63.199`
+- **Instance**: app (129.148.63.199)
+- **Region**: sa-saopaulo-1 (São Paulo)
+- **SSH**: `ssh -i "C:\Users\hftra\.ssh\oci_ed25519" ubuntu@129.148.63.199`
+- **Deploy Path**: `/opt/seo-analyzer`
+
+### GitHub Actions Workflow
+- **File**: `.github/workflows/deploy.yml`
+- **Triggers**: Push para main, production, POC
+- **Strategy**: Staging directory para resolver permissões
+- **Health Check**: Automático após deploy
 
 ### Application URLs
 - **Main App**: http://129.148.63.199
