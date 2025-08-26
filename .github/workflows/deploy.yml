@@ -86,9 +86,9 @@ jobs:
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml build --no-cache && sudo docker compose -f docker-compose.prod.yml up -d'
         
-    - name: Wait for services
+    - name: Wait for services to start
       run: |
-        sleep 30
+        sleep 45
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
         
     - name: Create migration script
@@ -97,18 +97,24 @@ jobs:
         
     - name: Run database migrations
       run: |
-        sleep 20
+        sleep 30
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml exec -T api python migrate.py || echo "Migration completed or already exists"'
         
-    - name: Verify deployment
+    - name: Verify deployment with retry
       run: |
-        sleep 10
-        if curl -f -s http://$ORACLE_HOST/health > /dev/null; then
-          echo "✅ Deployment successful - Health check passed"
-        else
-          echo "❌ Health check failed"
-          exit 1
-        fi
+        echo "Waiting for API to be ready..."
+        for i in {1..6}; do
+          echo "Health check attempt $i/6"
+          if curl -f -s http://$ORACLE_HOST/health > /dev/null; then
+            echo "✅ Deployment successful - Health check passed"
+            exit 0
+          fi
+          echo "Health check failed, waiting 15 seconds..."
+          sleep 15
+        done
+        echo "❌ Health check failed after 6 attempts"
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml logs api --tail=10'
+        exit 1
         
     - name: Cleanup
       if: always()
