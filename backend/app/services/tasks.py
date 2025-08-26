@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import time
+import os
+import asyncio
 from typing import Any
 
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -24,6 +27,10 @@ celery = Celery(
     backend=settings.redis_url,
 )
 
+# Global task time limits (soft/hard) via env, to avoid indefinite runs
+_SOFT_TL = int(os.getenv("CELERY_SOFT_TIME_LIMIT", os.getenv("RUN_SOFT_TIME_LIMIT", "900")))  # 15 min default
+_HARD_TL = int(os.getenv("CELERY_TIME_LIMIT", os.getenv("RUN_HARD_TIME_LIMIT", "1200")))     # 20 min default
+
 
 def _log(db: Session, run_id: str, step: str, status: str, message: str | None = None) -> None:
     db.add(RunEvent(run_id=run_id, version=step, status=status, message=message))
@@ -34,7 +41,7 @@ def enqueue_run(run_id: str, cycles: int = 1) -> None:
     celery.send_task("tasks.execute_run", args=[run_id, cycles], queue="runs")
 
 
-@celery.task(name="tasks.execute_run")
+@celery.task(name="tasks.execute_run", soft_time_limit=_SOFT_TL, time_limit=_HARD_TL)
 def execute_run(run_id: str, cycles: int = 1) -> None:
     db: Session = SessionLocal()
     try:
@@ -109,10 +116,42 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         t0_all = time.perf_counter()
         last_raw: dict[str, Any] | None = None
         last_parsed: dict[str, Any] | None = None
+        # Per-cycle timeout (sec): Engine config wins, else env RUN_CYCLE_TIMEOUT_SECONDS, else default 180s
+        timeout_cfg = None
+        try:
+            timeout_cfg = (engine.config_json or {}).get("timeout_seconds")
+        except Exception:
+            timeout_cfg = None
+        timeout_env = os.getenv("RUN_CYCLE_TIMEOUT_SECONDS") or os.getenv("RUN_TIMEOUT_SECONDS")
+        try:
+            timeout_seconds: float | None = float(timeout_cfg) if timeout_cfg is not None else (float(timeout_env) if timeout_env else 180.0)
+        except Exception:
+            timeout_seconds = 180.0
+
+        aborted_due_timeout = False
         for i in range(total_cycles):
+            # Apply cycle delay before each cycle (except the first one)
+            if i > 0 and run.cycle_delay_seconds and run.cycle_delay_seconds > 0:
+                delay_seconds = run.cycle_delay_seconds
+                _log(db, run.id, "delay", "started", f"Waiting {delay_seconds}s before cycle {i+1}/{total_cycles}")
+                time.sleep(delay_seconds)
+                _log(db, run.id, "delay", "ok", f"Delay completed for cycle {i+1}")
+            
             _log(db, run.id, "fetch", "started", f"Engine: {engine.name} (cycle {i+1}/{total_cycles})")
-            raw, parsed, extracted = run_engine(engine.name, fetch_input)
-            _log(db, run.id, "fetch", "ok")
+            t_fetch0 = time.perf_counter()
+            try:
+                raw, parsed, extracted = run_engine(engine.name, fetch_input, timeout_seconds=timeout_seconds)
+                t_fetch1 = time.perf_counter()
+                _log(db, run.id, "fetch", "ok", f"{int((t_fetch1 - t_fetch0)*1000)} ms")
+            except Exception as e:
+                # Distinguish timeout vs other failures
+                if isinstance(e, asyncio.TimeoutError):
+                    _log(db, run.id, "fetch", "timeout", f"> {timeout_seconds}s at cycle {i+1}/{total_cycles}")
+                    aborted_due_timeout = True
+                    break
+                else:
+                    _log(db, run.id, "fetch", "fail", str(e)[:4000])
+                    raise
 
             last_raw, last_parsed = raw, parsed
 
@@ -122,6 +161,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
             # persist evidence
             _log(db, run.id, "persist", "started")
+            t_persist0 = time.perf_counter()
             ev = Evidence(
                 run_id=run.id,
                 raw_url=raw.get("raw_url"),
@@ -134,10 +174,12 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             )
             db.add(ev)
             db.commit()
-            _log(db, run.id, "persist", "ok")
+            t_persist1 = time.perf_counter()
+            _log(db, run.id, "persist", "ok", f"{int((t_persist1 - t_persist0)*1000)} ms")
 
             # extract citations
             _log(db, run.id, "extract", "started")
+            t_extract0 = time.perf_counter()
             for c in extracted:
                 aggregated_extracted.append(c)
                 domain_norm = normalize_domain(c.get("url") or c.get("domain") or "")
@@ -154,7 +196,15 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                     )
                 )
             db.commit()
-            _log(db, run.id, "extract", "ok")
+            t_extract1 = time.perf_counter()
+            _log(db, run.id, "extract", "ok", f"{len(extracted)} items in {int((t_extract1 - t_extract0)*1000)} ms")
+
+        if aborted_due_timeout:
+            run.status = "failed"
+            run.finished_at = datetime.utcnow()
+            db.commit()
+            _log(db, run.id, "error", "fail", f"Run aborted due to timeout (> {timeout_seconds}s)")
+            return
 
         t1_all = time.perf_counter()
 
@@ -220,6 +270,17 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             pass
         db.commit()
         _log(db, run.id, "completed", "ok")
+    except SoftTimeLimitExceeded as e:
+        # Celery soft timeout triggered: log and mark failed, so the UI reflects termination
+        try:
+            _log(db, run_id, "error", "timeout", f"Soft time limit exceeded: {_SOFT_TL}s")
+            run = db.get(Run, run_id)
+            if run:
+                run.status = "failed"
+                run.finished_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
     except Exception as e:
         _log(db, run_id, "error", "fail", str(e))
         try:

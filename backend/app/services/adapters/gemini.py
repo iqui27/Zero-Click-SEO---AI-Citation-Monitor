@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from typing import List, Optional, Dict, Any
+import asyncio
 
 from google import genai
 from google.genai import types
@@ -98,10 +99,15 @@ class GeminiAdapter:
                 else:
                     config = types.GenerateContentConfig()
 
-                resp = self.client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config,
+                def _gen_content(params: Dict[str, Any]):
+                    return self.client.models.generate_content(**params)
+                resp = await asyncio.to_thread(
+                    _gen_content,
+                    {
+                        "model": model_name,
+                        "contents": prompt,
+                        "config": config,
+                    },
                 )
                 try:
                     data = resp.to_dict()  # structured dict with candidates + groundingMetadata
@@ -116,10 +122,15 @@ class GeminiAdapter:
                     has_text = bool(data.get("text"))
                 if not has_text:
                     try:
-                        resp2 = self.client.models.generate_content(
-                            model=model_name,
-                            contents="Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final.",
-                            config=config,
+                        def _gen_content2(params: Dict[str, Any]):
+                            return self.client.models.generate_content(**params)
+                        resp2 = await asyncio.to_thread(
+                            _gen_content2,
+                            {
+                                "model": model_name,
+                                "contents": "Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final.",
+                                "config": config,
+                            },
                         )
                         d2 = resp2.to_dict()
                         # anexar ao payload para o parse ter alternativas

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from typing import List, Optional, Dict, Any
+import asyncio
 
 from openai import OpenAI
 
@@ -106,7 +107,7 @@ class OpenAIAdapter:
                     if attempt == "no_tools":
                         kwargs.pop("tools", None)
                         kwargs.pop("tool_choice", None)
-                    resp = _create_with(kwargs)
+                    resp = await asyncio.to_thread(_create_with, kwargs)
                     break
                 except Exception as e_first:
                     last_err = e_first
@@ -163,11 +164,16 @@ class OpenAIAdapter:
                         "Forneça a resposta final agora em texto corrido (sem perguntas), "
                         "organizada e com 3–5 fontes ao final usando URLs completas (http)."
                     )
-                    resp2 = self.client.responses.create(  # type: ignore[attr-defined]
-                        model=model,
-                        previous_response_id=raw_dict.get("id"),
-                        input=finalize_text,
-                        max_output_tokens=max_output_tokens,
+                    def _finalize_with(params: Dict[str, Any]):
+                        return self.client.responses.create(**params)  # type: ignore[attr-defined]
+                    resp2 = await asyncio.to_thread(
+                        _finalize_with,
+                        {
+                            "model": model,
+                            "previous_response_id": raw_dict.get("id"),
+                            "input": finalize_text,
+                            "max_output_tokens": max_output_tokens,
+                        },
                     )
                     if hasattr(resp2, "model_dump"):
                         final_dict = resp2.model_dump()  # type: ignore[attr-defined]

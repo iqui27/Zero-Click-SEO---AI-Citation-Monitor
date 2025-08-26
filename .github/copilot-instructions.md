@@ -14,6 +14,20 @@ Key files to read
 - backend/requirements.txt (LLMs, Playwright)
 - frontend/vite.config.ts (dev proxy /api → :8000)
 - README.md and docs/README-UX.md (UX flows, endpoints, KPIs)
+ - backend/app/api/routes.py (FastAPI routes incl. runs list/detail/create/delete)
+ - backend/app/schemas/schemas.py (Pydantic schemas for API input/output)
+ - backend/app/models/models.py (SQLAlchemy models; e.g., Run)
+ - frontend/src/lib/api.ts (API client and types that must mirror backend schemas)
+ - frontend/src/pages/Runs.tsx (Runs list UI)
+ - frontend/src/pages/RunDetail.tsx (Run details UI)
+
+### E2E field addition checklist (example: cycles_total)
+- DB model: add the column to `backend/app/models/models.py` (e.g., `Run.cycles_total` with a default). Append an `ALTER TABLE IF NOT EXISTS ... ADD COLUMN` in `backend/app/main.py` startup statements.
+- Schemas: add the field to `RunOut`, `RunListItem`, and `RunDetailOut` in `backend/app/schemas/schemas.py`.
+- Routes: ensure `/runs` (list), `/runs/{id}` (detail), and run creation map/select the field in `backend/app/api/routes.py` (e.g., map incoming `cycles` to `cycles_total` on create).
+- Frontend types: add the field to `RunListItem` and `RunDetail` in `frontend/src/lib/api.ts`.
+- Frontend UI: display the field where relevant (e.g., Runs card and Run detail metrics in `frontend/src/pages/Runs.tsx` and `frontend/src/pages/RunDetail.tsx`).
+- Test: create a run with a non-default value and verify list/detail show it; check SSE/polling still work; no type errors.
 
 ### Local dev workflow
 - First run: docker compose up -d --build; API at :8000 (/docs), UI at :5173.

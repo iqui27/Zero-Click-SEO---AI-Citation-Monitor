@@ -21,3 +21,26 @@ code, pre, kbd, samp {
   to { opacity: 1; transform: translateY(0); }
 }
 .fade-in-up { animation: fade-in-up 200ms ease-out; }
+
+/* Stacked card effect used on Runs list */
+.stack-card {
+  position: relative;
+}
+.stack-card .stack-layer {
+  position: absolute;
+  inset: 0;
+  /* Offset each layer using a CSS var --i (1..N) */
+  transform: translate(calc(var(--i) * 3px), calc(var(--i) * 3px));
+  transition: transform 180ms ease, box-shadow 180ms ease;
+  pointer-events: none; /* keep clicks on the main card */
+}
+.stack-card:hover .stack-layer {
+  transform: translate(calc(var(--i) * 4px), calc(var(--i) * 4px));
+}
+
+/* Optional subtle wobble for first mount */
+@keyframes stack-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.stack-animate-in { animation: stack-pop-in 160ms ease-out; }

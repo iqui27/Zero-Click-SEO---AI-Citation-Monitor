@@ -296,6 +296,18 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
             subproject_id=payload.subproject_id,
             status="queued",
         )
+        # refletir número de ciclos solicitado
+        try:
+            run.cycles_total = max(1, int(payload.cycles or 1))
+        except Exception:
+            run.cycles_total = 1
+        # adicionar delay entre ciclos se especificado
+        print(f"[DEBUG] payload.cycle_delay_seconds: {payload.cycle_delay_seconds}")
+        if payload.cycle_delay_seconds is not None:
+            run.cycle_delay_seconds = max(0, int(payload.cycle_delay_seconds))
+            print(f"[DEBUG] Set run.cycle_delay_seconds to: {run.cycle_delay_seconds}")
+        else:
+            print(f"[DEBUG] cycle_delay_seconds is None, not setting")
         db.add(run)
         db.commit()
         db.refresh(run)
@@ -314,6 +326,7 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
                 tokens_total=run.tokens_total,
                 cost_usd=run.cost_usd,
                 latency_ms=run.latency_ms,
+                cycles_total=run.cycles_total,
             )
         )
 
@@ -418,6 +431,8 @@ def list_runs(
             Run.dcr_flag,
             Run.cost_usd,
             Run.tokens_total,
+            Run.cycles_total,
+            Run.cycle_delay_seconds,
             func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
             PromptTemplate.category.label("template_category"),
             func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
@@ -485,6 +500,7 @@ def list_runs(
             subproject_name=getattr(r, "subproject_name", None),
             cost_usd=getattr(r, "cost_usd", None),
             tokens_total=getattr(r, "tokens_total", None),
+            cycles_total=getattr(r, "cycles_total", None),
         )
         for r in rows
     ]
@@ -742,6 +758,7 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         tokens_total=run.tokens_total,
         cost_usd=run.cost_usd,
         latency_ms=run.latency_ms,
+        cycles_total=run.cycles_total,
     )
 
 

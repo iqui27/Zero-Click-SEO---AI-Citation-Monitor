@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getRun, getRunReport, getRunEvidences, getRunEvents, createRun, getUrlTitle, openRunStream } from '../lib/api'
 import ReactMarkdown from 'react-markdown'
@@ -44,6 +44,7 @@ type RunDetail = {
   tokens_total?: number
   cost_usd?: number
   latency_ms?: number
+  cycles_total?: number
 }
 
 // helper simples para renderizar markdown minimalista
@@ -106,31 +107,33 @@ export default function RunDetail() {
   const [useSearch, setUseSearch] = useState<boolean>(true)
   const [reprocessing, setReprocessing] = useState(false)
   const [streamText, setStreamText] = useState<string>('')
+  const [selectedCycle, setSelectedCycle] = useState<number>(1)
   const esRef = useRef<EventSource | null>(null)
   const pollRef = useRef<number | null>(null)
   const lastTsRef = useRef<string | null>(null)
   const [hasLiveEvents, setHasLiveEvents] = useState(false)
   const [titles, setTitles] = useState<Record<string, string>>({})
 
-  useEffect(() => {
+  const fetchAllData = async () => {
     if (!id) return
-    const fetchAll = async () => {
-      try {
-        const [r1, r2, r4] = await Promise.allSettled([
-          getRunReport(id),
-          getRunEvidences(id),
-          getRun(id),
-        ])
-        if (r1.status === 'fulfilled' && r1.value) setReport(r1.value)
-        if (r2.status === 'fulfilled' && r2.value) setEvidences(r2.value)
-        if (r4.status === 'fulfilled' && r4.value) {
-          setDetail(r4.value)
-          const cfg = r4.value.engine?.config_json || {}
-          setUseSearch(cfg.use_search !== false)
-        }
-      } catch {}
-    }
-    fetchAll()
+    try {
+      const [r1, r2, r4] = await Promise.allSettled([
+        getRunReport(id),
+        getRunEvidences(id),
+        getRun(id),
+      ])
+      if (r1.status === 'fulfilled' && r1.value) setReport(r1.value)
+      if (r2.status === 'fulfilled' && r2.value) setEvidences(r2.value)
+      if (r4.status === 'fulfilled' && r4.value) {
+        setDetail(r4.value)
+        const cfg = r4.value.engine?.config_json || {}
+        setUseSearch(cfg.use_search !== false)
+      }
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchAllData()
   }, [id])
 
   useEffect(() => {
@@ -160,6 +163,18 @@ export default function RunDetail() {
         if (data.step === 'chunk' && typeof data.message === 'string') {
           setStreamText((t) => (t ? t + '\n' : '') + data.message)
         }
+        
+        // Auto-refresh citations when cycle completes or run finishes
+        const step = (data.step || '').toLowerCase()
+        const status = (data.status || '').toLowerCase()
+        if ((step === 'extract' && status === 'ok') || 
+            (step === 'completed' && status === 'ok') ||
+            (step === 'persist' && status === 'ok')) {
+          // Delay refresh to ensure backend has processed citations
+          setTimeout(() => {
+            fetchAllData()
+          }, 1500)
+        }
       } catch {}
     }
     es.onopen = () => {
@@ -180,6 +195,21 @@ export default function RunDetail() {
             lastTsRef.current = news[news.length - 1].created_at
             const chunk = news.find(n => n.step === 'chunk' && typeof n.message === 'string')
             if (chunk?.message) setStreamText((t) => (t ? t + '\n' : '') + chunk.message)
+            
+            // Auto-refresh citations when cycle completes or run finishes (polling fallback)
+            const shouldRefresh = news.some(event => {
+              const step = (event.step || '').toLowerCase()
+              const status = (event.status || '').toLowerCase()
+              return (step === 'extract' && status === 'ok') || 
+                     (step === 'completed' && status === 'ok') ||
+                     (step === 'persist' && status === 'ok')
+            })
+            
+            if (shouldRefresh) {
+              setTimeout(() => {
+                fetchAllData()
+              }, 1500)
+            }
           }
         } catch {}
       }, 1000)
@@ -230,7 +260,70 @@ export default function RunDetail() {
     try { if (!url) return ''; return new URL(url).hostname } catch { return '' }
   }
 
-  const md = streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
+  // Agrupamento heurístico de eventos por ciclo (melhora detecção de limites entre ciclos)
+  const cyclesBuckets: EventItem[][] = useMemo(() => {
+    const buckets: EventItem[][] = []
+    let current: EventItem[] = []
+    const list = [...events]
+    
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i]
+      current.push(e)
+      
+      const step = (e.step || '').toLowerCase()
+      const status = (e.status || '').toLowerCase()
+      const nextEvent = list[i + 1]
+      
+      // Detecta fim de ciclo por:
+      // 1. 'completed' com status 'ok'
+      // 2. 'error' 
+      // 3. 'delay' seguido de 'fetch' (início do próximo ciclo)
+      const isEndOfCycle = 
+        (step === 'completed' && status === 'ok') ||
+        step === 'error' ||
+        (step === 'delay' && status === 'ok' && nextEvent && nextEvent.step === 'fetch')
+      
+      if (isEndOfCycle) {
+        buckets.push(current)
+        current = []
+      }
+    }
+    
+    if (current.length) buckets.push(current)
+    
+    // Ajuste para o número esperado de ciclos, se conhecido
+    const total = Math.max(1, detail?.cycles_total || buckets.length || 1)
+    if (buckets.length < total) {
+      // completa com buckets vazios ao final
+      while (buckets.length < total) buckets.push([])
+    } else if (buckets.length > total) {
+      // se por algum motivo temos mais segmentos que ciclos, mescla excedentes no último
+      const head = buckets.slice(0, total - 1)
+      const tailMerged = buckets.slice(total - 1).flat()
+      return [...head, tailMerged]
+    }
+    return buckets
+  }, [events, detail?.cycles_total])
+  // Garantir que o ciclo selecionado esteja sempre dentro do intervalo válido
+  useEffect(() => {
+    const total = Math.max(1, detail?.cycles_total || cyclesBuckets.length || 1)
+    if (selectedCycle > total) setSelectedCycle(total)
+    if (selectedCycle < 1) setSelectedCycle(1)
+  }, [detail?.cycles_total, cyclesBuckets.length])
+  const eventsForView: EventItem[] = useMemo(() => {
+    const totalCycles = detail?.cycles_total || cyclesBuckets.length || 1
+    const idx = Math.max(0, Math.min(totalCycles - 1, selectedCycle - 1))
+    return cyclesBuckets[idx] || []
+  }, [cyclesBuckets, selectedCycle, detail?.cycles_total])
+
+  // Deriva markdown do ciclo selecionado a partir de eventos 'chunk'
+  const cycleMd: string = useMemo(() => {
+    const chunks = eventsForView.filter(e => (e.step || '').toLowerCase() === 'chunk' && typeof e.message === 'string')
+    if (!chunks.length) return ''
+    return chunks.map(c => c.message as string).join('\n')
+  }, [eventsForView])
+
+  const md = cycleMd || streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
 
   const meta = (evidences?.[0]?.parsed_json?.parsed?.meta) || {}
   // Para Gemini, o default é usar web search, então se não houver flags, considerar true
@@ -265,6 +358,51 @@ export default function RunDetail() {
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold">Run {id}</h1>
+        {(detail?.cycles_total || 1) > 1 && (
+          <div className="ml-4 flex items-center gap-2 text-sm">
+            <span className="opacity-70">Ciclo:</span>
+            {/* Segmented control moderno com highlight deslizante */}
+            <div className="relative">
+              <div
+                role="tablist"
+                aria-label="Selecionar ciclo"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight') {
+                    setSelectedCycle((c) => Math.min(c + 1, detail?.cycles_total || 1))
+                  } else if (e.key === 'ArrowLeft') {
+                    setSelectedCycle((c) => Math.max(1, c - 1))
+                  }
+                }}
+                className="relative isolate grid h-8 rounded-md overflow-hidden border border-neutral-300 dark:border-neutral-700"
+                style={{ gridTemplateColumns: `repeat(${detail?.cycles_total || 1}, minmax(0, 1fr))` }}
+              >
+                {/* Fundo leve */}
+                <div aria-hidden className="absolute inset-0 bg-neutral-50/60 dark:bg-neutral-900/40" />
+                {/* Destaque móvel */}
+                <div
+                  aria-hidden
+                  className="absolute inset-y-0 left-0 pointer-events-none rounded-md bg-gradient-to-r from-red-500 to-red-600 dark:from-red-600 dark:to-red-700 shadow-md transition-transform duration-300"
+                  style={{ width: `calc(100% / ${(detail?.cycles_total || 1)})`, transform: `translateX(${(selectedCycle - 1) * 100}%)` }}
+                />
+                {Array.from({ length: detail?.cycles_total || 1 }, (_, i) => i + 1).map((n) => {
+                  const active = selectedCycle === n
+                  return (
+                    <button
+                      key={n}
+                      role="tab"
+                      aria-selected={active}
+                      className={`relative z-10 text-xs sm:text-sm px-3 text-center font-medium transition-colors duration-200 ${active ? 'text-white' : 'text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-neutral-100'}`}
+                      onClick={() => setSelectedCycle(n)}
+                    >
+                      #{n}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
         {detail?.engine?.name?.startsWith('gemini') && (
           <label className="flex items-center gap-2 text-sm ml-auto">
             <input type="checkbox" checked={useSearch} onChange={(e) => setUseSearch(e.target.checked)} />
@@ -281,6 +419,7 @@ export default function RunDetail() {
           {report && <Card title="ZCRS" value={report.zcrs.toFixed(1)} />}
           {typeof detail?.cost_usd === 'number' && <Card title="Custo" value={`$${detail.cost_usd.toFixed(4)}`} />}
           {typeof detail?.tokens_total === 'number' && <Card title="Tokens" value={formatNumberCompact(detail.tokens_total)} />}        
+          {typeof detail?.cycles_total === 'number' && <Card title="Ciclos" value={detail.cycles_total} />}
         </div>
       )}
 
@@ -293,7 +432,7 @@ export default function RunDetail() {
       </div>
 
       <section className="grid gap-2">
-        <Toolbelt events={events} />
+        <Toolbelt events={eventsForView.length ? eventsForView : events} />
         {/* Opções efetivas (badges) */}
         {(() => {
           const last = events.filter(e => e.step === 'opts').slice(-1)[0]
@@ -318,9 +457,9 @@ export default function RunDetail() {
 
         {/* Progresso minimalista (colapsável) */}
         <details className="rounded-md border border-neutral-200 dark:border-neutral-800">
-          <summary className="text-xs px-2 py-1 cursor-pointer select-none">Progresso ({events.length})</summary>
+          <summary className="text-xs px-2 py-1 cursor-pointer select-none">Progresso ({(eventsForView.length || events.length)})</summary>
           <div className="p-2 grid gap-1 text-xs">
-            {events.slice(-8).map((e, i) => (
+            {(eventsForView.length ? eventsForView : events).slice(-8).map((e, i) => (
               <div key={i} className="flex items-center gap-2">
                 <span className={`h-1.5 w-1.5 rounded-full ${e.status==='ok'?'bg-green-500':e.status==='started'?'bg-blue-500':'bg-red-500'}`} />
                 <span className="font-mono opacity-70">{new Date(e.created_at).toLocaleTimeString()}</span>
@@ -416,6 +555,7 @@ export default function RunDetail() {
             <Card title="Tokens (in)" value={typeof detail.tokens_input === 'number' ? formatNumberCompact(detail.tokens_input) : '-'} />
             <Card title="Tokens (out)" value={typeof detail.tokens_output === 'number' ? formatNumberCompact(detail.tokens_output) : '-'} />
             <Card title="Tokens (total)" value={typeof detail.tokens_total === 'number' ? formatNumberCompact(detail.tokens_total) : '-'} />
+            <Card title="Ciclos" value={typeof detail.cycles_total === 'number' ? detail.cycles_total : '-'} />
           </div>
         </section>
       )}

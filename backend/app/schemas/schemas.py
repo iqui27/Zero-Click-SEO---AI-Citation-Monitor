@@ -74,6 +74,7 @@ class RunCreate(BaseModel):
     prompt_version_id: str
     engines: List[EngineCreate]
     cycles: int = 1
+    cycle_delay_seconds: Optional[int] = None
     schedule: Optional[str] = None
     subproject_id: Optional[str] = None
 
@@ -90,6 +91,7 @@ class RunOut(BaseModel):
     tokens_total: Optional[int] = None
     cost_usd: Optional[float] = None
     latency_ms: Optional[int] = None
+    cycles_total: Optional[int] = None
 
 
 class RunListItem(BaseModel):
@@ -107,6 +109,8 @@ class RunListItem(BaseModel):
     # síntese de custos
     cost_usd: Optional[float] = None
     tokens_total: Optional[int] = None
+    cycles_total: Optional[int] = None
+    cycle_delay_seconds: Optional[int] = None
 
 
 class RunDetailOut(BaseModel):
@@ -127,6 +131,7 @@ class RunDetailOut(BaseModel):
     tokens_total: Optional[int] = None
     cost_usd: Optional[float] = None
     latency_ms: Optional[int] = None
+    cycles_total: Optional[int] = None
 
 
 class CitationOut(BaseModel):

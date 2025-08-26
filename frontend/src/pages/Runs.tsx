@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import React, { useState, useEffect, useMemo } from 'react'
+import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
+import { Trash2, Plus, Search, Filter, X, RefreshCw } from 'lucide-react'
 import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { formatNumberCompact } from '../lib/utils'
@@ -7,7 +8,6 @@ import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import SimpleRunsFilter from '../components/SimpleRunsFilter'
 import { Toaster, toast } from 'sonner'
-import { RefreshCw, Plus, Trash2 } from 'lucide-react'
 import { Skeleton } from '../components/ui/skeleton'
 
 type RunItem = {
@@ -19,11 +19,13 @@ type RunItem = {
   zcrs?: number
   amr_flag?: boolean
   dcr_flag?: boolean
+  tokens_total?: number
+  cost_usd?: number
   template_name?: string
+  cycles_total?: number
+  cycle_delay_seconds?: number
   template_category?: string
   subproject_name?: string
-  cost_usd?: number
-  tokens_total?: number
 }
 
 type Project = { id: string; name: string }
@@ -69,17 +71,18 @@ export default function Runs() {
   // Map template name -> { category, subproject_id }
   const [templateCatIndex, setTemplateCatIndex] = useState<Record<string, { category: string; subproject_id?: string }>>({})
 
-  const fetchRuns = async () => {
+  const fetchRuns = async (opts?: { showLoading?: boolean }) => {
     const params: any = {}
     if (projectId) params.project_id = projectId
     if (subprojectId) params.subproject_id = subprojectId
     if (engineFilter) params.engine = engineFilter
-    setLoading(true)
+    const showLoading = opts?.showLoading ?? runs.length === 0
+    if (showLoading) setLoading(true)
     try {
       const res = await listRuns(params)
       setRuns(res)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
@@ -99,9 +102,9 @@ export default function Runs() {
     if (openNew) setShowModal(true)
   }, [location.search])
 
-  useEffect(() => { fetchRuns() }, [engineFilter, subprojectId])
-  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, subprojectId])
-  useEffect(() => { if (projectId) { fetchRuns() } }, [projectId])
+  useEffect(() => { fetchRuns({ showLoading: true }) }, [engineFilter, subprojectId])
+  useEffect(() => { const t = setInterval(() => fetchRuns({ showLoading: false }), 5000); return () => clearInterval(t) }, [engineFilter, subprojectId])
+  useEffect(() => { if (projectId) { fetchRuns({ showLoading: true }) } }, [projectId])
 
   // Build template name -> category index for current project
   useEffect(() => {
@@ -183,7 +186,7 @@ export default function Runs() {
       </div>
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-semibold">Runs</h1>
-        <Button variant="outline" size="sm" onClick={() => { fetchRuns().then(()=>toast.success('Atualizado')) }} className="ml-2"><RefreshCw className="h-4 w-4" /></Button>
+        <Button variant="outline" size="sm" onClick={() => { fetchRuns({ showLoading: false }).then(()=>toast.success('Atualizado')) }} className="ml-2"><RefreshCw className="h-4 w-4" /></Button>
         <Button className="ml-auto" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
       </div>
       <SimpleRunsFilter
@@ -195,29 +198,13 @@ export default function Runs() {
         setEngineFilter={setEngineFilter}
         onRefresh={fetchRuns}
       />
-      <div className="space-y-4">
+      
+      <div className="mt-6">
         {loading && runs.length === 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="rounded-md border border-neutral-200 dark:border-neutral-800 p-3">
-                <div className="flex items-center justify-between">
-                  <Skeleton className="h-3 w-24" />
-                  <Skeleton className="h-4 w-12 rounded-full" />
-                </div>
-                <Skeleton className="h-4 w-28 mt-3" />
-                <Skeleton className="h-3 w-40 mt-2" />
-                <div className="flex gap-3 mt-3">
-                  <Skeleton className="h-3 w-16" />
-                  <Skeleton className="h-3 w-16" />
-                  <Skeleton className="h-3 w-16" />
-                </div>
-              </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-32 rounded-lg" />
             ))}
-          </div>
-        ) : runs.length === 0 ? (
-          <div className="p-10 text-center border rounded-md border-neutral-200 dark:border-neutral-800">
-            <div className="text-sm opacity-70">Nenhuma run encontrada.</div>
-            <Button className="mt-3" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
           </div>
         ) : !subprojectId ? (
           grouped.map(([theme, items]) => {
@@ -285,8 +272,16 @@ export default function Runs() {
                       <div className="text-sm font-medium">{cat}</div>
                       <div className="text-xs opacity-60">{catItems.length} runs</div>
                     </div>
-                    <div className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {catItems.map((r) => (<RunCard key={r.id} r={r} onDelete={handleDeleteRun} />))}
+                    <div className="p-3 grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                      {catItems.map((r, index) => (
+                        <div 
+                          key={r.id} 
+                          className="animate-in fade-in-0 slide-in-from-bottom-4"
+                          style={{ animationDelay: `${index * 50}ms` }}
+                        >
+                          <RunCard r={r} onDelete={handleDeleteRun} />
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -301,40 +296,173 @@ export default function Runs() {
 }
 
 function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void | Promise<void> }) {
+  const [timeLeft, setTimeLeft] = useState<number | null>(null)
+  const [isDelayPhase, setIsDelayPhase] = useState(false)
+  const [currentCycle, setCurrentCycle] = useState<number>(1)
+  
+  // Calculate time until next run and total remaining time
+  useEffect(() => {
+    if (r.status !== 'running' || !r.started_at) return
+    
+    let startTime = Date.now()
+    if (r.started_at) {
+      // Parse as UTC and convert to local time
+      const utcDate = new Date(r.started_at + 'Z') // Force UTC interpretation
+      if (!isNaN(utcDate.getTime())) {
+        startTime = utcDate.getTime()
+      }
+    }
+    // Default timeout per cycle is 180s (3 minutes)
+    const timeoutPerCycle = 180
+    const cycleDelay = r.cycle_delay_seconds || 0
+    const totalCycles = r.cycles_total || 1
+    
+    const timer = setInterval(() => {
+      const currentTime = Date.now()
+      const totalElapsed = Math.floor((currentTime - startTime) / 1000)
+      
+      // Debug: log the actual values
+      console.log(`[Timer Debug] Run ${r.id}: cycleDelay=${cycleDelay}s, totalCycles=${totalCycles}, totalElapsed=${totalElapsed}s`)
+      console.log(`[Timer Debug] Raw r.cycle_delay_seconds:`, r.cycle_delay_seconds)
+      console.log(`[Timer Debug] Raw r.started_at:`, r.started_at)
+      console.log(`[Timer Debug] Parsed startTime:`, startTime, 'currentTime:', currentTime)
+      console.log(`[Timer Debug] StartTime as date:`, new Date(startTime), 'CurrentTime as date:', new Date(currentTime))
+      
+      // Simplified logic: only show delay countdown when there's a delay
+      if (cycleDelay > 0 && totalCycles > 1) {
+        const cycleWithDelay = timeoutPerCycle + cycleDelay
+        const cycle = Math.floor(totalElapsed / cycleWithDelay) + 1
+        const timeInCurrentCycle = totalElapsed % cycleWithDelay
+        
+        setCurrentCycle(Math.max(1, Math.min(cycle, totalCycles)))
+        
+        if (cycle > totalCycles) {
+          setTimeLeft(null)
+          setIsDelayPhase(false)
+          return
+        }
+        
+        if (timeInCurrentCycle >= timeoutPerCycle && cycle < totalCycles) {
+          // In delay phase between cycles
+          setIsDelayPhase(true)
+          const delayTimeLeft = cycleDelay - (timeInCurrentCycle - timeoutPerCycle)
+          setTimeLeft(Math.max(0, delayTimeLeft))
+        } else if (cycle < totalCycles) {
+          // In execution phase, show remaining execution time
+          setIsDelayPhase(false)
+          const executionTimeLeft = timeoutPerCycle - timeInCurrentCycle
+          setTimeLeft(Math.max(0, executionTimeLeft))
+        } else {
+          // Last cycle
+          setIsDelayPhase(false)
+          setTimeLeft(Math.max(0, timeoutPerCycle - timeInCurrentCycle))
+        }
+      } else {
+        // No delay or single cycle - show execution time
+        const cycle = Math.floor(totalElapsed / timeoutPerCycle) + 1
+        setCurrentCycle(Math.max(1, Math.min(cycle, totalCycles)))
+        
+        if (cycle <= totalCycles) {
+          const timeInCurrentCycle = totalElapsed % timeoutPerCycle
+          setTimeLeft(Math.max(0, timeoutPerCycle - timeInCurrentCycle))
+          setIsDelayPhase(false)
+        } else {
+          setTimeLeft(null)
+          setIsDelayPhase(false)
+        }
+      }
+    }, 1000)
+    
+    return () => clearInterval(timer)
+  }, [r.status, r.started_at, r.cycles_total, r.cycle_delay_seconds])
+  
   const statusCls =
-    r.status === 'completed' ? 'bg-green-100 text-green-800' :
-    r.status === 'failed' ? 'bg-red-100 text-red-800' :
-    r.status === 'running' ? 'bg-yellow-100 text-yellow-800' :
-    'bg-gray-100 text-gray-800'
+    r.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300' :
+    r.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300' :
+    r.status === 'running' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300' :
+    'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
   return (
-    <a href={`/runs/${r.id}`} className="group block rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:shadow-sm transition duration-200 fade-in-up">
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-xs text-blue-600 group-hover:underline">{r.id}</div>
-        <div className="flex items-center gap-2">
-          <button
-            title="Excluir run"
-            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(r.id) }}
-          >
-            <Trash2 className="h-4 w-4 text-red-600" />
-          </button>
-          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${statusCls}`}>{r.status}</span>
+    <div className="stack-card stack-animate-in">
+      {/* Background stack layers for multiple cycles (max 3) */}
+      {Array.from({ length: Math.max(0, Math.min((r.cycles_total ?? 1) - 1, 3)) }).map((_, idx) => (
+        <div
+          key={`layer-${idx}`}
+          className="stack-layer rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 shadow-sm"
+          style={{ ['--i' as any]: Math.max(0, Math.min((r.cycles_total ?? 1) - 1, 3)) - idx } as React.CSSProperties}
+        />
+      ))}
+      {/* Main card */}
+      <div className="stack-main relative bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.02]">
+        <div className="p-4">
+          <div className="flex items-start justify-between">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors duration-200 ${statusCls}`}>
+                  {r.status}
+                </span>
+                {r.cycles_total && r.cycles_total > 1 && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300 transition-colors duration-200">
+                    {r.cycles_total} cycles
+                  </span>
+                )}
+                {r.status === 'running' && r.cycles_total && r.cycles_total > 1 && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 transition-colors duration-200">
+                    Ciclo {currentCycle}/{r.cycles_total}
+                  </span>
+                )}
+                {timeLeft !== null && r.status === 'running' && (
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300 animate-pulse">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                    </svg>
+                    {(() => {
+                      const totalCycles = r.cycles_total || 1
+                      const hasNextCycle = currentCycle < totalCycles
+                      
+                      if (isDelayPhase) {
+                        return `Próxima run: ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`
+                      } else if (hasNextCycle) {
+                        return `Próxima: ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`
+                      } else {
+                        return `Final: ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`
+                      }
+                    })()}
+                  </div>
+                )}
+              </div>
+              <Link to={`/runs/${r.id}`} className="block">
+                <div className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200">
+                  {r.engine}
+                </div>
+                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <span>Início: {r.started_at || '-'}</span>
+                  {r.finished_at ? <span> • Fim: {r.finished_at}</span> : null}
+                </div>
+                <div className="mt-2 flex items-center gap-3 text-xs text-gray-600 dark:text-gray-300">
+                  <span>ZCRS: {r.zcrs?.toFixed(1) ?? '-'}</span>
+                  <span>Ciclos: {typeof r.cycles_total === 'number' ? r.cycles_total : '-'}</span>
+                  <span>Tokens: {typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</span>
+                  <span>Custo: {typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</span>
+                </div>
+                {r.template_name && (
+                  <div className="mt-2 text-[11px] text-gray-400 dark:text-gray-500 truncate">{r.template_name}</div>
+                )}
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="font-mono text-xs text-blue-600 dark:text-blue-400">{r.id}</div>
+                  <button
+                    title="Excluir run"
+                    className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950 transition-colors duration-200"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(r.id) }}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
+                  </button>
+                </div>
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="mt-2 text-sm font-medium">{r.engine}</div>
-      <div className="mt-1 text-xs opacity-70">
-        <span>Início: {r.started_at || '-'}</span>
-        {r.finished_at ? <span> • Fim: {r.finished_at}</span> : null}
-      </div>
-      <div className="mt-2 flex items-center gap-3 text-xs">
-        <span>ZCRS: {r.zcrs?.toFixed(1) ?? '-'}</span>
-        <span>Tokens: {typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</span>
-        <span>Custo: {typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</span>
-      </div>
-      {r.template_name && (
-        <div className="mt-2 text-[11px] opacity-70 truncate">{r.template_name}</div>
-      )}
-    </a>
+    </div>
   )
 }
 
@@ -347,6 +475,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [engineIdx, setEngineIdx] = useState(0)
   const [customPrompt, setCustomPrompt] = useState('')
   const [cycles, setCycles] = useState(1)
+  const [cycleDelay, setCycleDelay] = useState(0)
   const [creating, setCreating] = useState(false)
   const [newProjectName, setNewProjectName] = useState('Projeto Banco – BR pt-BR')
   const [allTemplates, setAllTemplates] = useState<Template[]>([])
@@ -410,8 +539,10 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   }
 
   const submit = async () => {
+    if (!projectId || !ENGINE_OPTIONS[engineIdx]) return
+    console.log('[Create Run Debug] Starting submit with cycleDelay:', cycleDelay)
+    setCreating(true)
     try {
-      if (!projectId) throw new Error('Selecione ou crie um projeto')
       localStorage.setItem('project_id', projectId)
       setCreating(true)
 
@@ -454,6 +585,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],
           cycles,
+          cycle_delay_seconds: cycleDelay > 0 ? cycleDelay : null,
           subproject_id: subprojectId || null,
         })
       } else if (templates.length) {
@@ -495,6 +627,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],
           cycles,
+          cycle_delay_seconds: cycleDelay > 0 ? cycleDelay : null,
           subproject_id: subprojectToUse,
         })
       } else {
@@ -534,13 +667,14 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],
           cycles,
+          cycle_delay_seconds: cycleDelay > 0 ? cycleDelay : null,
           subproject_id: subprojectId || null,
         })
       }
 
       toast.success('Nova run criada')
       onClose()
-      window.location.href = '/runs'
+      // Permanecer no SPA; o onClose já navega para /runs
     } catch (e: any) {
       toast.error('Erro ao criar run: ' + e.message)
     } finally {
@@ -668,10 +802,17 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
               <div className="text-[11px] opacity-60">Requer chave SerpApi válida em Configurações. AI Overview será usado quando disponível; caso contrário, cai para resultados orgânicos ou Playwright.</div>
             </div>
           )}
-          <label className="grid gap-1">
-            <div className="text-sm text-neutral-500">Cycles</div>
-            <Input type="number" min={1} value={String(cycles)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCycles(parseInt(e.target.value || '1'))} className="w-24" />
-          </label>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="grid gap-1">
+              <div className="text-sm text-neutral-500">Cycles</div>
+              <Input type="number" min={1} value={String(cycles)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCycles(parseInt(e.target.value || '1'))} className="w-24" />
+            </label>
+            <label className="grid gap-1">
+              <div className="text-sm text-neutral-500">Delay entre ciclos (minutos)</div>
+              <Input type="number" min={0} step="0.5" value={String(cycleDelay / 60)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCycleDelay(Math.round(parseFloat(e.target.value || '0') * 60))} className="w-24" />
+              <div className="text-[11px] opacity-60">Tempo de espera entre cada ciclo (0 = sem delay)</div>
+            </label>
+          </div>
         </div>
         <div className="flex gap-2 justify-end">
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>

@@ -129,6 +129,8 @@ class Run(Base):
     subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
     monitor_id: Mapped[Optional[str]] = mapped_column(ForeignKey("monitors.id"), nullable=True)
     status: Mapped[str] = mapped_column(String, default="queued")
+    cycles_total: Mapped[int] = mapped_column(Integer, default=1)
+    cycle_delay_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     zcrs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

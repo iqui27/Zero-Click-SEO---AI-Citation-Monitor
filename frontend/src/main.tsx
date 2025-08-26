@@ -8,6 +8,7 @@ import ProjectsPage from './pages/Projects'
 import SubprojectsPage from './pages/Subprojects'
 import SubprojectDetail from './pages/SubprojectDetail'
 import WorkspacePage from './pages/Workspace'
+import SettingsPage from './pages/Settings'
 import './index.css'
 import { Button } from './components/ui/button'
 
@@ -129,6 +130,7 @@ function Layout() {
         <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
         <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
         <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
+        <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">⚙️ Settings</Link>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-2">
             <input
@@ -175,6 +177,7 @@ const router = createBrowserRouter([
       { path: 'subprojects', element: <SubprojectsPage /> },
       { path: 'subprojects/:id', element: <SubprojectDetail /> },
       { path: 'prompts', element: <TemplatesPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ])
