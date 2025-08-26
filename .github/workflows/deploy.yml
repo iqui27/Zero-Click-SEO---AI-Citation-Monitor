@@ -76,6 +76,8 @@ jobs:
         WORKER_TIMEOUT=300
         MAX_CONCURRENT_RUNS=5
         ENABLE_METRICS=true
+        DB_CONNECT_TIMEOUT=60
+        DB_COMMAND_TIMEOUT=120
         ENVEOF'
         
     - name: Stop existing services
