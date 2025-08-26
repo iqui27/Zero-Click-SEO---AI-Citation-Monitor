@@ -2,7 +2,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg2://seo:seo@localhost:5432/seo_analyzer"
+    # Default to SQLite for local/dev. In Docker Compose, DATABASE_URL is provided.
+    database_url: str = "sqlite:///./app.db"
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = "devsecret"
     # Chaves opcionais (aceitas para evitar erro de extras no .env)

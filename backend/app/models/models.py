@@ -14,7 +14,11 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
     Integer,
+    VARCHAR,
+    Text,
 )
+from sqlalchemy.types import TypeDecorator
+from sqlalchemy.dialects.mssql import VARCHAR as MSSQL_VARCHAR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -24,10 +28,25 @@ def gen_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:8]}"
 
 
+class FixedVarchar(TypeDecorator):
+    """Custom type that forces fixed-length VARCHAR for SQL Server compatibility."""
+    impl = VARCHAR
+    cache_ok = True
+    
+    def __init__(self, length):
+        self.length = length
+        super().__init__(length)
+    
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'mssql':
+            return dialect.type_descriptor(MSSQL_VARCHAR(self.length))
+        return dialect.type_descriptor(VARCHAR(self.length))
+
+
 class Project(Base):
     __tablename__ = "projects"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("prj"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("prj"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     country: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -42,9 +61,9 @@ class Project(Base):
 class Domain(Base):
     __tablename__ = "domains"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("dom"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("dom"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    domain: Mapped[str] = mapped_column(String, nullable=False)
+    domain: Mapped[str] = mapped_column(FixedVarchar(255), nullable=False)
     pattern_regex: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -58,7 +77,7 @@ class Domain(Base):
 class Prompt(Base):
     __tablename__ = "prompts"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("pmt"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("pmt"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     text: Mapped[str] = mapped_column(String, nullable=False)
@@ -74,7 +93,7 @@ class Prompt(Base):
 class PromptVersion(Base):
     __tablename__ = "prompt_versions"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("pv"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("pv"))
     prompt_id: Mapped[str] = mapped_column(ForeignKey("prompts.id", ondelete="CASCADE"))
     version: Mapped[int] = mapped_column()
     text: Mapped[str] = mapped_column(String, nullable=False)
@@ -90,7 +109,7 @@ class PromptVersion(Base):
 class Engine(Base):
     __tablename__ = "engines"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("eng"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("eng"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     region: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -103,7 +122,7 @@ class Engine(Base):
 class Run(Base):
     __tablename__ = "runs"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("run"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("run"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     prompt_version_id: Mapped[str] = mapped_column(ForeignKey("prompt_versions.id"))
     engine_id: Mapped[str] = mapped_column(ForeignKey("engines.id"))
@@ -133,7 +152,7 @@ class Run(Base):
 class Evidence(Base):
     __tablename__ = "evidences"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("evd"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("evd"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     raw_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     parsed_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -144,9 +163,9 @@ class Evidence(Base):
 class Citation(Base):
     __tablename__ = "citations"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ctt"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("ctt"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    domain: Mapped[str] = mapped_column(String)
+    domain: Mapped[str] = mapped_column(FixedVarchar(255))
     url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     anchor: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     position: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # top|middle|bottom
@@ -161,7 +180,7 @@ class Citation(Base):
 class Reason(Base):
     __tablename__ = "reasons"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("rsn"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("rsn"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     code: Mapped[str] = mapped_column(String)
     label: Mapped[str] = mapped_column(String)
@@ -171,9 +190,9 @@ class Reason(Base):
 class CompetitorScore(Base):
     __tablename__ = "competitor_scores"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("cmp"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("cmp"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    domain: Mapped[str] = mapped_column(String)
+    domain: Mapped[str] = mapped_column(FixedVarchar(255))
     sov: Mapped[float] = mapped_column(Float)
     period_start: Mapped[datetime] = mapped_column(DateTime)
     period_end: Mapped[datetime] = mapped_column(DateTime)
@@ -186,8 +205,8 @@ class CompetitorScore(Base):
 class Insight(Base):
     __tablename__ = "insights"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ins"))
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("ins"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="NO ACTION"))
     run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(String)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -200,9 +219,9 @@ class Insight(Base):
 class RunEvent(Base):
     __tablename__ = "run_events"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("evt"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("evt"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    step: Mapped[str] = mapped_column(String)  # queued|fetch|parse|extract|persist|completed|error
+    version: Mapped[str] = mapped_column(VARCHAR(50))  # queued|fetch|parse|extract|persist|completed|error
     status: Mapped[str] = mapped_column(String)  # started|ok|fail
     message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -215,9 +234,9 @@ class RunEvent(Base):
 class SubProject(Base):
     __tablename__ = "subprojects"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("spj"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("spj"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(FixedVarchar(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     __table_args__ = (
@@ -228,9 +247,10 @@ class SubProject(Base):
 class PromptTemplate(Base):
     __tablename__ = "prompt_templates"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ptm"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("ptm"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    category: Mapped[str] = mapped_column(String, nullable=False)  # ex.: Abertura de conta PF
+    subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
+    category: Mapped[str] = mapped_column(FixedVarchar(100), nullable=False)  # ex.: Abertura de conta PF
     name: Mapped[str] = mapped_column(String, nullable=False)
     text: Mapped[str] = mapped_column(String, nullable=False)
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -244,7 +264,7 @@ class PromptTemplate(Base):
 class Monitor(Base):
     __tablename__ = "monitors"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("mon"))
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("mon"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -258,7 +278,7 @@ class MonitorTemplate(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     monitor_id: Mapped[str] = mapped_column(ForeignKey("monitors.id", ondelete="CASCADE"))
-    template_id: Mapped[str] = mapped_column(ForeignKey("prompt_templates.id", ondelete="CASCADE"))
+    template_id: Mapped[str] = mapped_column(ForeignKey("prompt_templates.id", ondelete="NO ACTION"))
 
     __table_args__ = (
         UniqueConstraint("monitor_id", "template_id", name="uq_monitor_template"),

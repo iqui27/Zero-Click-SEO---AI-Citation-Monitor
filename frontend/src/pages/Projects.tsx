@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import { Button } from '../components/ui/button'
-import { FolderOpen, LineChart } from 'lucide-react'
+import { Input } from '../components/ui/input'
+import { FolderOpen, LineChart, Pencil, Trash2 } from 'lucide-react'
+import { Toaster, toast } from 'sonner'
 
 const API = '/api'
 
@@ -14,6 +16,8 @@ export default function ProjectsPage() {
   const [stats, setStats] = useState<Record<string, Stats>>({})
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('Banco Digital')
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
 
   const refresh = async () => {
     const res = await axios.get(`${API}/projects`)
@@ -42,11 +46,26 @@ export default function ProjectsPage() {
 
   const openDetails = (id: string) => {
     localStorage.setItem('project_id', id)
-    window.location.href = '/temas'
+    window.location.href = '/subprojects'
+  }
+
+  const beginEdit = (p: Project) => {
+    setEditing(p.id)
+    setEditName(p.name)
+  }
+
+  const saveEdit = async (id: string) => {
+    const newName = editName.trim()
+    if (!newName) return
+    await axios.patch(`${API}/projects/${id}`, { name: newName })
+    setEditing(null)
+    setEditName('')
+    await refresh()
   }
 
   return (
     <div className="space-y-4">
+      <Toaster richColors position="top-right" />
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-semibold">Projetos</h1>
         <div className="ml-auto flex items-center gap-2">
@@ -60,7 +79,37 @@ export default function ProjectsPage() {
           <div key={p.id} className="border rounded-xl p-4 space-y-3 bg-white dark:bg-neutral-900 shadow-sm">
             <div className="flex items-start gap-3">
               <div className="flex-1">
-                <div className="text-lg font-semibold flex items-center gap-2"><FolderOpen className="h-5 w-5" /> {p.name}</div>
+                <div className="text-lg font-semibold flex items-center gap-2"><FolderOpen className="h-5 w-5" />
+                  {editing === p.id ? (
+                    <div className="flex items-center gap-2">
+                      <Input value={editName} onChange={(e)=>setEditName(e.target.value)} className="h-8" />
+                      <Button size="sm" onClick={() => saveEdit(p.id)}>Salvar</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setEditing(null); setEditName('') }}>Cancelar</Button>
+                    </div>
+                  ) : (
+                    <>
+                      <span>{p.name}</span>
+                      <Button variant="ghost" size="sm" title="Renomear" onClick={() => beginEdit(p)}><Pencil className="h-4 w-4" /></Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Excluir projeto"
+                        onClick={async () => {
+                          if (!confirm('Excluir este projeto e dados relacionados? Esta ação não pode ser desfeita.')) return
+                          try {
+                            await axios.delete(`${API}/projects/${p.id}`)
+                            toast.success('Projeto excluído')
+                            await refresh()
+                          } catch (e: any) {
+                            toast.error('Erro ao excluir projeto')
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </>
+                  )}
+                </div>
                 <div className="text-sm opacity-70">{p.country || '—'} · {p.language || '—'}</div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => openDetails(p.id)}><LineChart className="h-4 w-4 mr-1" /> Ver detalhes</Button>

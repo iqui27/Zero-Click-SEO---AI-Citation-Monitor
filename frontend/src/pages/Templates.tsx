@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import { getProjects, getTemplates, createTemplate, deleteTemplate, getSubprojects } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { Toaster, toast } from 'sonner'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 
-const API = '/api'
 
-type Template = { id: string; category: string; name: string; text: string; intent?: string; persona?: string }
+type Template = { id: string; category: string; name: string; text: string; intent?: string; persona?: string; subproject_id?: string }
+type Subproject = { id: string; name: string }
 
 enum Mode { View, Edit, Create }
 
@@ -17,8 +17,10 @@ export default function TemplatesPage() {
   const [projects, setProjects] = useState<Array<{id:string; name:string}>>([])
   const [items, setItems] = useState<Template[]>([])
   const [category, setCategory] = useState<string>('')
+  const [subprojects, setSubprojects] = useState<Subproject[]>([])
+  const [subprojectId, setSubprojectId] = useState<string>('')
   const [mode, setMode] = useState<Mode>(Mode.View)
-  const [form, setForm] = useState<Partial<Template>>({ category: '', name: '', text: '' })
+  const [form, setForm] = useState<Partial<Template>>({ category: '', name: '', text: '', subproject_id: '' })
   const [loading, setLoading] = useState(false)
   const [customCats, setCustomCats] = useState<string[]>([])
   const [showNewCat, setShowNewCat] = useState(false)
@@ -26,20 +28,25 @@ export default function TemplatesPage() {
 
   const refresh = async () => {
     if (!projectId) return
-    const res = await axios.get(`${API}/projects/${projectId}/templates`, { params: category ? { category } : {} })
-    setItems(res.data)
+    const res = await getTemplates(projectId, category, subprojectId || undefined)
+    setItems(res)
   }
 
-  useEffect(() => { refresh() }, [projectId, category])
+  useEffect(() => { refresh() }, [projectId, category, subprojectId])
   useEffect(() => {
-    axios.get(`${API}/projects`).then(r => {
-      setProjects(r.data)
-      if (!projectId && r.data[0]?.id) {
-        setProjectId(r.data[0].id)
-        localStorage.setItem('project_id', r.data[0].id)
+    getProjects().then(r => {
+      setProjects(r)
+      if (!projectId && r[0]?.id) {
+        setProjectId(r[0].id)
+        localStorage.setItem('project_id', r[0].id)
       }
     })
   }, [])
+
+  useEffect(() => {
+    if (!projectId) return
+    getSubprojects(projectId).then(setSubprojects)
+  }, [projectId])
 
   const categories = useMemo(() => Array.from(new Set(items.map(i => i.category))).sort(), [items])
   const catOptions = useMemo(() => Array.from(new Set([...(categories||[]), ...(customCats||[])])).filter(Boolean).sort(), [categories, customCats])
@@ -49,12 +56,13 @@ export default function TemplatesPage() {
     if (!form.name?.trim() || !form.text?.trim()) return toast.error('Preencha nome e texto')
     setLoading(true)
     try {
-      await axios.post(`${API}/projects/${projectId}/templates`, {
+      await createTemplate(projectId, {
         category: form.category || 'Geral',
         name: form.name?.trim(),
         text: form.text?.trim(),
         intent: form.intent,
         persona: form.persona,
+        subproject_id: form.subproject_id || null,
       })
       setMode(Mode.View)
       setForm({})
@@ -79,7 +87,7 @@ export default function TemplatesPage() {
 
   const remove = async (id: string) => {
     if (!confirm('Remover template?')) return
-    await axios.delete(`${API}/templates/${id}`)
+    await deleteTemplate(id)
     await refresh()
     toast.success('Template removido')
   }
@@ -99,6 +107,10 @@ export default function TemplatesPage() {
         <Select value={category} onChange={(e) => setCategory(e.target.value)}>
           <option value="">Todas as categorias</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </Select>
+        <Select value={subprojectId} onChange={(e) => setSubprojectId(e.target.value)}>
+          <option value="">Todos os temas</option>
+          {subprojects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
       </div>
 
@@ -128,6 +140,13 @@ export default function TemplatesPage() {
                     }}>Adicionar</Button>
                   </div>
                 )}
+                <div className="grid gap-1 mt-2">
+                  <div className="text-sm text-neutral-500">Tema (opcional)</div>
+                  <Select value={form.subproject_id || ''} onChange={(e)=>setForm({ ...form, subproject_id: e.target.value })} className="min-w-[240px]">
+                    <option value="">—</option>
+                    {subprojects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </Select>
+                </div>
               </div>
               <Input placeholder="Nome" value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               <textarea placeholder="Texto do prompt" value={form.text || ''} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={8} className="border rounded-md px-2 py-2 bg-transparent"></textarea>
@@ -146,6 +165,11 @@ export default function TemplatesPage() {
             <div className="flex items-center gap-2">
               <span className="text-xs opacity-70">{t.category}</span>
               <strong className="flex-1">{t.name}</strong>
+              {t.subproject_id && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-800">
+                  {subprojects.find(s => s.id === t.subproject_id)?.name || 'Tema'}
+                </span>
+              )}
               <Button variant="outline" size="sm" onClick={() => copyText(t)} title="Copiar"><Copy className="h-4 w-4" /></Button>
               <Button variant="outline" size="sm" onClick={() => clone(t)} title="Clonar">Clonar</Button>
               <Button variant="outline" size="sm" onClick={() => remove(t.id)} title="Remover"><Trash2 className="h-4 w-4" /></Button>

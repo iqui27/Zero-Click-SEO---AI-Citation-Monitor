@@ -1,15 +1,5 @@
 version: "3.9"
 services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: seo
-      POSTGRES_PASSWORD: seo
-      POSTGRES_DB: seo_analyzer
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
   redis:
     image: redis:7
     ports:
@@ -21,7 +11,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg2://seo:seo@db:5432/seo_analyzer
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/app.db}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"
@@ -32,8 +22,9 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - db
       - redis
+    volumes:
+      - app_data:/app/data
   worker:
     build:
       context: .
@@ -42,7 +33,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg2://seo:seo@db:5432/seo_analyzer
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/app.db}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"
@@ -51,8 +42,9 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       SERPAPI_KEY: ${SERPAPI_KEY}
     depends_on:
-      - db
       - redis
+    volumes:
+      - app_data:/app/data
   frontend:
     working_dir: /app
     image: node:20-alpine
@@ -69,5 +61,5 @@ services:
     depends_on:
       - backend
 volumes:
-  db_data:
+  app_data:
   frontend_node_modules:

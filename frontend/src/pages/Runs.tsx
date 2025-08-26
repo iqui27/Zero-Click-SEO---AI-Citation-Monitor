@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { formatNumberCompact } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
-import RunsFilter from '../components/RunsFilter'
+import SimpleRunsFilter from '../components/SimpleRunsFilter'
 import { Toaster, toast } from 'sonner'
-import { RefreshCw, Plus } from 'lucide-react'
-
-const API = '/api'
+import { RefreshCw, Plus, Trash2 } from 'lucide-react'
+import { Skeleton } from '../components/ui/skeleton'
 
 type RunItem = {
   id: string
@@ -30,7 +29,7 @@ type Project = { id: string; name: string }
 
 type Subproject = { id: string; name: string }
 
-type Template = { id: string; name: string; text: string; category: string }
+type Template = { id: string; name: string; text: string; category: string; subproject_id?: string }
 
 const TEMPLATES: { label: string; text: string }[] = [
   { label: 'Tarifas conta corrente BB 2025 (fontes)', text: 'Você é um avaliador. Use pesquisa na web quando necessário. Consulta: "tarifas de conta corrente do Banco do Brasil em 2025". Responda brevemente e LISTE AS FONTES com URLs completas (http) no final. Priorize páginas de bb.com.br e banco central.' },
@@ -61,68 +60,74 @@ export default function Runs() {
   const [runs, setRuns] = useState<RunItem[]>([])
   const [showModal, setShowModal] = useState(false)
   const [engineFilter, setEngineFilter] = useState<string>('')
-  const [statusFilter, setStatusFilter] = useState<string>('')
-  const [query, setQuery] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('project_id') || '')
   const [subprojects, setSubprojects] = useState<Subproject[]>([])
   const [subprojectId, setSubprojectId] = useState<string>('')
-  const [dateFrom, setDateFrom] = useState<string>('')
-  const [dateTo, setDateTo] = useState<string>('')
-  const [page, setPage] = useState<number>(1)
-  const [pageSize, setPageSize] = useState<number>(50)
-  const [orderBy, setOrderBy] = useState<string>('started_at')
-  const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc')
+  const [loading, setLoading] = useState<boolean>(false)
 
   const fetchRuns = async () => {
     const params: any = {}
     if (projectId) params.project_id = projectId
     if (subprojectId) params.subproject_id = subprojectId
     if (engineFilter) params.engine = engineFilter
-    if (statusFilter) params.status = statusFilter
-    if (dateFrom) params.date_from = `${dateFrom}T00:00:00`
-    if (dateTo) params.date_to = `${dateTo}T23:59:59`
-    params.page = page
-    params.page_size = pageSize
-    params.order_by = orderBy
-    params.order_dir = orderDir
-    const res = await axios.get(`${API}/runs`, { params })
-    setRuns(res.data)
+    setLoading(true)
+    try {
+      const res = await listRuns(params)
+      setRuns(res)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    axios.get<Project[]>(`${API}/projects`).then((r) => {
-      setProjects(r.data)
-      if (!projectId && r.data[0]?.id) {
-        setProjectId(r.data[0].id)
-        localStorage.setItem('project_id', r.data[0].id)
+    getProjects().then((r) => {
+      setProjects(r)
+      if (!projectId && r[0]?.id) {
+        setProjectId(r[0].id)
+        localStorage.setItem('project_id', r[0].id)
       }
     })
   }, [])
 
   useEffect(() => {
     const p = new URLSearchParams(location.search)
-    const q = p.get('q') || ''
     const openNew = p.get('new') === '1'
-    setQuery(q)
     if (openNew) setShowModal(true)
   }, [location.search])
 
-  useEffect(() => { fetchRuns() }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
-  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, statusFilter, subprojectId, dateFrom, dateTo, page, pageSize, orderBy, orderDir])
-  useEffect(() => { if (projectId) { setPage(1); fetchRuns() } }, [projectId])
+  useEffect(() => { fetchRuns() }, [engineFilter, subprojectId])
+  useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, subprojectId])
+  useEffect(() => { if (projectId) { fetchRuns() } }, [projectId])
 
   useEffect(() => {
     if (!projectId) return
     localStorage.setItem('project_id', projectId)
-    axios.get<Subproject[]>(`${API}/projects/${projectId}/subprojects`).then((r) => setSubprojects(r.data))
+    getSubprojects(projectId).then((r) => setSubprojects(r))
   }, [projectId])
 
   const engines = useMemo(() => Array.from(new Set(runs.map((r: RunItem) => r.engine))), [runs])
-  const filtered = useMemo(() => {
-    const list = runs.filter((r: RunItem) => (!query || r.id.includes(query)))
-    return list
-  }, [runs, query])
+  const grouped = useMemo(() => {
+    const m = new Map<string, RunItem[]>()
+    for (const r of runs) {
+      const k = r.subproject_name || 'Sem tema'
+      if (!m.has(k)) m.set(k, [])
+      m.get(k)!.push(r)
+    }
+    const arr = Array.from(m.entries()) as Array<[string, RunItem[]]>
+    // sort items (newest first) and groups by theme name
+    for (const [, items] of arr) {
+      items.sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
+    }
+    arr.sort((a, b) => a[0].localeCompare(b[0]))
+    return arr
+  }, [runs])
+
+  const sortedRuns = useMemo(() => {
+    const copy = [...runs]
+    copy.sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
+    return copy
+  }, [runs])
 
   const projectName = useMemo(() => projects.find(p => p.id === projectId)?.name || '', [projects, projectId])
   const themeName = useMemo(() => subprojects.find(s => s.id === subprojectId)?.name || '', [subprojects, subprojectId])
@@ -131,6 +136,17 @@ export default function Runs() {
     setSubprojectId('')
     localStorage.removeItem('theme_focus')
     localStorage.removeItem('subproject_focus')
+  }
+
+  const handleDeleteRun = async (id: string) => {
+    if (!confirm('Excluir esta run? Esta ação não pode ser desfeita.')) return
+    try {
+      await deleteRun(id)
+      toast.success('Run excluída')
+      await fetchRuns()
+    } catch (e: any) {
+      toast.error('Erro ao excluir run')
+    }
   }
 
   return (
@@ -147,7 +163,7 @@ export default function Runs() {
             Tema: <span className="font-medium">{themeName}</span>
           </span>
         )}
-        <a href="/settings" className="ml-auto underline">alterar</a>
+        <span className="ml-auto" />
         {themeName && (
           <button className="underline" onClick={clearThemeFocus}>limpar</button>
         )}
@@ -157,257 +173,100 @@ export default function Runs() {
         <Button variant="outline" size="sm" onClick={() => { fetchRuns().then(()=>toast.success('Atualizado')) }} className="ml-2"><RefreshCw className="h-4 w-4" /></Button>
         <Button className="ml-auto" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
       </div>
-      <RunsFilter
-        projects={projects}
-        projectId={projectId}
-        setProjectId={setProjectId}
+      <SimpleRunsFilter
         subprojects={subprojects}
         subprojectId={subprojectId}
         setSubprojectId={setSubprojectId}
         engines={engines}
         engineFilter={engineFilter}
         setEngineFilter={setEngineFilter}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFilter}
-        dateFrom={dateFrom}
-        setDateFrom={setDateFrom}
-        dateTo={dateTo}
-        setDateTo={setDateTo}
-        query={query}
-        setQuery={setQuery}
-        onSearch={() => navigate(`/runs?q=${encodeURIComponent(query)}`)}
         onRefresh={fetchRuns}
-        totalResults={filtered.length}
       />
-      
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 text-sm">
-          <span className="opacity-70">Página</span>
-          <Button variant="outline" size="sm" onClick={() => setPage((p: number) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
-          <span className="px-2">{page}</span>
-          <Button variant="outline" size="sm" onClick={() => setPage((p: number) => p + 1)} disabled={runs.length < pageSize}>Próxima</Button>
-        </div>
-        <div className="flex items-center gap-3 text-sm ml-auto mt-2 sm:mt-0">
-          <span className="opacity-70">Ordenar por</span>
-          <Select value={orderBy} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setOrderBy(e.target.value); setPage(1) }}>
-            <option value="started_at">Início</option>
-            <option value="finished_at">Fim</option>
-            <option value="zcrs">ZCRS</option>
-            <option value="cost_usd">Custo</option>
-            <option value="tokens_total">Tokens</option>
-            <option value="status">Status</option>
-            <option value="engine">Engine</option>
-          </Select>
-          <Select value={orderDir} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setOrderDir(e.target.value as 'asc'|'desc'); setPage(1) }}>
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </Select>
-          <span className="opacity-70 ml-2">Itens por página</span>
-          <Select value={String(pageSize)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setPageSize(parseInt(e.target.value)); setPage(1) }}>
-            {[25,50,100,150,200].map((n: number) => <option key={n} value={n}>{n}</option>)}
-          </Select>
-        </div>
-      </div>
-      <div className="overflow-auto rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-sm">
-        <table className="min-w-full text-sm table-fixed">
-          <thead className="bg-neutral-50 dark:bg-neutral-900 z-10">
-            <tr className="text-neutral-500 text-xs sticky top-0 z-10">
-              <Th>ID</Th>
-              <Th>Engine</Th>
-              <Th>Status</Th>
-              <Th>Início</Th>
-              <Th>Fim</Th>
-              <Th>ZCRS</Th>
-              <Th>AMR</Th>
-              <Th>DCR</Th>
-              <Th>Template</Th>
-              <Th>Tema</Th>
-              <Th>Custo</Th>
-              <Th>Tokens</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((r: RunItem, idx: number) => (
-              <tr key={r.id} className={`border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900/40 ${idx % 2 === 1 ? 'bg-neutral-50/40 dark:bg-neutral-900/30' : ''}`}>
-                <Td><a className="text-blue-600" href={`/runs/${r.id}`}>{r.id}</a></Td>
-                <Td>
-                  <span className="font-medium tracking-tight">{r.engine}</span>
-                </Td>
-                <Td>
-                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                    r.status === 'completed' ? 'bg-green-100 text-green-800' :
-                    r.status === 'failed' ? 'bg-red-100 text-red-800' :
-                    r.status === 'running' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {r.status}
-                  </span>
-                </Td>
-                <Td>{r.started_at || '-'}</Td>
-                <Td>{r.finished_at || '-'}</Td>
-                <Td>{r.zcrs?.toFixed(1) ?? '-'}</Td>
-                <Td>{r.amr_flag ? '1' : '0'}</Td>
-                <Td>{r.dcr_flag ? '1' : '0'}</Td>
-                <Td>{r.template_name || '-'}</Td>
-                <Td>{r.subproject_name || '-'}</Td>
-                <Td>{typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</Td>
-                <Td>{typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</Td>
-              </tr>
+      <div className="space-y-4">
+        {loading && runs.length === 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="rounded-md border border-neutral-200 dark:border-neutral-800 p-3">
+                <div className="flex items-center justify-between">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-4 w-12 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-28 mt-3" />
+                <Skeleton className="h-3 w-40 mt-2" />
+                <div className="flex gap-3 mt-3">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        ) : runs.length === 0 ? (
+          <div className="p-10 text-center border rounded-md border-neutral-200 dark:border-neutral-800">
+            <div className="text-sm opacity-70">Nenhuma run encontrada.</div>
+            <Button className="mt-3" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
+          </div>
+        ) : !subprojectId ? (
+          grouped.map(([theme, items]) => (
+            <div key={theme} className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden fade-in-up">
+              <div className="px-3 py-2 bg-neutral-50 dark:bg-neutral-900 flex items-center justify-between">
+                <div className="text-sm font-medium">{theme}</div>
+                <div className="text-xs opacity-60">{items.length} runs</div>
+              </div>
+              <div className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {items.map((r) => (
+                  <RunCard key={r.id} r={r} onDelete={handleDeleteRun} />
+                ))}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {sortedRuns.map((r) => (<RunCard key={r.id} r={r} onDelete={handleDeleteRun} />))}
+          </div>
+        )}
       </div>
       {showModal && <NewRunModal onClose={() => { setShowModal(false); fetchRuns(); navigate('/runs', { replace: true }) }} />}
     </div>
   )
 }
 
-function ActiveContextBar() {
-  const [project, setProject] = useState<string>('')
-  const [theme, setTheme] = useState<string>('')
-  useEffect(() => {
-    setProject(localStorage.getItem('project_id') || '')
-    setTheme(localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus') || '')
-  }, [])
-  if (!project && !theme) return null
+function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void | Promise<void> }) {
+  const statusCls =
+    r.status === 'completed' ? 'bg-green-100 text-green-800' :
+    r.status === 'failed' ? 'bg-red-100 text-red-800' :
+    r.status === 'running' ? 'bg-yellow-100 text-yellow-800' :
+    'bg-gray-100 text-gray-800'
   return (
-    <div className="text-xs px-2 py-1 border rounded-md flex items-center gap-2">
-      {project && <span>Projeto: <span className="font-medium">{project}</span></span>}
-      {theme && <span>Tema: <span className="font-medium">{theme}</span></span>}
-      <a href="/settings" className="ml-auto underline">alterar</a>
-      <button className="underline" onClick={() => { localStorage.removeItem('theme_focus'); localStorage.removeItem('subproject_focus'); window.location.reload() }}>limpar</button>
-    </div>
-  )
-}
-
-function FilterBar(props: {
-  projects: Project[]
-  projectId: string
-  setProjectId: (v: string) => void
-  subprojects: Subproject[]
-  subprojectId: string
-  setSubprojectId: (v: string) => void
-  engines: string[]
-  engineFilter: string
-  setEngineFilter: (v: string) => void
-  statusFilter: string
-  setStatusFilter: (v: string) => void
-  dateFrom: string
-  setDateFrom: (v: string) => void
-  dateTo: string
-  setDateTo: (v: string) => void
-  query: string
-  setQuery: (v: string) => void
-  onSearch: () => void
-}) {
-  const [open, setOpen] = useState<boolean>(false)
-  const projectName = props.projects.find(p => p.id === props.projectId)?.name
-  const themeName = props.subprojects.find(s => s.id === props.subprojectId)?.name
-
-  const fmtChipDate = (s: string) => {
-    if (!s) return ''
-    try {
-      const d = new Date(s)
-      const dd = String(d.getDate()).padStart(2, '0')
-      const mm = String(d.getMonth() + 1).padStart(2, '0')
-      return `${dd}/${mm}`
-    } catch {
-      return s
-    }
-  }
-
-  const activeChips: Array<{ key: string; label: string; onClear: () => void }> = []
-  if (projectName) activeChips.push({ key: 'project', label: `Projeto: ${projectName}`, onClear: () => {} })
-  if (themeName) activeChips.push({ key: 'theme', label: `Tema: ${themeName}`, onClear: () => props.setSubprojectId('') })
-  if (props.engineFilter) activeChips.push({ key: 'engine', label: `Engine: ${props.engineFilter}`, onClear: () => props.setEngineFilter('') })
-  if (props.statusFilter) activeChips.push({ key: 'status', label: `Status: ${props.statusFilter}`, onClear: () => props.setStatusFilter('') })
-  if (props.dateFrom) activeChips.push({ key: 'from', label: `De: ${fmtChipDate(props.dateFrom)}`, onClear: () => props.setDateFrom('') })
-  if (props.dateTo) activeChips.push({ key: 'to', label: `Até: ${fmtChipDate(props.dateTo)}`, onClear: () => props.setDateTo('') })
-  if (props.query) activeChips.push({ key: 'q', label: `ID: ${props.query}`, onClear: () => props.setQuery('') })
-
-  const setQuickRange = (range: 'today' | 7 | 30 | 'all') => {
-    if (range === 'all') { props.setDateFrom(''); props.setDateTo(''); return }
-    const now = new Date()
-    const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
-    const start = new Date(end)
-    if (range === 'today') {
-      // start == end
-    } else {
-      start.setUTCDate(start.getUTCDate() - (range as number))
-    }
-    const fmt = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`
-    props.setDateFrom(fmt(start))
-    props.setDateTo(fmt(end))
-  }
-
-  const resetAll = () => {
-    // Mantém projeto, limpa demais filtros
-    props.setSubprojectId('')
-    props.setEngineFilter('')
-    props.setStatusFilter('')
-    props.setDateFrom('')
-    props.setDateTo('')
-    props.setQuery('')
-  }
-
-  return (
-    <div className="border rounded-md">
-      <div className="p-2 flex items-center gap-2">
-        <div className="text-sm font-medium">Filtros</div>
-        <div className="flex flex-wrap gap-1">
-          {activeChips.length ? activeChips.map(ch => (
-            <button key={ch.key} className="text-xs px-2 py-0.5 border rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800" onClick={ch.onClear}>
-              {ch.label} ×
-            </button>
-          )) : <span className="text-xs opacity-60">Nenhum filtro ativo</span>}
-        </div>
-        <div className="ml-auto flex items-center gap-1 text-xs">
-          <Button variant="outline" size="sm" onClick={() => setQuickRange('today')}>Hoje</Button>
-          <Button variant="outline" size="sm" onClick={() => setQuickRange(7)}>7d</Button>
-          <Button variant="outline" size="sm" onClick={() => setQuickRange(30)}>30d</Button>
-          <Button variant="outline" size="sm" onClick={() => setQuickRange('all')}>Tudo</Button>
-          <Button variant="outline" size="sm" onClick={resetAll}>Limpar</Button>
-          <Button variant="outline" size="sm" onClick={() => setOpen(v=>!v)}>{open ? 'Ocultar' : 'Mostrar'}</Button>
+    <a href={`/runs/${r.id}`} className="group block rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:shadow-sm transition duration-200 fade-in-up">
+      <div className="flex items-center justify-between">
+        <div className="font-mono text-xs text-blue-600 group-hover:underline">{r.id}</div>
+        <div className="flex items-center gap-2">
+          <button
+            title="Excluir run"
+            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(r.id) }}
+          >
+            <Trash2 className="h-4 w-4 text-red-600" />
+          </button>
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${statusCls}`}>{r.status}</span>
         </div>
       </div>
-      {open && (
-        <div className="p-2 grid gap-2 items-center" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-          <Select value={props.projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setProjectId(e.target.value)} className="col-span-12 sm:col-span-3">
-            {props.projects.map((p: Project) => <option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
-          </Select>
-          <Select value={props.subprojectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setSubprojectId(e.target.value)} className="col-span-12 sm:col-span-3">
-            <option value="">Todos os temas</option>
-            {props.subprojects.map((sp: Subproject) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
-          </Select>
-          <Select value={props.engineFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setEngineFilter(e.target.value)} className="col-span-6 sm:col-span-2">
-            <option value="">Todas as engines</option>
-            {props.engines.map((e: string) => <option key={e} value={e}>{e}</option>)}
-          </Select>
-          <Select value={props.statusFilter} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setStatusFilter(e.target.value)} className="col-span-6 sm:col-span-2">
-            <option value="">Todos os status</option>
-            {['queued','running','completed','failed'].map((s: string) => <option key={s} value={s}>{s}</option>)}
-          </Select>
-          <div className="col-span-12 sm:col-span-2 flex items-center gap-1 text-xs">
-            <span className="opacity-70">De</span>
-            <Input type="date" value={props.dateFrom} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setDateFrom(e.target.value)} />
-            <span className="opacity-70">Até</span>
-            <Input type="date" value={props.dateTo} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setDateTo(e.target.value)} />
-          </div>
-          <div className="col-span-12 sm:col-span-4 flex items-center gap-2">
-            <Input placeholder="Buscar por ID" value={props.query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.setQuery(e.target.value)} onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') props.onSearch() }} />
-            <Button variant="secondary" size="sm" onClick={props.onSearch}>Buscar</Button>
-          </div>
-        </div>
+      <div className="mt-2 text-sm font-medium">{r.engine}</div>
+      <div className="mt-1 text-xs opacity-70">
+        <span>Início: {r.started_at || '-'}</span>
+        {r.finished_at ? <span> • Fim: {r.finished_at}</span> : null}
+      </div>
+      <div className="mt-2 flex items-center gap-3 text-xs">
+        <span>ZCRS: {r.zcrs?.toFixed(1) ?? '-'}</span>
+        <span>Tokens: {typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</span>
+        <span>Custo: {typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</span>
+      </div>
+      {r.template_name && (
+        <div className="mt-2 text-[11px] opacity-70 truncate">{r.template_name}</div>
       )}
-    </div>
+    </a>
   )
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="text-left p-2">{children}</th>
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="p-2">{children}</td>
 }
 
 function NewRunModal({ onClose }: { onClose: () => void }) {
@@ -443,22 +302,21 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [serpNoCache, setSerpNoCache] = useState<boolean>(false)
 
   useEffect(() => {
-    axios.get<Project[]>(`${API}/projects`).then((r) => {
-      setProjects(r.data)
-      if (!projectId && r.data[0]?.id) setProjectId(r.data[0].id)
+    getProjects().then((r) => {
+      setProjects(r)
+      if (!projectId && r[0]?.id) setProjectId(r[0].id)
     })
   }, [])
 
   useEffect(() => {
     if (!projectId) return
-    axios.get<Subproject[]>(`${API}/projects/${projectId}/subprojects`).then((r) => setSubprojects(r.data))
-    const params = category ? { params: { category } } : undefined
-    axios.get<Template[]>(`${API}/projects/${projectId}/templates`, params as any).then((r) => setTemplates(r.data))
-  }, [projectId, category])
+    getSubprojects(projectId).then((r) => setSubprojects(r))
+    getTemplates(projectId, category, subprojectId || undefined).then((r) => setTemplates(r))
+  }, [projectId, category, subprojectId])
 
   const createQuickProject = async () => {
-    const res = await axios.post(`${API}/projects`, { name: newProjectName, country: 'BR', language: 'pt-BR', timezone: 'America/Sao_Paulo' })
-    const id = res.data.id as string
+    const res = await createProject({ name: newProjectName, country: 'BR', language: 'pt-BR', timezone: 'America/Sao_Paulo' })
+    const id = res.id as string
     setProjects((prev: Project[]) => [{ id, name: newProjectName }, ...prev])
     setProjectId(id)
     localStorage.setItem('project_id', id)
@@ -472,16 +330,15 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
 
       // Se há prompt customizado, usa ele diretamente; caso contrário, usa template (remoto ou local)
       if (customPrompt.trim()) {
-        const promptRes = await axios.post(`${API}/projects/${projectId}/prompts`, {
+        const promptRes = await createPrompt(projectId, {
           name: `Prompt custom (${new Date().toISOString()})`,
           text: customPrompt,
           intent: 'Ad-hoc',
           persona: 'Analista',
           variables: {},
         })
-        const promptId = promptRes.data.id
-        const pvRes = await axios.get(`${API}/prompts/${promptId}/versions`)
-        const versions = pvRes.data as any[]
+        const promptId = promptRes.id as string
+        const versions = await getPromptVersions(promptId)
         const pvId = versions[versions.length - 1].id
         const engine = ENGINE_OPTIONS[engineIdx]
         // montar config_json com opções avançadas
@@ -505,7 +362,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             serpapi_no_cache: serpNoCache,
           }
         }
-        await axios.post(`${API}/runs`, {
+        await createRun({
           project_id: projectId,
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],
@@ -514,16 +371,15 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
         })
       } else if (templates.length) {
         const t = templates[templateIdx]
-        const promptRes = await axios.post(`${API}/projects/${projectId}/prompts`, {
+        const promptRes = await createPrompt(projectId, {
           name: `Template: ${t.name}`,
           text: t.text,
           intent: 'Informacional',
           persona: 'Analista',
           variables: {},
         })
-        const promptId = promptRes.data.id
-        const pvRes = await axios.get(`${API}/prompts/${promptId}/versions`)
-        const versions = pvRes.data as any[]
+        const promptId = promptRes.id as string
+        const versions = await getPromptVersions(promptId)
         const pvId = versions[versions.length - 1].id
         const engine = ENGINE_OPTIONS[engineIdx]
         let cfg: any = { ...(engine.config_json || {}) }
@@ -546,24 +402,24 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             serpapi_no_cache: serpNoCache,
           }
         }
-        await axios.post(`${API}/runs`, {
+        const subprojectToUse = subprojectId || t.subproject_id || null
+        await createRun({
           project_id: projectId,
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],
           cycles,
-          subproject_id: subprojectId || null,
+          subproject_id: subprojectToUse,
         })
       } else {
-        const promptRes = await axios.post(`${API}/projects/${projectId}/prompts`, {
+        const promptRes = await createPrompt(projectId, {
           name: `Template: ${TEMPLATES[templateIdx].label}`,
           text: TEMPLATES[templateIdx].text,
           intent: 'Informacional',
           persona: 'Analista',
           variables: {},
         })
-        const promptId = promptRes.data.id
-        const pvRes = await axios.get(`${API}/prompts/${promptId}/versions`)
-        const versions = pvRes.data as any[]
+        const promptId = promptRes.id as string
+        const versions = await getPromptVersions(promptId)
         const pvId = versions[versions.length - 1].id
         const engine = ENGINE_OPTIONS[engineIdx]
         let cfg: any = { ...(engine.config_json || {}) }
@@ -586,7 +442,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             serpapi_no_cache: serpNoCache,
           }
         }
-        await axios.post(`${API}/runs`, {
+        await createRun({
           project_id: projectId,
           prompt_version_id: pvId,
           engines: [{ name: engine.name, region: 'BR', device: 'desktop', config_json: cfg }],

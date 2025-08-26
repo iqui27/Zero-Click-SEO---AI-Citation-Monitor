@@ -30,6 +30,8 @@ from app.schemas.schemas import (
     CitationOut,
     EvidenceOut,
     OverviewAnalytics,
+    RunsBySubprojectGroup,
+    GroupedRunWithEvidences,
 )
 from app.services.tasks import enqueue_run
 from app.services.kpis import compute_run_report
@@ -78,6 +80,32 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
 def list_projects(db: Session = Depends(get_db)):
     projects = db.query(Project).all()
     return [ProjectOut(id=p.id, name=p.name, country=p.country, language=p.language, timezone=p.timezone) for p in projects]
+
+
+@api_router.patch("/projects/{project_id}")
+def update_project(project_id: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    # Campos permitidos para atualização
+    for field in ["name", "country", "language", "timezone"]:
+        if field in payload and payload[field] is not None:
+            setattr(project, field, payload[field])
+    db.commit()
+    db.refresh(project)
+    return ProjectOut(id=project.id, name=project.name, country=project.country, language=project.language, timezone=project.timezone)
+
+
+@api_router.delete("/projects/{project_id}")
+def delete_project(project_id: str, db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    # Remover Insights vinculados ao projeto para evitar restrição de FK (NO ACTION)
+    db.query(Insight).filter(Insight.project_id == project_id).delete(synchronize_session=False)
+    db.delete(project)
+    db.commit()
+    return {"ok": True}
 
 
 @api_router.post("/projects/{project_id}/domains", response_model=DomainOut)
@@ -390,8 +418,8 @@ def list_runs(
             Run.dcr_flag,
             Run.cost_usd,
             Run.tokens_total,
-            func.coalesce(Prompt.name, literal_column("'—'")) .label("template_name"),
-            func.coalesce(SubProject.name, literal_column("'—'")) .label("subproject_name"),
+            func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
+            func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
@@ -426,10 +454,12 @@ def list_runs(
     }
     sort_col = sort_mapping.get((order_by or "started_at").lower(), Run.started_at)
     dir_is_asc = (order_dir or "desc").lower() == "asc"
+    # Emular NULLS LAST em SQL Server via CASE
+    nulls_last = case((sort_col.is_(None), 1), else_=0)
     if dir_is_asc:
-        q = q.order_by(sort_col.asc().nullslast(), Run.id.asc())
+        q = q.order_by(nulls_last.asc(), sort_col.asc(), Run.id.asc())
     else:
-        q = q.order_by(sort_col.desc().nullslast(), Run.id.desc())
+        q = q.order_by(nulls_last.asc(), sort_col.desc(), Run.id.desc())
 
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
     return [
@@ -452,6 +482,122 @@ def list_runs(
 
 # Workaround: forçar registro explícito do GET /runs
 api_router.add_api_route("/runs", list_runs, methods=["GET"], response_model=list[RunListItem])
+
+
+@api_router.get("/runs/grouped", response_model=list[RunsBySubprojectGroup])
+def list_runs_grouped_by_subproject(
+    db: Session = Depends(get_db),
+    project_id: str | None = None,
+    subproject_id: str | None = None,
+    engine: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit_per_group: int = 5,
+    max_total: int = 200,
+):
+    """
+    Lista runs agrupadas por subprojeto (tema), incluindo evidências embutidas.
+    Otimizado para UI de comparação lado-a-lado.
+    """
+    # Query base com joins necessários para enriquecer dados do run
+    q = (
+        db.query(
+            Run.id,
+            Run.subproject_id,
+            Run.status,
+            Run.started_at,
+            Run.finished_at,
+            Engine.name.label("engine"),
+            func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
+            PromptVersion.text.label("prompt_text"),
+        )
+        .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .outerjoin(SubProject, SubProject.id == Run.subproject_id)
+    )
+    if project_id:
+        q = q.filter(Run.project_id == project_id)
+    if subproject_id:
+        q = q.filter(Run.subproject_id == subproject_id)
+    if engine:
+        q = q.filter(Engine.name == engine)
+    if status:
+        q = q.filter(Run.status == status)
+    if date_from:
+        q = q.filter(Run.started_at >= text(":df")).params(df=date_from)
+    if date_to:
+        q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
+
+    # Emular NULLS LAST em SQL Server via CASE
+    q = q.order_by(
+        case((Run.started_at.is_(None), 1), else_=0).asc(),
+        Run.started_at.desc(),
+        Run.id.desc(),
+    )
+    rows = q.limit(max_total).all()
+
+    # Agrupar limitando quantidade por grupo em memória
+    groups: dict[str | None, dict] = {}
+    for r in rows:
+        spid = getattr(r, "subproject_id", None)
+        spname = getattr(r, "subproject_name", "—")
+        g = groups.get(spid)
+        if not g:
+            g = {"subproject_id": spid, "subproject_name": spname, "runs": []}
+            groups[spid] = g
+        if len(g["runs"]) >= max(1, int(limit_per_group or 1)):
+            continue
+        g["runs"].append(
+            {
+                "id": r.id,
+                "engine": r.engine,
+                "status": r.status,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+                "prompt_text": getattr(r, "prompt_text", None),
+            }
+        )
+
+    # Buscar evidências em lote
+    run_ids: list[str] = []
+    for g in groups.values():
+        run_ids.extend([rr["id"] for rr in g["runs"]])
+    evidences_by_run: dict[str, list[Evidence]] = {}
+    if run_ids:
+        evs = db.query(Evidence).filter(Evidence.run_id.in_(run_ids)).all()
+        for e in evs:
+            evidences_by_run.setdefault(e.run_id, []).append(e)
+
+    # Montar resposta tipada
+    out: list[RunsBySubprojectGroup] = []
+    # Ordenar grupos por nome de subprojeto para output estável
+    for spid, g in sorted(groups.items(), key=lambda kv: (str(kv[1]["subproject_name"]) or "~")):
+        runs_out: list[GroupedRunWithEvidences] = []
+        for rr in g["runs"]:
+            ev_list = [
+                EvidenceOut(id=e.id, run_id=e.run_id, parsed_json=e.parsed_json)
+                for e in evidences_by_run.get(rr["id"], [])
+            ]
+            runs_out.append(
+                GroupedRunWithEvidences(
+                    id=rr["id"],
+                    engine=rr["engine"],
+                    status=rr["status"],
+                    started_at=rr["started_at"],
+                    finished_at=rr["finished_at"],
+                    prompt_text=rr.get("prompt_text"),
+                    evidences=ev_list,
+                )
+            )
+        out.append(
+            RunsBySubprojectGroup(
+                subproject_id=g["subproject_id"],
+                subproject_name=g["subproject_name"],
+                runs=runs_out,
+            )
+        )
+    return out
 
 
 @api_router.get("/runs/export.csv")
@@ -506,10 +652,12 @@ def export_runs_csv(
     }
     sort_col = sort_mapping.get((order_by or "started_at").lower(), Run.started_at)
     dir_is_asc = (order_dir or "desc").lower() == "asc"
+    # Emular NULLS LAST em SQL Server via CASE
+    nulls_last = case((sort_col.is_(None), 1), else_=0)
     if dir_is_asc:
-        q = q.order_by(sort_col.asc().nullslast(), Run.id.asc())
+        q = q.order_by(nulls_last.asc(), sort_col.asc(), Run.id.asc())
     else:
-        q = q.order_by(sort_col.desc().nullslast(), Run.id.desc())
+        q = q.order_by(nulls_last.asc(), sort_col.desc(), Run.id.desc())
 
     rows = q.all()
     buf = io.StringIO()
@@ -551,10 +699,10 @@ def analytics_overview(db: Session = Depends(get_db)):
     total_runs = db.query(func.count(Run.id)).scalar() or 0
     # média de boolean como 0/1 via CASE
     amr_avg = (
-        db.query(func.avg(case((Run.amr_flag.is_(True), 1), else_=0))).scalar() or 0.0
+        db.query(func.avg(case((Run.amr_flag == 1, 1), else_=0))).scalar() or 0.0
     )
     dcr_avg = (
-        db.query(func.avg(case((Run.dcr_flag.is_(True), 1), else_=0))).scalar() or 0.0
+        db.query(func.avg(case((Run.dcr_flag == 1, 1), else_=0))).scalar() or 0.0
     )
     zcrs_avg = db.query(func.avg(Run.zcrs)).scalar() or 0.0
     return OverviewAnalytics(total_runs=total_runs, amr_avg=float(amr_avg), dcr_avg=float(dcr_avg), zcrs_avg=float(zcrs_avg))
@@ -588,6 +736,16 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     )
 
 
+@api_router.delete("/runs/{run_id}")
+def delete_run(run_id: str, db: Session = Depends(get_db)):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrada")
+    db.delete(run)
+    db.commit()
+    return {"ok": True}
+
+
 @api_router.get("/runs/{run_id}/events")
 def list_run_events(run_id: str, db: Session = Depends(get_db)):
     run = db.get(Run, run_id)
@@ -596,7 +754,7 @@ def list_run_events(run_id: str, db: Session = Depends(get_db)):
     evs = db.query(RunEvent).filter(RunEvent.run_id == run_id).order_by(RunEvent.created_at.asc()).all()
     return [
         {
-            "step": e.step,
+            "step": e.version,
             "status": e.status,
             "message": e.message,
             "created_at": e.created_at.isoformat(),
@@ -617,7 +775,7 @@ def link_ai_overview(run_id: str, payload: dict = Body(...), db: Session = Depen
     if not tgt:
         raise HTTPException(status_code=404, detail="Run alvo não encontrado")
     # Registrar como evento para manter histórico e evitar migração de schema
-    ev = RunEvent(run_id=run_id, step="ai_overview_link", status="ok", message=target_id)
+    ev = RunEvent(run_id=run_id, version="ai_overview_link", status="ok", message=target_id)
     db.add(ev)
     db.commit()
     return {"ok": True, "linked_run_id": target_id}
@@ -633,7 +791,7 @@ def get_ai_overview_source(run_id: str, db: Session = Depends(get_db)):
         return {"run_id": run_id}
     ev = (
         db.query(RunEvent)
-        .filter(RunEvent.run_id == run_id, RunEvent.step == "ai_overview_link")
+        .filter(RunEvent.run_id == run_id, RunEvent.version == "ai_overview_link")
         .order_by(RunEvent.created_at.desc())
         .first()
     )
@@ -685,7 +843,7 @@ async def stream_run(run_id: str):
     def format_sse(e: RunEvent) -> str:
         return (
             "data: {" +
-            f"\"step\":\"{e.step}\",\"status\":\"{e.status}\",\"message\":{json_escape(e.message)},\"created_at\":\"{e.created_at.isoformat()}\"" +
+            f"\"step\":\"{e.version}\",\"status\":\"{e.status}\",\"message\":{json_escape(e.message)},\"created_at\":\"{e.created_at.isoformat()}\"" +
             "}\n\n"
         )
 
@@ -725,30 +883,44 @@ def analytics_costs(
     total_tokens = int(sum((r.tokens_total or 0) for (r, _eng) in rows))
     count = len(rows)
     # série por dia e por engine
-    series = (
-        db.query(
-            func.date_trunc('day', Run.started_at).label('day'),
-            Engine.name.label('engine'),
-            func.sum(func.coalesce(Run.cost_usd, 0.0)).label('cost_usd'),
-            func.sum(func.coalesce(Run.tokens_total, 0)).label('tokens')
-        )
-        .join(Engine, Engine.id == Run.engine_id)
-        .filter(Run.started_at.isnot(None))
-    )
+    # Build dynamic SQL for SQL Server compatibility
+    where_conditions = ["r.started_at IS NOT NULL"]
+    params = {}
+    
     if project_id:
-        series = series.filter(Run.project_id == project_id)
+        where_conditions.append("r.project_id = :project_id")
+        params["project_id"] = project_id
     if subproject_id:
-        series = series.filter(Run.subproject_id == subproject_id)
+        where_conditions.append("r.subproject_id = :subproject_id") 
+        params["subproject_id"] = subproject_id
     if engine:
-        series = series.filter(Engine.name == engine)
+        where_conditions.append("e.name = :engine")
+        params["engine"] = engine
     if date_from:
-        series = series.filter(Run.started_at >= text(":df")).params(df=date_from)
+        where_conditions.append("r.started_at >= :date_from")
+        params["date_from"] = date_from
     if date_to:
-        series = series.filter(Run.started_at <= text(":dt")).params(dt=date_to)
-    series = series.group_by('day', Engine.name).order_by('day').all()
+        where_conditions.append("r.started_at <= :date_to")
+        params["date_to"] = date_to
+        
+    where_clause = " AND ".join(where_conditions)
+    
+    series_sql = text(f"""
+        SELECT 
+            CAST(r.started_at AS DATE) as day,
+            e.name as engine,
+            SUM(COALESCE(r.cost_usd, 0.0)) as cost_usd,
+            SUM(COALESCE(r.tokens_total, 0)) as tokens
+        FROM runs r
+        JOIN engines e ON e.id = r.engine_id
+        WHERE {where_clause}
+        GROUP BY CAST(r.started_at AS DATE), e.name
+        ORDER BY day
+    """)
+    series_rows = db.execute(series_sql, params).fetchall()
     series_out = [
         {"day": d.isoformat(), "engine": eng, "cost_usd": float(c or 0), "tokens": int(t or 0)}
-        for (d, eng, c, t) in series
+        for (d, eng, c, t) in series_rows
     ]
 
     return {
@@ -768,10 +940,37 @@ def create_subproject(project_id: str, payload: dict = Body(...), db: Session = 
     return {"id": sp.id, "project_id": sp.project_id, "name": sp.name, "description": sp.description}
 
 
+@api_router.delete("/subprojects/{subproject_id}")
+def delete_subproject(subproject_id: str, db: Session = Depends(get_db)):
+    sp = db.get(SubProject, subproject_id)
+    if not sp:
+        raise HTTPException(status_code=404, detail="Subprojeto não encontrado")
+    # Anular referências para respeitar FKs que não possuem ondelete=CASCADE
+    db.query(Run).filter(Run.subproject_id == subproject_id).update({Run.subproject_id: None}, synchronize_session=False)
+    db.query(PromptTemplate).filter(PromptTemplate.subproject_id == subproject_id).update({PromptTemplate.subproject_id: None}, synchronize_session=False)
+    db.query(Monitor).filter(Monitor.subproject_id == subproject_id).update({Monitor.subproject_id: None}, synchronize_session=False)
+    db.delete(sp)
+    db.commit()
+    return {"ok": True}
+
+
 @api_router.get("/projects/{project_id}/subprojects")
 def list_subprojects(project_id: str, db: Session = Depends(get_db)):
     sps = db.query(SubProject).filter(SubProject.project_id == project_id).all()
     return [{"id": s.id, "name": s.name, "description": s.description} for s in sps]
+
+
+@api_router.patch("/subprojects/{subproject_id}")
+def update_subproject(subproject_id: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    sp = db.get(SubProject, subproject_id)
+    if not sp:
+        raise HTTPException(status_code=404, detail="Subprojeto não encontrado")
+    for field in ["name", "description"]:
+        if field in payload and payload[field] is not None:
+            setattr(sp, field, payload[field])
+    db.commit()
+    db.refresh(sp)
+    return {"id": sp.id, "project_id": sp.project_id, "name": sp.name, "description": sp.description}
 
 
 @api_router.post("/subprojects")
@@ -801,18 +1000,26 @@ def create_template(project_id: str, payload: dict = Body(...), db: Session = De
         text=payload.get("text"),
         intent=payload.get("intent"),
         persona=payload.get("persona"),
+        subproject_id=payload.get("subproject_id"),
     )
     db.add(t)
     db.commit()
     db.refresh(t)
-    return {"id": t.id, "category": t.category, "name": t.name}
+    return {"id": t.id, "category": t.category, "name": t.name, "subproject_id": t.subproject_id}
 
 
 @api_router.get("/projects/{project_id}/templates")
-def list_templates(project_id: str, category: str | None = None, db: Session = Depends(get_db)):
+def list_templates(
+    project_id: str,
+    category: str | None = None,
+    subproject_id: str | None = None,
+    db: Session = Depends(get_db),
+):
     q = db.query(PromptTemplate).filter(PromptTemplate.project_id == project_id)
     if category:
         q = q.filter(PromptTemplate.category == category)
+    if subproject_id:
+        q = q.filter(PromptTemplate.subproject_id == subproject_id)
     items = q.order_by(PromptTemplate.category.asc(), PromptTemplate.name.asc()).all()
     return [
         {
@@ -822,6 +1029,7 @@ def list_templates(project_id: str, category: str | None = None, db: Session = D
             "text": t.text,
             "intent": t.intent,
             "persona": t.persona,
+            "subproject_id": t.subproject_id,
         }
         for t in items
     ]
@@ -832,12 +1040,12 @@ def update_template(template_id: str, payload: dict, db: Session = Depends(get_d
     t = db.get(PromptTemplate, template_id)
     if not t:
         raise HTTPException(status_code=404, detail="Template não encontrado")
-    for k in ["category", "name", "text", "intent", "persona"]:
+    for k in ["category", "name", "text", "intent", "persona", "subproject_id"]:
         if k in payload and payload[k] is not None:
             setattr(t, k, payload[k])
     db.commit()
     db.refresh(t)
-    return {"id": t.id, "category": t.category, "name": t.name}
+    return {"id": t.id, "category": t.category, "name": t.name, "subproject_id": t.subproject_id}
 
 
 @api_router.delete("/templates/{template_id}")
@@ -884,13 +1092,13 @@ def subproject_series(subproject_id: str, db: Session = Depends(get_db)):
         text(
             """
             SELECT
-              date_trunc('day', runs.started_at) AS day,
-              AVG(CASE WHEN runs.amr_flag IS TRUE THEN 1 ELSE 0 END) AS amr_avg,
-              AVG(CASE WHEN runs.dcr_flag IS TRUE THEN 1 ELSE 0 END) AS dcr_avg,
+              CAST(runs.started_at AS DATE) AS day,
+              AVG(CASE WHEN runs.amr_flag = 1 THEN 1 ELSE 0 END) AS amr_avg,
+              AVG(CASE WHEN runs.dcr_flag = 1 THEN 1 ELSE 0 END) AS dcr_avg,
               AVG(runs.zcrs) AS zcrs_avg
             FROM runs
             WHERE runs.subproject_id = :sp AND runs.started_at IS NOT NULL
-            GROUP BY day
+            GROUP BY CAST(runs.started_at AS DATE)
             ORDER BY day ASC
             """
         ),
@@ -906,8 +1114,8 @@ def subproject_series(subproject_id: str, db: Session = Depends(get_db)):
 def performance_by_engine(subproject_id: str | None = None, db: Session = Depends(get_db)):
     base_sql = """
         SELECT e.name as engine,
-               AVG(CASE WHEN r.amr_flag IS TRUE THEN 1 ELSE 0 END) AS amr_avg,
-               AVG(CASE WHEN r.dcr_flag IS TRUE THEN 1 ELSE 0 END) AS dcr_avg,
+               AVG(CASE WHEN r.amr_flag = 1 THEN 1 ELSE 0 END) AS amr_avg,
+               AVG(CASE WHEN r.dcr_flag = 1 THEN 1 ELSE 0 END) AS dcr_avg,
                AVG(r.zcrs) AS zcrs_avg,
                COUNT(1) AS runs
         FROM runs r
@@ -1304,7 +1512,7 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
     if run_ids:
         evt_rows = (
             db.query(RunEvent)
-            .filter(RunEvent.run_id.in_(run_ids), RunEvent.step == "opts")
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.version == "opts")
             .order_by(RunEvent.created_at.desc())
             .all()
         )

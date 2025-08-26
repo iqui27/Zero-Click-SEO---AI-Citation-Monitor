@@ -23,27 +23,55 @@ app.add_middleware(
 def on_startup() -> None:
     # Cria tabelas e tenta aplicar colunas novas em bancos existentes (sem Alembic)
     Base.metadata.create_all(bind=engine)
-    # Migração leve: adicionar colunas de métricas na tabela runs, se não existirem (Postgres)
+    # Migração leve (apenas Postgres): adicionar colunas de métricas, se não existirem
     try:
-        with engine.begin() as conn:  # transaction
-            stmts = [
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_input INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_output INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_total INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS latency_ms INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS citations_count INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS our_citations_count INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS unique_domains_count INTEGER",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS model_name VARCHAR(255)",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS error_code VARCHAR(255)",
-                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS config_hash VARCHAR(255)",
-                # insights.run_id para relacionar insight com run
-                "ALTER TABLE insights ADD COLUMN IF NOT EXISTS run_id VARCHAR(255)",
-                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.constraint_column_usage WHERE table_name='insights' AND column_name='run_id') THEN BEGIN EXCEPTION WHEN others THEN END; END IF; END $$;",
-            ]
-            for sql in stmts:
-                conn.execute(text(sql))
+        if engine.dialect.name == "postgresql":
+            with engine.begin() as conn:  # transaction
+                stmts = [
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_input INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_output INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_total INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS latency_ms INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS citations_count INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS our_citations_count INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS unique_domains_count INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS model_name VARCHAR(255)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS error_code VARCHAR(255)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS config_hash VARCHAR(255)",
+                    # insights.run_id para relacionar insight com run
+                    "ALTER TABLE insights ADD COLUMN IF NOT EXISTS run_id VARCHAR(255)",
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.constraint_column_usage WHERE table_name='insights' AND column_name='run_id') THEN BEGIN EXCEPTION WHEN others THEN END; END IF; END $$;",
+                ]
+                for sql in stmts:
+                    conn.execute(text(sql))
+        elif engine.dialect.name == "mssql":
+            # Migração leve (Azure SQL): adicionar prompt_templates.subproject_id, se não existir, e FK
+            with engine.begin() as conn:
+                # Add column if missing
+                conn.execute(text(
+                    """
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.columns 
+                        WHERE Name = N'subproject_id' AND Object_ID = Object_ID(N'prompt_templates')
+                    )
+                    BEGIN
+                        ALTER TABLE prompt_templates ADD subproject_id VARCHAR(50) NULL;
+                    END
+                    """
+                ))
+                # Add FK constraint if missing
+                conn.execute(text(
+                    """
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.foreign_keys WHERE name = N'fk_prompt_templates_subproject'
+                    )
+                    BEGIN
+                        ALTER TABLE prompt_templates 
+                        ADD CONSTRAINT fk_prompt_templates_subproject FOREIGN KEY (subproject_id) REFERENCES subprojects(id);
+                    END
+                    """
+                ))
     except Exception:
         # tolerar ambiente que não suporte IF NOT EXISTS
         pass

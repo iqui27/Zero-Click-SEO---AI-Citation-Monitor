@@ -112,7 +112,7 @@ def generate_subproject_insights(db: Session, subproject_id: str) -> Dict[str, A
         from app.models.models import RunEvent  # local
         evt_rows = (
             db.query(RunEvent)
-            .filter(RunEvent.run_id.in_(run_ids), RunEvent.step == "opts")
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.version == "opts")
             .order_by(RunEvent.created_at.desc())
             .all()
         )

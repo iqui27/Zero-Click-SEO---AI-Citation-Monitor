@@ -5,18 +5,16 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContai
 import { Button } from '../components/ui/button'
 import { Skeleton } from '../components/ui/skeleton'
 
+import { OverviewAnalytics, SeriesPoint, TopDomain, PerfByEngine, CostsResponse } from '../types/analytics'
+
 const API = '/api'
 
-type TopDomain = { domain: string; count: number }
-
-type SeriesPoint = { day: string; amr_avg: number; dcr_avg: number; zcrs_avg: number }
-
 export default function Dashboard() {
-  const [overview, setOverview] = useState<{ total_runs: number; amr_avg: number; dcr_avg: number; zcrs_avg: number } | null>(null)
+  const [overview, setOverview] = useState<OverviewAnalytics | null>(null)
   const [series, setSeries] = useState<SeriesPoint[] | null>(null)
   const [topDomains, setTopDomains] = useState<TopDomain[] | null>(null)
-  const [perf, setPerf] = useState<Array<{ engine: string; amr_avg: number; dcr_avg: number; zcrs_avg: number }> | null>(null)
-  const [costs, setCosts] = useState<{ total_cost_usd: number; total_tokens: number; runs: number; avg_cost_per_run: number; series?: Array<{day: string; engine: string; cost_usd: number; tokens: number}> } | null>(null)
+  const [perf, setPerf] = useState<PerfByEngine[] | null>(null)
+  const [costs, setCosts] = useState<CostsResponse | null>(null)
 
   useEffect(() => {
     axios.get(`${API}/analytics/overview`).then((r) => setOverview(r.data))
@@ -25,14 +23,15 @@ export default function Dashboard() {
       axios.get(`${API}/analytics/subprojects/${sp}/series`).then(r => setSeries(r.data))
       axios.get(`${API}/analytics/subprojects/${sp}/top-domains`).then(r => setTopDomains(r.data))
       axios.get(`${API}/analytics/performance-by-engine`, { params: { subproject_id: sp } }).then(r => setPerf(r.data))
+      axios.get(`${API}/analytics/costs`, { params: { subproject_id: sp } }).then(r => setCosts(r.data)).catch(()=>{})
     } else {
       axios.get(`${API}/runs`).then((r) => {
         const s = (r.data as any[]).map((it) => ({ day: it.started_at || it.id, amr_avg: 0, dcr_avg: 0, zcrs_avg: it.zcrs || 0 }))
         setSeries(s.reverse().slice(-30))
       })
       axios.get(`${API}/analytics/performance-by-engine`).then(r => setPerf(r.data))
+      axios.get(`${API}/analytics/costs`).then(r => setCosts(r.data)).catch(()=>{})
     }
-    axios.get(`${API}/analytics/costs`).then(r => setCosts(r.data)).catch(()=>{})
   }, [])
 
   const fmtDate = (s: string) => {

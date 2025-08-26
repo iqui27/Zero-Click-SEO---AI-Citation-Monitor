@@ -1,7 +1,7 @@
 version: "3.9"
 
 # Production stack: Caddy reverse proxy, static frontend, API (uvicorn),
-# Celery worker, Postgres, Redis. Includes ports, volumes, networks & healthchecks.
+# Celery worker, Redis. Includes ports, volumes, networks & healthchecks.
 
 name: seo-analyzer-prod
 
@@ -15,8 +15,8 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
-  pg_data:
   redis_data:
+  app_data:
 
 services:
   reverse-proxy:
@@ -70,19 +70,20 @@ services:
     env_file:
       - .env
     environment:
-      # Keep current credentials (adjust as needed)
-      - DATABASE_URL=postgresql+psycopg2://seo:seo@postgres:5432/seo_analyzer
+      # Use SQLite by default (shared via volume). Override DATABASE_URL in real prod if needed.
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/app.db}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
     # If your Dockerfile already starts uvicorn, you can remove the command below
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     depends_on:
-      - postgres
       - redis
     networks:
       - internal_net
+    volumes:
+      - app_data:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "python - <<'PY'\nimport sys,urllib.request\ntry:\n  r=urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)\n  sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n  sys.exit(1)\nPY"]
+      test: ["CMD-SHELL", "python - <<'PY'\nimport sys,urllib.request\ntry:\n  r=urllib.request.urlopen('http://localhost:8000/health', timeout=3)\n  sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n  sys.exit(1)\nPY"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -97,12 +98,11 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+psycopg2://seo:seo@postgres:5432/seo_analyzer
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/app.db}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
     command: bash -lc "celery -A celery_app.celery_app worker -Q runs -l info"
     depends_on:
-      - postgres
       - redis
     networks:
       - internal_net
@@ -112,24 +112,6 @@ services:
       timeout: 5s
       retries: 5
 
-  postgres:
-    image: postgres:15-alpine
-    restart: always
-    environment:
-      - POSTGRES_DB=seo_analyzer
-      - POSTGRES_USER=seo
-      - POSTGRES_PASSWORD=seo
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    expose:
-      - "5432"
-    networks:
-      - internal_net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U seo -d seo_analyzer -h localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   redis:
     image: redis:7-alpine
