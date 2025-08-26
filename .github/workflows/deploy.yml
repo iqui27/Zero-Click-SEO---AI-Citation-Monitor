@@ -48,11 +48,13 @@ jobs:
         
     - name: Create deployment directory
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown $ORACLE_USER:$ORACLE_USER $DEPLOY_DIR"
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown -R $ORACLE_USER:$ORACLE_USER $DEPLOY_DIR"
         
     - name: Copy files to server
       run: |
-        rsync -avz --delete -e "ssh -i ~/.ssh/oracle_key" --exclude 'node_modules' --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' --exclude '.github' ./ $ORACLE_USER@$ORACLE_HOST:$DEPLOY_DIR/
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "sudo rm -rf /tmp/deploy-staging && mkdir -p /tmp/deploy-staging"
+        rsync -avz --delete -e "ssh -i ~/.ssh/oracle_key" --exclude 'node_modules' --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' --exclude '.github' ./ $ORACLE_USER@$ORACLE_HOST:/tmp/deploy-staging/
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "sudo cp -r /tmp/deploy-staging/* $DEPLOY_DIR/ && sudo chown -R $ORACLE_USER:$ORACLE_USER $DEPLOY_DIR && rm -rf /tmp/deploy-staging"
           
     - name: Create environment file
       run: |
