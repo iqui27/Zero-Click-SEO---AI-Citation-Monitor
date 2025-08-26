@@ -1,0 +1,114 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [ main, production ]
+  workflow_dispatch:
+
+env:
+  ORACLE_HOST: 129.148.63.199
+  ORACLE_USER: ubuntu
+  DEPLOY_DIR: /opt/seo-analyzer
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+        
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+        
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+        
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle_key
+        chmod 600 ~/.ssh/oracle_key
+        ssh-keyscan -H $ORACLE_HOST >> ~/.ssh/known_hosts
+        
+    - name: Test SSH connection
+      run: |
+        ssh -i ~/.ssh/oracle_key -o ConnectTimeout=10 $ORACLE_USER@$ORACLE_HOST "echo 'SSH connection successful'"
+        
+    - name: Create deployment directory
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown $ORACLE_USER:$ORACLE_USER $DEPLOY_DIR"
+        
+    - name: Copy files to server
+      run: |
+        rsync -avz --delete -e "ssh -i ~/.ssh/oracle_key" --exclude 'node_modules' --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' --exclude '.github' ./ $ORACLE_USER@$ORACLE_HOST:$DEPLOY_DIR/
+          
+    - name: Create environment file
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && cat > .env << "ENVEOF"
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        REDIS_URL=redis://redis:6379/0
+        ENVIRONMENT=production
+        LOG_LEVEL=INFO
+        SECRET_KEY=${{ secrets.SECRET_KEY }}
+        ALLOWED_HOSTS='$ORACLE_HOST',localhost,127.0.0.1
+        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+        PERPLEXITY_API_KEY=${{ secrets.PERPLEXITY_API_KEY }}
+        SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+        CORS_ORIGINS=http://'$ORACLE_HOST',http://localhost:3000
+        SECURE_COOKIES=false
+        SESSION_TIMEOUT=3600
+        MAX_WORKERS=4
+        WORKER_TIMEOUT=300
+        MAX_CONCURRENT_RUNS=5
+        ENABLE_METRICS=true
+        ENVEOF'
+        
+    - name: Stop existing services
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && if [ -f docker-compose.prod.yml ]; then sudo docker compose -f docker-compose.prod.yml down || true; fi'
+        
+    - name: Build and start services
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml build --no-cache && sudo docker compose -f docker-compose.prod.yml up -d'
+        
+    - name: Wait for services
+      run: |
+        sleep 30
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
+        
+    - name: Create migration script
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && echo "from app.db.database import engine" > migrate.py && echo "from app.models.models import Base" >> migrate.py && echo "Base.metadata.create_all(bind=engine)" >> migrate.py && echo "print(\"Database tables created successfully\")" >> migrate.py'
+        
+    - name: Run database migrations
+      run: |
+        sleep 20
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml exec -T api python migrate.py || echo "Migration completed or already exists"'
+        
+    - name: Verify deployment
+      run: |
+        sleep 10
+        if curl -f -s http://$ORACLE_HOST/health > /dev/null; then
+          echo "✅ Deployment successful - Health check passed"
+        else
+          echo "❌ Health check failed"
+          exit 1
+        fi
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -f ~/.ssh/oracle_key

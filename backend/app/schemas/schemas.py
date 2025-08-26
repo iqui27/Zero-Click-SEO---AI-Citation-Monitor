@@ -132,6 +132,7 @@ class RunDetailOut(BaseModel):
     cost_usd: Optional[float] = None
     latency_ms: Optional[int] = None
     cycles_total: Optional[int] = None
+    cycle_delay_seconds: Optional[int] = None
 
 
 class CitationOut(BaseModel):
