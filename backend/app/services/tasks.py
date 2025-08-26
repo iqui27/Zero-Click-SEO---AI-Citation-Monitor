@@ -26,7 +26,7 @@ celery = Celery(
 
 
 def _log(db: Session, run_id: str, step: str, status: str, message: str | None = None) -> None:
-    db.add(RunEvent(run_id=run_id, step=step, status=status, message=message))
+    db.add(RunEvent(run_id=run_id, version=step, status=status, message=message))
     db.commit()
 
 

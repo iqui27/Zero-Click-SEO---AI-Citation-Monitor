@@ -1,7 +1,6 @@
 fastapi==0.111.0
 uvicorn[standard]==0.30.0
 SQLAlchemy==2.0.30
-psycopg2-binary==2.9.9
 pydantic==2.8.2
 pydantic-settings==2.3.4
 python-multipart==0.0.9
@@ -17,3 +16,6 @@ playwright==1.46.0
 beautifulsoup4==4.12.3
 google-genai == 1.29.0
 lxml==5.2.2
+
+# Azure SQL (MSSQL) driver
+pyodbc==5.1.0

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import axios from 'axios'
+import { getRun, getRunReport, getRunEvidences, getRunEvents, createRun, getUrlTitle, openRunStream } from '../lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -12,7 +12,7 @@ import { AiOverview } from '../components/AiOverview'
 import { Toaster, toast } from 'sonner'
 import { Search, Bot, Camera, Globe } from 'lucide-react'
 
-const API = '/api'
+// API base handled by centralized api.ts
 
 type Citation = { domain: string; url?: string; anchor?: string; type?: string; is_ours: boolean }
 
@@ -116,16 +116,16 @@ export default function RunDetail() {
     if (!id) return
     const fetchAll = async () => {
       try {
-        const [r1, r2, r4] = await Promise.all([
-          axios.get(`${API}/runs/${id}/report`).catch(() => null),
-          axios.get(`${API}/runs/${id}/evidences`).catch(() => null),
-          axios.get(`${API}/runs/${id}`).catch(() => null),
+        const [r1, r2, r4] = await Promise.allSettled([
+          getRunReport(id),
+          getRunEvidences(id),
+          getRun(id),
         ])
-        if (r1?.data) setReport(r1.data)
-        if (r2?.data) setEvidences(r2.data)
-        if (r4?.data) {
-          setDetail(r4.data)
-          const cfg = r4.data.engine?.config_json || {}
+        if (r1.status === 'fulfilled' && r1.value) setReport(r1.value)
+        if (r2.status === 'fulfilled' && r2.value) setEvidences(r2.value)
+        if (r4.status === 'fulfilled' && r4.value) {
+          setDetail(r4.value)
+          const cfg = r4.value.engine?.config_json || {}
           setUseSearch(cfg.use_search !== false)
         }
       } catch {}
@@ -138,7 +138,7 @@ export default function RunDetail() {
       if (!report?.citations) return
       const urls = Array.from(new Set(report.citations.map(c => c.url).filter(Boolean))) as string[]
       const entries = await Promise.all(urls.map(async (u) => {
-        try { const r = await axios.get(`/api/utils/url-title`, { params: { url: u } }); return [u, r.data.title] as const } catch { return [u, u] as const }
+        try { const r = await getUrlTitle(u); return [u, r.title] as const } catch { return [u, u] as const }
       }))
       const map: Record<string, string> = {}
       entries.forEach(([u, t]) => map[u] = t)
@@ -150,7 +150,7 @@ export default function RunDetail() {
   // SSE + fallback polling
   useEffect(() => {
     if (!id) return
-    const es = new EventSource(`${API}/runs/${id}/stream`)
+    const es = openRunStream(id)
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
@@ -172,8 +172,7 @@ export default function RunDetail() {
       if (pollRef.current) return
       const poll = window.setInterval(async () => {
         try {
-          const res = await axios.get(`${API}/runs/${id}/events`)
-          const list = (res.data as EventItem[])
+          const list = await getRunEvents(id)
           // se temos lastTs, só anexar novos
           const news = lastTsRef.current ? list.filter(ev => ev.created_at > (lastTsRef.current as string)) : list
           if (news.length) {
@@ -204,7 +203,7 @@ export default function RunDetail() {
         device: detail.engine.device || 'desktop',
         config_json: { ...(detail.engine.config_json || {}), use_search: useSearch },
       }]
-      await axios.post(`${API}/runs`, {
+      await createRun({
         project_id: detail.project_id,
         prompt_version_id: detail.prompt_version_id,
         engines,

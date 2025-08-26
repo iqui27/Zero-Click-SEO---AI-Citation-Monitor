@@ -157,3 +157,20 @@ class OverviewAnalytics(BaseModel):
     amr_avg: float
     dcr_avg: float
     zcrs_avg: float
+
+
+# Grouped comparison schemas
+class GroupedRunWithEvidences(BaseModel):
+    id: str
+    engine: str
+    status: str
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+    prompt_text: Optional[str] = None
+    evidences: List[EvidenceOut]
+
+
+class RunsBySubprojectGroup(BaseModel):
+    subproject_id: Optional[str]
+    subproject_name: str
+    runs: List[GroupedRunWithEvidences]

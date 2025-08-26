@@ -9,6 +9,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    gnupg2 \
+    apt-transport-https \
+    unixodbc \
+    unixodbc-dev \
     libglib2.0-0 \
     libnss3 \
     libatk1.0-0 \
@@ -27,11 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     fonts-liberation \
     wget \
-    && rm -rf /var/lib/apt/lists/*
+ && curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg \
+ && echo "deb [arch=amd64,arm64] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list \
+ && apt-get update \
+ && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt \
- && python -m playwright install --with-deps chromium
+RUN pip install --no-cache-dir -r /app/requirements.txt 
 
 COPY backend/app /app/app
 COPY backend/celery_app.py /app/celery_app.py

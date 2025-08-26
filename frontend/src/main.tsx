@@ -1,18 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { createBrowserRouter, RouterProvider, Link, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom'
-import Dashboard from './pages/Dashboard'
+import { createBrowserRouter, RouterProvider, Link, Outlet, Navigate, useNavigate } from 'react-router-dom'
 import Runs from './pages/Runs'
 import RunDetail from './pages/RunDetail'
 import TemplatesPage from './pages/Templates'
+import ProjectsPage from './pages/Projects'
 import SubprojectsPage from './pages/Subprojects'
 import SubprojectDetail from './pages/SubprojectDetail'
-import MonitorsPage from './pages/Monitors'
-import SettingsPage from './pages/Settings'
-import ProjectsPage from './pages/Projects'
-import SetupWizard from './pages/SetupWizard'
-import InsightsPage from './pages/Insights'
-import axios from 'axios'
+import WorkspacePage from './pages/Workspace'
 import './index.css'
 import { Button } from './components/ui/button'
 
@@ -131,14 +126,10 @@ function Layout() {
             </g>
           </svg>
         </Link>
-        <Link to="/projects" className="text-sm opacity-80 hover:opacity-100">Projetos</Link>
-        <Link to="/temas" className="text-sm opacity-80 hover:opacity-100">Temas</Link>
-        <Link to="/templates" className="text-sm opacity-80 hover:opacity-100">Consultas & Templates</Link>
         <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
-        <Link to="/insights" className="text-sm opacity-80 hover:opacity-100">Insights</Link>
-        <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">Configurações</Link>
+        <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
+        <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
         <div className="ml-auto flex items-center gap-2">
-          <Link to="/" className="text-sm opacity-80 hover:opacity-100">Home</Link>
           <div className="hidden sm:flex items-center gap-2">
             <input
               ref={searchRef}
@@ -168,18 +159,7 @@ function Layout() {
 }
 
 function RootRedirect() {
-  const [ready, setReady] = useState(false)
-  const [needsSetup, setNeedsSetup] = useState(false)
-  useEffect(() => {
-    axios.get('/api/setup/status').then(r => {
-      const sandbox = r.data?.sandbox
-      const hasProject = !!localStorage.getItem('project_id')
-      setNeedsSetup(!hasProject)
-    }).finally(() => setReady(true))
-  }, [])
-  if (!ready) return null
-  if (needsSetup) return <Navigate to="/setup" replace />
-  return <Dashboard />
+  return <Navigate to="/runs" replace />
 }
 
 const router = createBrowserRouter([
@@ -188,18 +168,13 @@ const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { index: true, element: <RootRedirect /> },
-      { path: 'setup', element: <SetupWizard /> },
-      { path: 'projects', element: <ProjectsPage /> },
       { path: 'runs', element: <Runs /> },
       { path: 'runs/:id', element: <RunDetail /> },
-      { path: 'templates', element: <TemplatesPage /> },
+      { path: 'workspace', element: <WorkspacePage /> },
+      { path: 'projects', element: <ProjectsPage /> },
       { path: 'subprojects', element: <SubprojectsPage /> },
       { path: 'subprojects/:id', element: <SubprojectDetail /> },
-      { path: 'temas', element: <SubprojectsPage /> },
-      { path: 'temas/:id', element: <SubprojectDetail /> },
-      { path: 'monitors', element: <MonitorsPage /> },
-      { path: 'settings', element: <SettingsPage /> },
-      { path: 'insights', element: <InsightsPage /> },
+      { path: 'prompts', element: <TemplatesPage /> },
     ],
   },
 ])

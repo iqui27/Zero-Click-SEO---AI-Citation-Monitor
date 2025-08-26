@@ -9,35 +9,20 @@ import { Toaster, toast } from 'sonner'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { Download, BarChart2, Target, Table as TableIcon } from 'lucide-react'
+import {
+  OverviewAnalytics,
+  SeriesPoint,
+  TopDomain,
+  RunItem,
+  PerfByEngine,
+  RunsBySubprojectGroup,
+} from '../types/analytics'
 
 const API = '/api'
 
-type Overview = { total_runs: number; amr_avg: number; dcr_avg: number; zcrs_avg: number }
-
-type SeriesPoint = { day: string; zcrs_avg: number }
-
-type TopDomain = { domain: string; count: number }
-
-type RunItem = {
-  id: string
-  engine: string
-  status: string
-  started_at?: string
-  finished_at?: string
-  zcrs?: number
-  amr_flag?: boolean
-  dcr_flag?: boolean
-  template_name?: string
-  subproject_name?: string
-  cost_usd?: number
-  tokens_total?: number
-}
-
-type PerfByEngine = { engine: string; amr_avg: number; dcr_avg: number; zcrs_avg: number; runs: number }
-
 export default function SubprojectDetail() {
   const { id } = useParams()
-  const [ov, setOv] = useState<Overview | null>(null)
+  const [ov, setOv] = useState<OverviewAnalytics | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [tops, setTops] = useState<TopDomain[]>([])
   const [runs, setRuns] = useState<RunItem[]>([])
@@ -46,7 +31,7 @@ export default function SubprojectDetail() {
   const [projectId, setProjectId] = useState<string>('')
   const [projectDomains, setProjectDomains] = useState<{ id: string; domain: string; is_primary: boolean }[]>([])
   const [subprojectName, setSubprojectName] = useState<string>('')
-  const [tab, setTab] = useState<'overview'|'runs'|'insights'>('overview')
+  const [tab, setTab] = useState<'overview'|'runs'|'compare'|'insights'>('overview')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [engineFilter, setEngineFilter] = useState<string>('')
   const [q, setQ] = useState<string>('')
@@ -57,6 +42,10 @@ export default function SubprojectDetail() {
   const [pageSize, setPageSize] = useState<number>(25)
   const [orderBy, setOrderBy] = useState<string>('started_at')
   const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc')
+  // comparison state
+  const [groups, setGroups] = useState<RunsBySubprojectGroup[]>([])
+  const [limitPerGroup, setLimitPerGroup] = useState<number>(5)
+  const [loadingCompare, setLoadingCompare] = useState<boolean>(false)
 
   useEffect(() => {
     if (!id) return
@@ -96,6 +85,37 @@ export default function SubprojectDetail() {
     }
     resolveNames()
   }, [id])
+
+  // Fetch grouped data when entering compare tab
+  useEffect(() => {
+    const fetchGrouped = async () => {
+      if (!id || tab !== 'compare') return
+      setLoadingCompare(true)
+      try {
+        const r = await axios.get(`${API}/runs/grouped`, { params: { subproject_id: id, limit_per_group: limitPerGroup } })
+        setGroups(r.data || [])
+      } catch (e: any) {
+        console.error(e)
+        toast.error('Falha ao carregar grupos para comparação')
+      }
+      finally { setLoadingCompare(false) }
+    }
+    fetchGrouped()
+  }, [id, tab, limitPerGroup])
+
+  const refreshCompare = async () => {
+    if (!id) return
+    setLoadingCompare(true)
+    try {
+      const r = await axios.get(`${API}/runs/grouped`, { params: { subproject_id: id, limit_per_group: limitPerGroup } })
+      setGroups(r.data || [])
+    } catch (e: any) {
+      console.error(e)
+      toast.error('Falha ao atualizar comparação')
+    } finally {
+      setLoadingCompare(false)
+    }
+  }
 
   // agregados simples sobre a amostra de runs carregadas
   const sampleCost = runs.reduce((acc, r) => acc + (r.cost_usd || 0), 0)
@@ -207,6 +227,8 @@ export default function SubprojectDetail() {
         </div>
       )}
 
+      
+
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
         <Card title="Total Runs" value={ov?.total_runs ?? 0} />
         <Card title="AMR médio" value={(ov?.amr_avg ?? 0).toFixed(2)} />
@@ -225,6 +247,9 @@ export default function SubprojectDetail() {
         </button>
         <button onClick={() => setTab('runs')} className={`px-3 py-1.5 text-sm ${tab==='runs' ? 'border-b-2 border-neutral-900 dark:border-neutral-100 font-medium' : 'opacity-70 hover:opacity-100'}`}>
           <TableIcon className="inline-block h-4 w-4 mr-1" /> Runs
+        </button>
+        <button onClick={() => setTab('compare')} className={`px-3 py-1.5 text-sm ${tab==='compare' ? 'border-b-2 border-neutral-900 dark:border-neutral-100 font-medium' : 'opacity-70 hover:opacity-100'}`}>
+          <TableIcon className="inline-block h-4 w-4 mr-1" /> Comparar
         </button>
         <button onClick={() => setTab('insights')} className={`px-3 py-1.5 text-sm ${tab==='insights' ? 'border-b-2 border-neutral-900 dark:border-neutral-100 font-medium' : 'opacity-70 hover:opacity-100'}`}>
           Insights
@@ -455,9 +480,81 @@ export default function SubprojectDetail() {
         </div>
       )}
 
+      {tab === 'compare' && (
+        <div className="border rounded-md shadow-sm bg-white dark:bg-neutral-900">
+          <div className="p-2 flex items-center gap-2">
+            <div className="text-sm opacity-70">Comparar respostas de runs do tema</div>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs opacity-70">Runs por grupo</span>
+              <Select value={String(limitPerGroup)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLimitPerGroup(parseInt(e.target.value))}>
+                {[3,5,10,20].map(n => <option key={n} value={n}>{n}</option>)}
+              </Select>
+              <Button variant="secondary" size="sm" onClick={refreshCompare} disabled={loadingCompare}>
+                {loadingCompare ? 'Carregando…' : 'Atualizar'}
+              </Button>
+            </div>
+          </div>
+          <div className="border-t">
+            {loadingCompare && !groups.length ? (
+              <div className="p-6 text-sm opacity-70">Carregando…</div>
+            ) : !groups.length ? (
+              <div className="p-6 text-sm opacity-70">Sem dados para comparar.</div>
+            ) : (
+              <div className="p-2 space-y-4">
+                {groups.map((g, gi) => (
+                  <div key={gi} className="border rounded-md">
+                    <div className="px-2 py-1 text-sm flex items-center gap-2">
+                      <span className="font-medium">{g.subproject_name || '—'}</span>
+                      <span className="opacity-60">({g.runs.length} runs)</span>
+                    </div>
+                    <div className="border-t overflow-x-auto">
+                      <div className="flex gap-3 p-2 min-w-max">
+                        {g.runs.map(run => (
+                          <div key={run.id} className="w-[360px] max-w-[360px] border rounded-md p-2 bg-white dark:bg-neutral-900">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 border rounded text-xs">{run.engine}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                run.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                run.status === 'failed' ? 'bg-red-100 text-red-800' :
+                                run.status === 'running' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>{run.status}</span>
+                              <a className="ml-auto text-xs text-blue-600" href={`/runs/${run.id}`}>abrir</a>
+                            </div>
+                            <div className="mt-2 text-xs opacity-70">Prompt</div>
+                            <div className="text-xs whitespace-pre-wrap max-h-24 overflow-auto">{run.prompt_text || '-'}</div>
+                            {!!run.evidences?.length && (
+                              <div className="mt-2">
+                                <div className="text-xs font-medium mb-1">Evidências</div>
+                                <div className="space-y-1">
+                                  {run.evidences.map(ev => (
+                                    <details key={ev.id} className="text-xs">
+                                      <summary className="cursor-pointer">Evidência {ev.id.slice(0, 8)}</summary>
+                                      <pre className="mt-1 p-2 rounded bg-neutral-50 dark:bg-neutral-900 overflow-auto max-h-48 text-[11px]">
+                                        {JSON.stringify(ev.parsed_json, null, 2)}
+                                      </pre>
+                                    </details>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {!run.evidences?.length && <div className="mt-2 text-xs opacity-60">Sem evidências.</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {tab === 'insights' && (
         <InsightsPanel subprojectId={id || ''} />
       )}
+      <Toaster richColors position="top-right" />
     </div>
   )
 }
@@ -587,7 +684,6 @@ function InsightsPanel({ subprojectId }: { subprojectId: string }) {
           {!data.wordcloud?.length && <div className="text-sm opacity-60">Sem dados de wordcloud.</div>}
         </div>
       )}
-      <Toaster richColors position="top-right" />
     </div>
   )
 }

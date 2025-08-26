@@ -3,7 +3,8 @@ import axios from 'axios'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
-import { BarChart2, ExternalLink, Play } from 'lucide-react'
+import { BarChart2, ExternalLink, Play, Pencil, Trash2 } from 'lucide-react'
+import { Toaster, toast } from 'sonner'
 
 const API = '/api'
 
@@ -91,6 +92,7 @@ export default function SubprojectsPage() {
 
   return (
     <div className="space-y-3">
+      <Toaster richColors position="top-right" />
       <ActiveContextBar />
       <h1 className="text-2xl font-semibold">Temas</h1>
       <div className="flex flex-wrap gap-2 items-center">
@@ -105,7 +107,28 @@ export default function SubprojectsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {items.map(sp => (
-          <SubprojectCard key={sp.id} sp={sp} kpi={kpis[sp.id]} onFocus={setFocus} />
+          <SubprojectCard
+            key={sp.id}
+            sp={sp}
+            kpi={kpis[sp.id]}
+            onFocus={setFocus}
+            onRename={async (id, newName) => {
+              const name = newName.trim()
+              if (!name) return
+              await axios.patch(`${API}/subprojects/${id}`, { name })
+              await refresh()
+            }}
+            onDelete={async (id) => {
+              if (!confirm('Excluir este tema? Itens vinculados serão desassociados.')) return
+              try {
+                await axios.delete(`${API}/subprojects/${id}`)
+                toast.success('Tema excluído')
+                await refresh()
+              } catch (e: any) {
+                toast.error('Erro ao excluir tema')
+              }
+            }}
+          />
         ))}
         {!items.length && <div className="text-sm opacity-70">Nenhum tema.</div>}
       </div>
@@ -153,7 +176,9 @@ function Bar({ value, className }: { value: number; className: string }) {
   )
 }
 
-function SubprojectCard({ sp, kpi, onFocus }: { sp: Subproject; kpi?: KPIs; onFocus: (id: string) => void }) {
+function SubprojectCard({ sp, kpi, onFocus, onRename, onDelete }: { sp: Subproject; kpi?: KPIs; onFocus: (id: string) => void; onRename: (id: string, newName: string) => void | Promise<void>; onDelete: (id: string) => void | Promise<void> }) {
+  const [editing, setEditing] = React.useState(false)
+  const [name, setName] = React.useState(sp.name)
   const amr = Math.round((kpi?.amr_avg || 0) * 100)
   const dcr = Math.round((kpi?.dcr_avg || 0) * 100)
   const zcrs = Math.round((kpi?.zcrs_avg || 0))
@@ -161,11 +186,29 @@ function SubprojectCard({ sp, kpi, onFocus }: { sp: Subproject; kpi?: KPIs; onFo
   return (
     <div className="border rounded-xl p-4 space-y-3 bg-white dark:bg-neutral-900 shadow-sm">
       <div className="flex items-start gap-3">
-        <div className="text-lg font-semibold flex-1">{sp.name}</div>
+        <div className="flex-1">
+          <div className="text-lg font-semibold flex items-center gap-2">
+            {editing ? (
+              <>
+                <Input className="h-8" value={name} onChange={(e)=>setName(e.target.value)} />
+                <Button size="sm" onClick={async ()=>{ await onRename(sp.id, name); setEditing(false) }}>Salvar</Button>
+                <Button size="sm" variant="ghost" onClick={()=>{ setEditing(false); setName(sp.name) }}>Cancelar</Button>
+              </>
+            ) : (
+              <>
+                <span>{sp.name}</span>
+                <Button variant="ghost" size="sm" title="Renomear" onClick={()=>{ setEditing(true); setName(sp.name) }}><Pencil className="h-4 w-4" /></Button>
+              </>
+            )}
+          </div>
+        </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" title="Focar no dashboard" onClick={() => onFocus(sp.id)}><BarChart2 className="h-4 w-4" /></Button>
           <a href={`/subprojects/${sp.id}`} title="Abrir detalhes" className="px-2 py-1 border rounded-md"><ExternalLink className="h-4 w-4" /></a>
           <a href={`/runs`} title="Ver runs" className="px-2 py-1 border rounded-md"><Play className="h-4 w-4" /></a>
+          <Button variant="ghost" size="sm" title="Excluir tema" onClick={() => onDelete(sp.id)}>
+            <Trash2 className="h-4 w-4 text-red-600" />
+          </Button>
         </div>
       </div>
       <div className="text-sm opacity-70">Monitoramento para {sp.name.toLowerCase()}</div>
