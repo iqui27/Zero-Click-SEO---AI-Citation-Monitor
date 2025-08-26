@@ -8,7 +8,7 @@ set -e  # Exit on any error
 # Configuration
 ORACLE_HOST="129.148.63.199"
 ORACLE_USER="ubuntu"
-SSH_KEY="/Users/hrocha/Documents/SSH Oracle/oci_ed25519"
+SSH_KEY="C:/Users/hftra/.ssh/oci_ed25519"
 DEPLOY_DIR="/opt/seo-analyzer"
 REPO_URL="https://github.com/yourusername/seo-analyzer.git"  # Update with your repo
 BRANCH="main"

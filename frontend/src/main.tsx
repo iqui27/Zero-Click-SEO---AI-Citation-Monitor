@@ -37,7 +37,7 @@ function LiveBadge() {
 }
 
 function Layout() {
-  const [dark, setDark] = useState<boolean>(() => (localStorage.getItem('theme') || 'dark') === 'dark')
+  const [dark, setDark] = useState<boolean>(() => (localStorage.getItem('theme') || 'light') === 'dark')
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement | null>(null)
