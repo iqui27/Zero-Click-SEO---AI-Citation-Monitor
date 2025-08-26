@@ -40,18 +40,31 @@ export default function SettingsPage() {
     serpapi_ai_overview: true,
     serpapi_no_cache: false,
   })
+  // System settings
+  const [systemSettings, setSystemSettings] = useState({
+    default_timeout: 180,
+    max_concurrent_runs: 5,
+    auto_cleanup_days: 30,
+    enable_monitoring: true,
+    log_level: 'INFO',
+    backup_enabled: true,
+    backup_frequency: 'daily'
+  })
+  const [systemStatus, setSystemStatus] = useState<any>(null)
 
   const refresh = async () => {
     try {
       if (!projectId) return
-      const [d, e, st] = await Promise.all([
+      const [d, e, st, sys] = await Promise.all([
         axios.get(`${API}/projects/${projectId}/domains`).then(r => r.data),
         axios.get(`${API}/projects/${projectId}/engines`).then(r => r.data),
         axios.get(`${API}/setup/status`).then(r => r.data).catch(() => null),
+        axios.get(`${API}/system/status`).then(r => r.data).catch(() => null),
       ])
       setDomains(d)
       setEngines(e)
       if (st) setKeysStatus(st)
+      if (sys) setSystemStatus(sys)
     } catch (e: any) {
       toast.error('Falha ao carregar settings: ' + e.message)
     }
@@ -382,6 +395,129 @@ export default function SettingsPage() {
             <EngineCard key={e.id} engine={e} onSave={updateEngine} onDelete={deleteEngine} />
           ))}
           {!engines.length && <div className="text-sm opacity-70">Nenhuma engine cadastrada ainda (é criada na primeira run).</div>}
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Sistema & Performance</h2>
+        <div className="border rounded-md p-3 grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className="text-xs opacity-70">Timeout padrão por ciclo (segundos)</label>
+              <Input type="number" min={60} max={600} value={systemSettings.default_timeout}
+                onChange={(e)=>setSystemSettings(s=>({ ...s, default_timeout: Number(e.target.value) }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs opacity-70">Máximo de runs simultâneas</label>
+              <Input type="number" min={1} max={20} value={systemSettings.max_concurrent_runs}
+                onChange={(e)=>setSystemSettings(s=>({ ...s, max_concurrent_runs: Number(e.target.value) }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs opacity-70">Limpeza automática (dias)</label>
+              <Input type="number" min={7} max={365} value={systemSettings.auto_cleanup_days}
+                onChange={(e)=>setSystemSettings(s=>({ ...s, auto_cleanup_days: Number(e.target.value) }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs opacity-70">Nível de log</label>
+              <Select value={systemSettings.log_level}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setSystemSettings(s=>({ ...s, log_level: e.target.value }))}
+              >
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </Select>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={systemSettings.enable_monitoring}
+                onChange={(e)=>setSystemSettings(s=>({ ...s, enable_monitoring: e.target.checked }))}
+              /> Monitoramento ativo
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={systemSettings.backup_enabled}
+                onChange={(e)=>setSystemSettings(s=>({ ...s, backup_enabled: e.target.checked }))}
+              /> Backup automático
+            </label>
+            {systemSettings.backup_enabled && (
+              <Select value={systemSettings.backup_frequency}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>)=>setSystemSettings(s=>({ ...s, backup_frequency: e.target.value }))}
+              >
+                <option value="hourly">A cada hora</option>
+                <option value="daily">Diário</option>
+                <option value="weekly">Semanal</option>
+              </Select>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={()=>toast.info('Configurações do sistema salvas (mock)')}>Salvar configurações</Button>
+          </div>
+        </div>
+      </section>
+
+      {systemStatus && (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Status do Sistema</h2>
+          <div className="border rounded-md p-3">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">{systemStatus.uptime || '0h'}</div>
+                <div className="text-xs opacity-70">Uptime</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{systemStatus.active_runs || 0}</div>
+                <div className="text-xs opacity-70">Runs ativas</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-600">{systemStatus.total_runs || 0}</div>
+                <div className="text-xs opacity-70">Total de runs</div>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t">
+              <div className="grid gap-2 md:grid-cols-2 text-sm">
+                <div>CPU: <span className="font-mono">{systemStatus.cpu_usage || '0%'}</span></div>
+                <div>Memória: <span className="font-mono">{systemStatus.memory_usage || '0%'}</span></div>
+                <div>Disco: <span className="font-mono">{systemStatus.disk_usage || '0%'}</span></div>
+                <div>Redis: <span className={`font-mono ${systemStatus.redis_status === 'connected' ? 'text-green-600' : 'text-red-600'}`}>{systemStatus.redis_status || 'unknown'}</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Manutenção</h2>
+        <div className="border rounded-md p-3 grid gap-3">
+          <div className="grid gap-2 md:grid-cols-3">
+            <Button variant="outline" onClick={()=>toast.info('Limpeza iniciada (mock)')}>
+              🧹 Limpar runs antigas
+            </Button>
+            <Button variant="outline" onClick={()=>toast.info('Backup criado (mock)')}>
+              💾 Criar backup
+            </Button>
+            <Button variant="outline" onClick={()=>toast.info('Cache limpo (mock)')}>
+              🗑️ Limpar cache
+            </Button>
+          </div>
+          <div className="text-xs opacity-70">
+            Ferramentas de manutenção para otimizar performance e liberar espaço em disco.
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Informações do Sistema</h2>
+        <div className="border rounded-md p-3">
+          <div className="grid gap-2 text-sm font-mono">
+            <div>Versão: <span className="text-blue-600">v1.0.0</span></div>
+            <div>Build: <span className="text-gray-600">{new Date().toISOString().slice(0, 10)}</span></div>
+            <div>Ambiente: <span className="text-green-600">Production</span></div>
+            <div>Database: <span className="text-purple-600">MySQL</span></div>
+          </div>
         </div>
       </section>
     </div>

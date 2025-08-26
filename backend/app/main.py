@@ -39,6 +39,7 @@ def on_startup() -> None:
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS model_name VARCHAR(255)",
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS error_code VARCHAR(255)",
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS config_hash VARCHAR(255)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS cycle_delay_seconds INTEGER",
                     # insights.run_id para relacionar insight com run
                     "ALTER TABLE insights ADD COLUMN IF NOT EXISTS run_id VARCHAR(255)",
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.constraint_column_usage WHERE table_name='insights' AND column_name='run_id') THEN BEGIN EXCEPTION WHEN others THEN END; END IF; END $$;",
@@ -46,32 +47,95 @@ def on_startup() -> None:
                 for sql in stmts:
                     conn.execute(text(sql))
         elif engine.dialect.name == "mssql":
-            # Migração leve (Azure SQL): adicionar prompt_templates.subproject_id, se não existir, e FK
-            with engine.begin() as conn:
-                # Add column if missing
-                conn.execute(text(
-                    """
+            # Migração leve (Azure SQL): adicionar colunas ausentes da tabela runs
+            print("[MIGRATION] Starting SQL Server migration...")
+            def _exec_safe(sql: str, description: str = "") -> None:
+                try:
+                    print(f"[MIGRATION] Executing: {description}")
+                    with engine.begin() as _conn:
+                        _conn.execute(text(sql))
+                    print(f"[MIGRATION] Success: {description}")
+                except Exception as e:
+                    print(f"[MIGRATION] Failed: {description} - {e}")
+
+            # Adicionar cycles_total primeiro
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'cycles_total'
+                )
+                BEGIN
+                    ALTER TABLE dbo.runs ADD cycles_total INT NULL;
+                END
+            """, "Add runs.cycles_total column")
+            
+            # Backfill cycles_total em transação separada
+            _exec_safe("""
+                UPDATE dbo.runs SET cycles_total = 1 WHERE cycles_total IS NULL;
+            """, "Backfill runs.cycles_total with default value")
+
+            # Lista de outras colunas que devem existir na tabela runs
+            runs_columns = [
+                ("tokens_input", "INT"),
+                ("tokens_output", "INT"),
+                ("tokens_total", "INT"),
+                ("cost_usd", "FLOAT"),
+                ("latency_ms", "INT"),
+                ("citations_count", "INT"),
+                ("our_citations_count", "INT"),
+                ("unique_domains_count", "INT"),
+                ("model_name", "VARCHAR(255)"),
+                ("error_code", "VARCHAR(255)"),
+                ("config_hash", "VARCHAR(255)"),
+                ("cycle_delay_seconds", "INT"),
+            ]
+
+            # Adicionar cada coluna se não existir
+            for col_name, col_type in runs_columns:
+                _exec_safe(f"""
                     IF NOT EXISTS (
-                        SELECT 1 FROM sys.columns 
-                        WHERE Name = N'subproject_id' AND Object_ID = Object_ID(N'prompt_templates')
+                        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = '{col_name}'
                     )
                     BEGIN
-                        ALTER TABLE prompt_templates ADD subproject_id VARCHAR(50) NULL;
+                        ALTER TABLE dbo.runs ADD {col_name} {col_type} NULL;
                     END
-                    """
-                ))
-                # Add FK constraint if missing
-                conn.execute(text(
-                    """
-                    IF NOT EXISTS (
-                        SELECT 1 FROM sys.foreign_keys WHERE name = N'fk_prompt_templates_subproject'
-                    )
-                    BEGIN
-                        ALTER TABLE prompt_templates 
-                        ADD CONSTRAINT fk_prompt_templates_subproject FOREIGN KEY (subproject_id) REFERENCES subprojects(id);
-                    END
-                    """
-                ))
+                """, f"Add runs.{col_name} column")
+
+            # Adicionar prompt_templates.subproject_id, se não existir
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'prompt_templates' AND COLUMN_NAME = 'subproject_id'
+                )
+                BEGIN
+                    ALTER TABLE dbo.prompt_templates ADD subproject_id VARCHAR(50) NULL;
+                END
+            """, "Add prompt_templates.subproject_id column")
+
+            # Adicionar FK, se não existir
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys WHERE name = N'fk_prompt_templates_subproject'
+                )
+                BEGIN
+                    ALTER TABLE dbo.prompt_templates 
+                    ADD CONSTRAINT fk_prompt_templates_subproject FOREIGN KEY (subproject_id) REFERENCES dbo.subprojects(id);
+                END
+            """, "Add FK constraint for prompt_templates.subproject_id")
+
+            # Adicionar insights.run_id, se não existir
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'insights' AND COLUMN_NAME = 'run_id'
+                )
+                BEGIN
+                    ALTER TABLE dbo.insights ADD run_id VARCHAR(50) NULL;
+                END
+            """, "Add insights.run_id column")
+            
+            print("[MIGRATION] SQL Server migration completed.")
     except Exception:
         # tolerar ambiente que não suporte IF NOT EXISTS
         pass

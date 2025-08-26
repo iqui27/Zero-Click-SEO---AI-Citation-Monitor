@@ -27,6 +27,8 @@ export type RunListItem = {
   subproject_name?: string
   cost_usd?: number
   tokens_total?: number
+  cycles_total?: number
+  cycle_delay_seconds?: number
 }
 
 export type EngineConfig = {
@@ -41,6 +43,7 @@ export type CreateRunPayload = {
   prompt_version_id: string
   engines: EngineConfig[]
   cycles?: number
+  cycle_delay_seconds?: number | null
   subproject_id?: string | null
 }
 
@@ -60,6 +63,7 @@ export type RunDetail = {
   tokens_total?: number
   cost_usd?: number
   latency_ms?: number
+  cycles_total?: number
 }
 
 export type EventItem = { step: string; status: string; message?: string; created_at: string }
