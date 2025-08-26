@@ -23,6 +23,7 @@ export type RunListItem = {
   amr_flag?: boolean
   dcr_flag?: boolean
   template_name?: string
+  template_category?: string
   subproject_name?: string
   cost_usd?: number
   tokens_total?: number

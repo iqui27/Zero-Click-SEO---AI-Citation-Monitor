@@ -102,6 +102,7 @@ class RunListItem(BaseModel):
     amr_flag: Optional[bool]
     dcr_flag: Optional[bool]
     template_name: Optional[str] = None
+    template_category: Optional[str] = None
     subproject_name: Optional[str] = None
     # síntese de custos
     cost_usd: Optional[float] = None
