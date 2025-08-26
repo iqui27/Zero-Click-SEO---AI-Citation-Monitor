@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text, literal_column
+from sqlalchemy import func, text, literal_column, and_
 from fastapi.responses import StreamingResponse
 import asyncio
 import io
@@ -419,11 +419,19 @@ def list_runs(
             Run.cost_usd,
             Run.tokens_total,
             func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
+            PromptTemplate.category.label("template_category"),
             func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
         .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
+        .outerjoin(
+            PromptTemplate,
+            and_(
+                PromptTemplate.project_id == Run.project_id,
+                func.replace(Prompt.name, 'Template: ', '') == PromptTemplate.name,
+            ),
+        )
         .outerjoin(SubProject, SubProject.id == Run.subproject_id)
     )
     if project_id:
@@ -473,6 +481,7 @@ def list_runs(
             amr_flag=r.amr_flag,
             dcr_flag=r.dcr_flag,
             template_name=getattr(r, "template_name", None),
+            template_category=getattr(r, "template_category", None),
             subproject_name=getattr(r, "subproject_name", None),
             cost_usd=getattr(r, "cost_usd", None),
             tokens_total=getattr(r, "tokens_total", None),

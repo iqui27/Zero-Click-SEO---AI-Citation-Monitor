@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
-import { getProjects, createProject, updateProject, getSubprojects, createSubproject, updateSubproject, type Project, type Subproject } from '../lib/api'
+import { getProjects, createProject, updateProject, getSubprojects, createSubproject, updateSubproject, deleteProject, deleteSubproject, type Project, type Subproject } from '../lib/api'
 import axios from 'axios'
-import { ChevronDown, ChevronRight, FolderOpen, Layers, Pencil, Plus, Search, Sparkles, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, Layers, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-react'
 import { Toaster, toast } from 'sonner'
 
 const API = '/api'
@@ -118,6 +118,22 @@ export default function WorkspacePage() {
     }
   }
 
+  const deleteSelectedProject = async () => {
+    const id = selectedProjectId
+    if (!id) return
+    if (!confirm('Excluir este projeto? Esta ação não pode ser desfeita.')) return
+    try {
+      await deleteProject(id)
+      toast.success('Projeto excluído')
+      setSelectedProjectId('')
+      localStorage.removeItem('project_id')
+      setSubprojects([])
+      await loadProjects()
+    } catch {
+      toast.error('Falha ao excluir projeto')
+    }
+  }
+
   // Actions: Subprojects
   const onCreateTheme = async () => {
     const name = themeName.trim()
@@ -141,6 +157,17 @@ export default function WorkspacePage() {
       if (selectedProjectId) await loadSubprojects(selectedProjectId)
     } catch {
       toast.error('Falha ao renomear tema')
+    }
+  }
+
+  const onDeleteTheme = async (id: string) => {
+    if (!confirm('Excluir este tema? Esta ação não pode ser desfeita.')) return
+    try {
+      await deleteSubproject(id)
+      toast.success('Tema excluído')
+      if (selectedProjectId) await loadSubprojects(selectedProjectId)
+    } catch {
+      toast.error('Falha ao excluir tema')
     }
   }
 
@@ -204,7 +231,10 @@ export default function WorkspacePage() {
                 </div>
               )}
               {selectedProject && !editingProjectId && (
-                <Button size="sm" variant="outline" onClick={()=>startEditProject(selectedProject)} className="w-full"><Pencil className="h-4 w-4 mr-2" /> Renomear selecionado</Button>
+                <>
+                  <Button size="sm" variant="outline" onClick={()=>startEditProject(selectedProject)} className="w-full"><Pencil className="h-4 w-4 mr-2" /> Renomear selecionado</Button>
+                  <Button size="sm" variant="outline" onClick={deleteSelectedProject} className="w-full text-red-600 border-red-200 hover:bg-red-50"><Trash2 className="h-4 w-4 mr-2" /> Apagar projeto</Button>
+                </>
               )}
             </div>
           </div>
@@ -225,7 +255,7 @@ export default function WorkspacePage() {
             {/* Grid */}
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {subprojects.map(sp => (
-                <ThemeCard key={sp.id} sp={sp} kpi={kpis[sp.id]} onRename={onRenameTheme} />
+                <ThemeCard key={sp.id} sp={sp} kpi={kpis[sp.id]} onRename={onRenameTheme} onDelete={onDeleteTheme} />
               ))}
               {!subprojects.length && (
                 <div className="text-sm opacity-70">Nenhum tema. Crie o primeiro com "+ Novo Tema".</div>
@@ -236,7 +266,7 @@ export default function WorkspacePage() {
       </div>
 
       {showCreateTheme && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm grid place-items-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm grid place-items-center p-4">
           <div className="w-[min(560px,100%)] border rounded-xl bg-white dark:bg-neutral-900 p-4 shadow-xl animate-in fade-in zoom-in duration-200">
             <div className="flex items-center gap-2">
               <h3 className="text-lg font-semibold">Novo Tema</h3>
@@ -259,7 +289,7 @@ export default function WorkspacePage() {
   )
 }
 
-function ThemeCard({ sp, kpi, onRename }: { sp: Subproject; kpi?: KPIs; onRename: (id: string, newName: string) => void | Promise<void> }) {
+function ThemeCard({ sp, kpi, onRename, onDelete }: { sp: Subproject; kpi?: KPIs; onRename: (id: string, newName: string) => void | Promise<void>; onDelete: (id: string) => void | Promise<void> }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sp.name)
   const amr = Math.round((kpi?.amr_avg || 0) * 100)
@@ -270,9 +300,9 @@ function ThemeCard({ sp, kpi, onRename }: { sp: Subproject; kpi?: KPIs; onRename
   return (
     <div className="group relative border rounded-xl p-4 bg-gradient-to-br from-white to-neutral-50 dark:from-neutral-900 dark:to-neutral-950 shadow-sm hover:shadow-md transition-shadow duration-300 overflow-hidden">
       <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{ background: 'radial-gradient(600px circle at var(--x, 0) var(--y, 0), rgba(168,85,247,0.08), transparent 40%)' }} />
-      <div className="flex items-start gap-2 relative">
+      <div className="flex items-center gap-2 relative">
         <div className="flex-1">
-          <div className="text-base font-semibold flex items-center gap-2">
+          <div className="text-base font-semibold flex items-center justify-between gap-2 min-w-0">
             {editing ? (
               <>
                 <Input className="h-8" value={name} onChange={(e)=>setName(e.target.value)} />
@@ -281,8 +311,27 @@ function ThemeCard({ sp, kpi, onRename }: { sp: Subproject; kpi?: KPIs; onRename
               </>
             ) : (
               <>
-                <span className="truncate">{sp.name}</span>
-                <Button variant="ghost" size="sm" title="Renomear" onClick={()=>{ setEditing(true); setName(sp.name) }}><Pencil className="h-4 w-4" /></Button>
+                <span className="truncate max-w-full leading-tight" title={sp.name}>{sp.name}</span>
+                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    title="Renomear"
+                    onClick={()=>{ setEditing(true); setName(sp.name) }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Excluir tema"
+                    onClick={()=> onDelete(sp.id)}
+                    className="h-8 w-8 p-0 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </>
             )}
           </div>

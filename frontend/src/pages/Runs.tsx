@@ -20,6 +20,7 @@ type RunItem = {
   amr_flag?: boolean
   dcr_flag?: boolean
   template_name?: string
+  template_category?: string
   subproject_name?: string
   cost_usd?: number
   tokens_total?: number
@@ -65,6 +66,8 @@ export default function Runs() {
   const [subprojects, setSubprojects] = useState<Subproject[]>([])
   const [subprojectId, setSubprojectId] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false)
+  // Map template name -> { category, subproject_id }
+  const [templateCatIndex, setTemplateCatIndex] = useState<Record<string, { category: string; subproject_id?: string }>>({})
 
   const fetchRuns = async () => {
     const params: any = {}
@@ -99,6 +102,16 @@ export default function Runs() {
   useEffect(() => { fetchRuns() }, [engineFilter, subprojectId])
   useEffect(() => { const t = setInterval(fetchRuns, 5000); return () => clearInterval(t) }, [engineFilter, subprojectId])
   useEffect(() => { if (projectId) { fetchRuns() } }, [projectId])
+
+  // Build template name -> category index for current project
+  useEffect(() => {
+    if (!projectId) return
+    getTemplates(projectId, undefined, undefined).then((tpls: any[]) => {
+      const idx: Record<string, { category: string; subproject_id?: string }> = {}
+      for (const t of tpls) idx[t.name] = { category: t.category, subproject_id: t.subproject_id }
+      setTemplateCatIndex(idx)
+    })
+  }, [projectId])
 
   useEffect(() => {
     if (!projectId) return
@@ -207,23 +220,79 @@ export default function Runs() {
             <Button className="mt-3" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
           </div>
         ) : !subprojectId ? (
-          grouped.map(([theme, items]) => (
-            <div key={theme} className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden fade-in-up">
-              <div className="px-3 py-2 bg-neutral-50 dark:bg-neutral-900 flex items-center justify-between">
-                <div className="text-sm font-medium">{theme}</div>
-                <div className="text-xs opacity-60">{items.length} runs</div>
+          grouped.map(([theme, items]) => {
+            // group items by category; prefer backend template_category, fallback to client-side mapping
+            const byCat = new Map<string, RunItem[]>()
+            for (const r of items) {
+              let cat = (r.template_category || '').trim()
+              if (!cat) {
+                if (r.template_name) {
+                  const nm = r.template_name.replace(/^Template:\s*/i, '').trim()
+                  const idx = templateCatIndex[nm]
+                  if (idx?.category) cat = idx.category
+                }
+              }
+              if (!cat) cat = 'Outros'
+              if (!byCat.has(cat)) byCat.set(cat, [])
+              byCat.get(cat)!.push(r)
+            }
+            const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+            return (
+              <div key={theme} className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden fade-in-up">
+                <div className="px-3 py-2 bg-neutral-50 dark:bg-neutral-900 flex items-center justify-between">
+                  <div className="text-sm font-medium">{theme}</div>
+                  <div className="text-xs opacity-60">{items.length} runs</div>
+                </div>
+                <div className="p-3 space-y-4">
+                  {cats.map(([cat, catItems]) => (
+                    <div key={cat} className="rounded-md border border-neutral-200 dark:border-neutral-800">
+                      <div className="px-3 py-2 bg-white dark:bg-neutral-900 flex items-center justify-between">
+                        <div className="text-sm font-medium">{cat}</div>
+                        <div className="text-xs opacity-60">{catItems.length} runs</div>
+                      </div>
+                      <div className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {catItems.map((r) => (<RunCard key={r.id} r={r} onDelete={handleDeleteRun} />))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {items.map((r) => (
-                  <RunCard key={r.id} r={r} onDelete={handleDeleteRun} />
+            )
+          })
+        ) : (
+          // When a single theme is selected, group the visible runs by category as well
+          (() => {
+            const byCat = new Map<string, RunItem[]>()
+            for (const r of sortedRuns) {
+              let cat = (r.template_category || '').trim()
+              if (!cat) {
+                if (r.template_name) {
+                  const nm = r.template_name.replace(/^Template:\s*/i, '').trim()
+                  const idx = templateCatIndex[nm]
+                  if (idx?.category) cat = idx.category
+                }
+              }
+              if (!cat) cat = 'Outros'
+              if (!byCat.has(cat)) byCat.set(cat, [])
+              byCat.get(cat)!.push(r)
+            }
+            const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+            return (
+              <div className="space-y-4">
+                {cats.map(([cat, catItems]) => (
+                  <div key={cat} className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                    <div className="px-3 py-2 bg-neutral-50 dark:bg-neutral-900 flex items-center justify-between">
+                      <div className="text-sm font-medium">{cat}</div>
+                      <div className="text-xs opacity-60">{catItems.length} runs</div>
+                    </div>
+                    <div className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {catItems.map((r) => (<RunCard key={r.id} r={r} onDelete={handleDeleteRun} />))}
+                    </div>
+                  </div>
                 ))}
               </div>
-            </div>
-          ))
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {sortedRuns.map((r) => (<RunCard key={r.id} r={r} onDelete={handleDeleteRun} />))}
-          </div>
+            )
+          })()
         )}
       </div>
       {showModal && <NewRunModal onClose={() => { setShowModal(false); fetchRuns(); navigate('/runs', { replace: true }) }} />}
@@ -280,7 +349,9 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [cycles, setCycles] = useState(1)
   const [creating, setCreating] = useState(false)
   const [newProjectName, setNewProjectName] = useState('Projeto Banco – BR pt-BR')
+  const [allTemplates, setAllTemplates] = useState<Template[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
+  const [categories, setCategories] = useState<string[]>([])
   const [category, setCategory] = useState<string>('')
   // OpenAI opções avançadas
   const isOpenAI = ENGINE_OPTIONS[engineIdx]?.name === 'openai'
@@ -311,8 +382,24 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!projectId) return
     getSubprojects(projectId).then((r) => setSubprojects(r))
-    getTemplates(projectId, category, subprojectId || undefined).then((r) => setTemplates(r))
-  }, [projectId, category, subprojectId])
+    // Fetch all templates (unfiltered) for the selected project/theme to derive categories and allow client-side filtering
+    getTemplates(projectId, undefined, subprojectId || undefined).then((r) => {
+      setAllTemplates(r)
+      setTemplates(category ? r.filter((t: Template) => t.category === category) : r)
+      const cats = Array.from(new Set(r.map((t: Template) => t.category))).sort()
+      setCategories(cats)
+    })
+  }, [projectId, subprojectId])
+
+  // Update visible templates when category changes
+  useEffect(() => {
+    setTemplates(category ? allTemplates.filter((t: Template) => t.category === category) : allTemplates)
+  }, [category, allTemplates])
+
+  // Ensure selected template index is valid when the list changes (e.g., after filtering by category)
+  useEffect(() => {
+    if (templateIdx >= templates.length) setTemplateIdx(0)
+  }, [templates, templateIdx])
 
   const createQuickProject = async () => {
     const res = await createProject({ name: newProjectName, country: 'BR', language: 'pt-BR', timezone: 'America/Sao_Paulo' })
@@ -478,7 +565,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <label className="grid gap-1">
-            <div className="text-sm text-neutral-500">Subprojeto (opcional)</div>
+            <div className="text-sm text-neutral-500">Tema (opcional)</div>
             <Select value={subprojectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSubprojectId(e.target.value)}>
               <option value="">—</option>
               {subprojects.map((s: Subproject) => (
@@ -486,10 +573,15 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
               ))}
             </Select>
           </label>
-          <div className="grid gap-1">
+          <label className="grid gap-1">
             <div className="text-sm text-neutral-500">Categoria de Template</div>
-            <Input placeholder="(opcional) Filtrar categoria" value={category} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCategory(e.target.value)} />
-          </div>
+            <Select value={category} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCategory(e.target.value)}>
+              <option value="">—</option>
+              {categories.map((c: string) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </Select>
+          </label>
           <label className="grid gap-1">
             <div className="text-sm text-neutral-500">Template</div>
             <Select value={String(templateIdx)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setTemplateIdx(parseInt(e.target.value))}>
