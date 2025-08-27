@@ -95,13 +95,24 @@ jobs:
         
     - name: Run database migrations
       run: |
-        sleep 30
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml exec -T api python -c "
-        from app.db.database import engine; 
-        from app.models.models import Base; 
-        Base.metadata.create_all(bind=engine); 
-        print(\"Database tables created successfully\")
-        " || echo "Migration completed or already exists"'
+        sleep 60
+        echo "Waiting for API container to stabilize..."
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && 
+        for i in {1..5}; do
+          echo "Migration attempt $i/5"
+          if sudo docker compose -f docker-compose.prod.yml exec -T api python -c "
+          from app.db.database import engine; 
+          from app.models.models import Base; 
+          Base.metadata.create_all(bind=engine); 
+          print(\"Database tables created successfully\")
+          "; then
+            echo "Migration successful"
+            break
+          else
+            echo "Migration failed, waiting 15 seconds..."
+            sleep 15
+          fi
+        done || echo "Migration completed or already exists"'
         
     - name: Verify deployment with retry
       run: |
