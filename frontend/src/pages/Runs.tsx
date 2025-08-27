@@ -689,13 +689,13 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
         <div className="grid gap-3">
           <div className="grid gap-1">
             <div className="text-sm text-neutral-500">Projeto</div>
-            <div className="flex gap-2 items-center">
-              <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setProjectId(e.target.value)} className="min-w-[280px]">
+            <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setProjectId(e.target.value)} className="sm:min-w-[240px]">
                 {projects.map((p: Project) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
                 ))}
               </Select>
-              <Button variant="secondary" onClick={createQuickProject}>Criar rápido</Button>
+              <Button variant="secondary" onClick={createQuickProject} className="w-full sm:w-auto">Criar rápido</Button>
             </div>
           </div>
           <label className="grid gap-1">

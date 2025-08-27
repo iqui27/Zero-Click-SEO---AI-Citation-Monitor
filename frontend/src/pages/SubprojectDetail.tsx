@@ -229,7 +229,7 @@ export default function SubprojectDetail() {
 
       
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Card title="Total Runs" value={ov?.total_runs ?? 0} />
         <Card title="AMR médio" value={(ov?.amr_avg ?? 0).toFixed(2)} />
         <Card title="DCR médio" value={(ov?.dcr_avg ?? 0).toFixed(2)} />
@@ -507,10 +507,10 @@ export default function SubprojectDetail() {
                       <span className="font-medium">{g.subproject_name || '—'}</span>
                       <span className="opacity-60">({g.runs.length} runs)</span>
                     </div>
-                    <div className="border-t overflow-x-auto">
-                      <div className="flex gap-3 p-2 min-w-max">
+                    <div className="border-t">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-2">
                         {g.runs.map(run => (
-                          <div key={run.id} className="w-[360px] max-w-[360px] border rounded-md p-2 bg-white dark:bg-neutral-900">
+                          <div key={run.id} className="border rounded-md p-2 bg-white dark:bg-neutral-900">
                             <div className="flex items-center gap-2">
                               <span className="px-2 py-0.5 border rounded text-xs">{run.engine}</span>
                               <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
@@ -522,7 +522,7 @@ export default function SubprojectDetail() {
                               <a className="ml-auto text-xs text-blue-600" href={`/runs/${run.id}`}>abrir</a>
                             </div>
                             <div className="mt-2 text-xs opacity-70">Prompt</div>
-                            <div className="text-xs whitespace-pre-wrap max-h-24 overflow-auto">{run.prompt_text || '-'}</div>
+                            <div className="text-xs whitespace-pre-wrap max-h-24 overflow-auto break-anywhere">{run.prompt_text || '-'}</div>
                             {!!run.evidences?.length && (
                               <div className="mt-2">
                                 <div className="text-xs font-medium mb-1">Evidências</div>
@@ -530,7 +530,7 @@ export default function SubprojectDetail() {
                                   {run.evidences.map(ev => (
                                     <details key={ev.id} className="text-xs">
                                       <summary className="cursor-pointer">Evidência {ev.id.slice(0, 8)}</summary>
-                                      <pre className="mt-1 p-2 rounded bg-neutral-50 dark:bg-neutral-900 overflow-auto max-h-48 text-[11px]">
+                                      <pre className="mt-1 p-2 rounded bg-neutral-50 dark:bg-neutral-900 overflow-auto max-h-48 text-[11px] break-anywhere">
                                         {JSON.stringify(ev.parsed_json, null, 2)}
                                       </pre>
                                     </details>

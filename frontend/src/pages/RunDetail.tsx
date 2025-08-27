@@ -541,7 +541,7 @@ export default function RunDetail() {
             <Button variant="outline" size="sm" onClick={() => copyAs('html')}>Copiar HTML</Button>
           </div>
         </div>
-        <article className="prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-neutral-900 p-4 rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-x-auto">
+        <article className="prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-neutral-900 p-4 rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-x-hidden">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]}>{md}</ReactMarkdown>
         </article>
       </section>
