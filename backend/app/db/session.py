@@ -3,8 +3,31 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 
-connect_args = {"check_same_thread": False, "timeout": 30} if settings.database_url.startswith("sqlite") else {}
-engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args=connect_args)
+# Configurar connect_args baseado no tipo de ba
+if settings.database_url.startswith("sqlite"):
+    connect_args = {"check_same_thread": False, "timeout": 30}
+elif settings.database_url.startswith( "mssql"):
+    connect_args = {
+        "timeout": 120,
+        "login_timeout": 120,
+        "autocommit": True
+    }
+
+# Pool settings especificos para SQL Server
+engine = create_engine(
+settings.database_url,
+pool_pre_ping=True,
+connect_args=connect_args,
+pool_timeout=60,
+pool_recycle=3600,
+# Para debug
+
+else:
+    connect_args = {}
+    engine = create_engine(settings. database_url, pool_pre_ping=True, connect_args=connect_args )
+
+if not settings.database_url.startswith("mssql"):
+    engine = create_engine(settings. database_url, pool_pre_ping=True, connect_args=connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
