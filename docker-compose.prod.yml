@@ -10,7 +10,6 @@ networks:
     driver: bridge
   internal_net:
     driver: bridge
-    internal: true
 
 volumes:
   redis_data:
