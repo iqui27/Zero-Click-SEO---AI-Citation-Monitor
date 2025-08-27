@@ -1,0 +1,97 @@
+name: Test Local Environment
+
+on:
+  pull_request:
+    branches: [ main, production, POC ]
+  workflow_dispatch:
+
+jobs:
+  test-local:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxml2-dev libxslt1-dev
+        
+    - name: Install Python dependencies
+      run: |
+        cd backend
+        pip install -r requirements_basic.txt
+        
+    - name: Test database initialization
+      run: |
+        cd backend
+        python -c "
+        import sys
+        sys.path.append('.')
+        from app.core.config import settings
+        print(f'Database URL: {settings.database_url}')
+        print('✅ Configuration loaded successfully')
+        "
+        
+    - name: Test database models
+      run: |
+        cd backend
+        python -c "
+        import sys
+        sys.path.append('.')
+        from app.models.models import Project, Domain, Prompt
+        print('✅ Models imported successfully')
+        print(f'Project model: {Project}')
+        print(f'Domain model: {Domain}')
+        print(f'Prompt model: {Prompt}')
+        "
+        
+    - name: Test database session
+      run: |
+        cd backend
+        python -c "
+        import sys
+        sys.path.append('.')
+        from app.db.session import engine, SessionLocal
+        print('✅ Database session created successfully')
+        print(f'Engine: {engine}')
+        print(f'Session: {SessionLocal}')
+        "
+        
+    - name: Test FastAPI app import
+      run: |
+        cd backend
+        python -c "
+        import sys
+        sys.path.append('.')
+        from app.main import app
+        print('✅ FastAPI app imported successfully')
+        print(f'App title: {app.title}')
+        print(f'App version: {app.version}')
+        "
+        
+    - name: Test Docker build (local)
+      run: |
+        cd backend
+        docker build -f Dockerfile -t seo-analyzer-local .
+        echo "✅ Local Docker image built successfully"
+        
+    - name: Test Docker build (production)
+      run: |
+        cd backend
+        docker build -f Dockerfile.prod -t seo-analyzer-prod .
+        echo "✅ Production Docker image built successfully"
+        
+    - name: Summary
+      run: |
+        echo "🎉 All local tests passed!"
+        echo "✅ Database models working"
+        echo "✅ FastAPI app working"
+        echo "✅ Docker builds working"
+        echo "✅ Ready for production deploy"

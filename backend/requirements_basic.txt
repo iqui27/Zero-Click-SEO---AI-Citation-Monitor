@@ -1,0 +1,22 @@
+# Dependências básicas para SQLite local
+fastapi
+uvicorn
+SQLAlchemy
+pydantic
+pydantic-settings
+python-multipart
+redis
+celery
+httpx
+orjson
+python-dateutil
+requests
+openai
+google-generativeai
+playwright
+beautifulsoup4
+google-genai
+lxml
+
+# Nota: Versões específicas foram removidas para evitar conflitos
+# com Python 3.13. O pip instalará as versões compatíveis.
