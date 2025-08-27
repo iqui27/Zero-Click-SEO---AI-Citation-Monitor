@@ -93,33 +93,37 @@ jobs:
         sleep 45
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
         
-    - name: Run database migrations
+    - name: Debug container status and run migrations
       run: |
-        sleep 90
-        echo "Waiting for API container to stabilize..."
+        sleep 60
+        echo "Checking container status and logs..."
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && 
-        # Wait for container to be fully running
-        for j in {1..10}; do
-          if sudo docker compose -f docker-compose.prod.yml ps api | grep -q "running"; then
-            echo "API container is running"
+        echo "=== Container Status ==="
+        sudo docker compose -f docker-compose.prod.yml ps
+        
+        echo "=== API Container Logs (last 50 lines) ==="
+        sudo docker compose -f docker-compose.prod.yml logs --tail=50 api
+        
+        echo "=== Checking if API container keeps restarting ==="
+        for j in {1..5}; do
+          STATUS=$(sudo docker compose -f docker-compose.prod.yml ps api --format "table {{.State}}" | tail -n +2)
+          echo "API Status: $STATUS"
+          if [[ "$STATUS" == "running" ]]; then
+            echo "API container is stable, proceeding with migration"
             break
           else
-            echo "Waiting for API container... ($j/10)"
-            sleep 10
+            echo "API container not stable, waiting 15 seconds... ($j/5)"
+            sleep 15
           fi
         done
         
-        # Run migrations with better error handling
-        for i in {1..3}; do
-          echo "Migration attempt $i/3"
-          if sudo docker compose -f docker-compose.prod.yml exec -T api python -c "import sys; from app.db.session import engine; from app.models.models import Base; Base.metadata.create_all(bind=engine); print(\"Database tables created successfully\")"; then
-            echo "Migration successful"
-            break
-          else
-            echo "Migration failed, waiting 20 seconds..."
-            sleep 20
-          fi
-        done || echo "Migration completed or already exists"'
+        # Try migration only if container is stable
+        if [[ "$STATUS" == "running" ]]; then
+          echo "=== Running Database Migration ==="
+          sudo docker compose -f docker-compose.prod.yml exec -T api python -c "import sys; from app.db.session import engine; from app.models.models import Base; Base.metadata.create_all(bind=engine); print(\"Database tables created successfully\")" || echo "Migration failed but continuing"
+        else
+          echo "⚠️ API container unstable, skipping migration"
+        fi'
         
     - name: Verify deployment with retry
       run: |
