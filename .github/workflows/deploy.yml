@@ -93,14 +93,15 @@ jobs:
         sleep 45
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
         
-    - name: Create migration script
-      run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && echo "from app.db.database import engine" > migrate.py && echo "from app.models.models import Base" >> migrate.py && echo "Base.metadata.create_all(bind=engine)" >> migrate.py && echo "print(\"Database tables created successfully\")" >> migrate.py'
-        
     - name: Run database migrations
       run: |
         sleep 30
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml exec -T api python migrate.py || echo "Migration completed or already exists"'
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml exec -T api python -c "
+        from app.db.database import engine; 
+        from app.models.models import Base; 
+        Base.metadata.create_all(bind=engine); 
+        print(\"Database tables created successfully\")
+        " || echo "Migration completed or already exists"'
         
     - name: Verify deployment with retry
       run: |
