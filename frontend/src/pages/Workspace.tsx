@@ -195,7 +195,7 @@ export default function WorkspacePage() {
       </div>
 
       {/* Body layout */}
-      <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-[320px_1fr] gap-4 p-3">
+      <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-[minmax(260px,1fr)_2fr] gap-4 p-3">
         {/* Sidebar Projects */}
         <aside className={`transition-all duration-300 overflow-hidden ${mobileSidebarOpen ? 'max-h-[480px] sm:max-h-none' : 'max-h-0 sm:max-h-none'} sm:max-h-none`}>
           <div className="border rounded-xl p-3 bg-white dark:bg-neutral-900 shadow-sm">

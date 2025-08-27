@@ -240,7 +240,7 @@ function renderBlocks(list: any[]): React.ReactNode {
       )}
       {b.type === 'comparison' && Array.isArray(b.comparison) && (
         <div className="overflow-auto">
-          <table className="min-w-[480px] text-sm border border-neutral-200 dark:border-neutral-800 rounded-md">
+          <table className="min-w-full sm:min-w-[480px] text-sm border border-neutral-200 dark:border-neutral-800 rounded-md">
             <thead>
               <tr>
                 <th className="text-left p-2 border-b border-neutral-200 dark:border-neutral-800">Recurso</th>

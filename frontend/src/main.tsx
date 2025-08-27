@@ -38,6 +38,7 @@ function LiveBadge() {
 
 function Layout() {
   const [dark, setDark] = useState<boolean>(() => (localStorage.getItem('theme') || 'light') === 'dark')
+  const [mobileOpen, setMobileOpen] = useState<boolean>(false)
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement | null>(null)
@@ -82,7 +83,7 @@ function Layout() {
   return (
     <div className="min-h-screen grid grid-rows-[auto_1fr]">
       <nav className="flex items-center gap-4 px-3 sm:px-4 md:px-6 py-3 border-b border-neutral-200 dark:border-neutral-800">
-        <Link to="/" className="flex items-center text-neutral-900 dark:text-neutral-100" aria-label="Home">
+        <Link to="/" className="flex items-center text-neutral-900 dark:text-neutral-100" aria-label="Home" onClick={()=>setMobileOpen(false)}>
           <svg
             viewBox="0 0 640 160"
             xmlns="http://www.w3.org/2000/svg"
@@ -127,10 +128,12 @@ function Layout() {
             </g>
           </svg>
         </Link>
-        <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
-        <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
-        <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
-        <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">⚙️ Settings</Link>
+        <div className="hidden md:flex items-center gap-4">
+          <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
+          <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
+          <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
+          <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">⚙️ Settings</Link>
+        </div>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-2">
             <input
@@ -149,8 +152,37 @@ function Layout() {
           <button onClick={() => setDark((v) => !v)} className="text-sm px-3 py-1 border rounded-md border-neutral-300 dark:border-neutral-700">
             {dark ? 'Light' : 'Dark'}
           </button>
+          <button
+            aria-label="Abrir menu"
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setMobileOpen((v) => !v)}
+            className="md:hidden text-sm px-3 py-1 border rounded-md border-neutral-300 dark:border-neutral-700"
+          >
+            Menu
+          </button>
         </div>
       </nav>
+      {mobileOpen && (
+        <div id="mobile-menu" className="md:hidden border-b border-neutral-200 dark:border-neutral-800 px-3 py-2 space-y-2 bg-white dark:bg-neutral-950">
+          <div className="grid gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { navigate(`/runs?q=${encodeURIComponent(search)}`); setMobileOpen(false) } }}
+              placeholder="Buscar (/ )"
+              aria-label="Buscar"
+              className="text-sm px-3 py-1.5 border rounded-md bg-transparent border-neutral-300 dark:border-neutral-700"
+            />
+            <div className="flex flex-col gap-1">
+              <Link to="/runs" onClick={()=>setMobileOpen(false)} className="px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-900">Runs</Link>
+              <Link to="/workspace" onClick={()=>setMobileOpen(false)} className="px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-900">Projetos & Temas</Link>
+              <Link to="/prompts" onClick={()=>setMobileOpen(false)} className="px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-900">Prompts</Link>
+              <Link to="/settings" onClick={()=>setMobileOpen(false)} className="px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-900">⚙️ Settings</Link>
+            </div>
+          </div>
+        </div>
+      )}
       <main className="py-4">
         <div className="space-y-4 px-3 sm:px-4 md:px-6 max-w-[1200px] mx-auto">
           <Outlet />

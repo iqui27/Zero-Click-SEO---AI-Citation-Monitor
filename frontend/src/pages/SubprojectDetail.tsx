@@ -229,7 +229,7 @@ export default function SubprojectDetail() {
 
       
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Card title="Total Runs" value={ov?.total_runs ?? 0} />
         <Card title="AMR médio" value={(ov?.amr_avg ?? 0).toFixed(2)} />
         <Card title="DCR médio" value={(ov?.dcr_avg ?? 0).toFixed(2)} />

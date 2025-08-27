@@ -116,21 +116,21 @@ export default function TemplatesPage() {
 
       {mode === Mode.Create && (
         <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-[min(780px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-full max-w-[780px] space-y-3 border border-neutral-200 dark:border-neutral-800">
             <h2 className="text-lg font-semibold">Novo Template</h2>
             <div className="grid gap-2">
               <div className="grid gap-1">
-                <div className="flex items-center gap-2">
-                  <Select value={form.category || ''} onChange={(e)=>setForm({ ...form, category: e.target.value })} className="min-w-[240px]">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <Select value={form.category || ''} onChange={(e)=>setForm({ ...form, category: e.target.value })} className="sm:min-w-[240px]">
                     <option value="">Selecione uma categoria</option>
                     {catOptions.map(c => (<option key={c} value={c}>{c}</option>))}
                   </Select>
-                  <Button variant="outline" size="sm" onClick={()=>setShowNewCat(v=>!v)}>{showNewCat ? 'Cancelar' : '+ Nova categoria'}</Button>
+                  <Button variant="outline" size="sm" onClick={()=>setShowNewCat(v=>!v)} className="w-full sm:w-auto">{showNewCat ? 'Cancelar' : '+ Nova categoria'}</Button>
                 </div>
                 {showNewCat && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <Input placeholder="Nome da categoria" value={newCatName} onChange={(e)=>setNewCatName(e.target.value)} />
-                    <Button size="sm" onClick={()=>{
+                    <Button size="sm" className="w-full sm:w-auto" onClick={()=>{
                       const name = newCatName.trim()
                       if (!name) return
                       if (!catOptions.includes(name)) setCustomCats(prev => [...prev, name])
@@ -142,7 +142,7 @@ export default function TemplatesPage() {
                 )}
                 <div className="grid gap-1 mt-2">
                   <div className="text-sm text-neutral-500">Tema (opcional)</div>
-                  <Select value={form.subproject_id || ''} onChange={(e)=>setForm({ ...form, subproject_id: e.target.value })} className="min-w-[240px]">
+                  <Select value={form.subproject_id || ''} onChange={(e)=>setForm({ ...form, subproject_id: e.target.value })} className="sm:min-w-[240px]">
                     <option value="">—</option>
                     {subprojects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </Select>

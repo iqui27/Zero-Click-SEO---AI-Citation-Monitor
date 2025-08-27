@@ -239,7 +239,7 @@ export default function SettingsPage() {
           <h2 className="text-lg font-medium">Integrações (API Keys)</h2>
           <div className="border rounded-md p-3 grid gap-3">
             <div className="text-sm opacity-70">Preencha apenas o que for usar. Você pode testar antes de salvar.</div>
-            <div className="grid gap-2 md:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-1 md:grid-cols-2">
               <KeyField label="OpenAI" placeholder="sk-..." value={keys.openai} onChange={(v)=>setKeys(k=>({ ...k, openai: v }))} present={!!keysStatus?.keys?.openai} tested={testResults?.openai} />
               <KeyField label="Gemini (Google)" placeholder="AIza..." value={keys.gemini} onChange={(v)=>setKeys(k=>({ ...k, gemini: v }))} present={!!keysStatus?.keys?.gemini} tested={testResults?.gemini} />
               <KeyField label="Perplexity" placeholder="ppx-..." value={keys.perplexity} onChange={(v)=>setKeys(k=>({ ...k, perplexity: v }))} present={!!keysStatus?.keys?.perplexity} tested={testResults?.perplexity} />
@@ -275,7 +275,7 @@ export default function SettingsPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Domínios alvo</h2>
         <div className="border rounded-md p-3 grid gap-2">
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-1 md:grid-cols-2">
             <Input placeholder="domínio (ex.: exemplo.com.br)" value={newDomain} onChange={e=>setNewDomain(e.target.value)} />
             <Input placeholder="regex (opcional)" value={pattern} onChange={e=>setPattern(e.target.value)} />
             <label className="flex items-center gap-2"><input type="checkbox" checked={isPrimary} onChange={e=>setIsPrimary(e.target.checked)} /> Primário</label>
@@ -401,7 +401,7 @@ export default function SettingsPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Sistema & Performance</h2>
         <div className="border rounded-md p-3 grid gap-3">
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-1 md:grid-cols-2">
             <div>
               <label className="text-xs opacity-70">Timeout padrão por ciclo (segundos)</label>
               <Input type="number" min={60} max={600} value={systemSettings.default_timeout}
