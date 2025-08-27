@@ -1,0 +1,22 @@
+# Dependências essenciais para SQLite local
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+SQLAlchemy==2.0.30
+pydantic==2.8.2
+pydantic-settings==2.3.4
+python-multipart==0.0.9
+redis==5.0.7
+celery==5.4.0
+httpx==0.28.1
+orjson==3.10.6
+python-dateutil==2.9.0.post0
+requests==2.32.3
+openai==1.99.7
+google-generativeai==0.7.2
+playwright==1.46.0
+beautifulsoup4==4.12.3
+google-genai==1.29.0
+lxml==5.2.2
+
+# Nota: pyodbc e pymssql foram removidos pois são específicos para Azure SQL
+# e causam problemas de compilação no ambiente local
