@@ -683,8 +683,8 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
-      <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w:[min(820px,100%)] w-[min(820px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800 shadow-lg">
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto">
+      <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-full max-w-4xl max-h-[90vh] overflow-y-auto space-y-3 border border-neutral-200 dark:border-neutral-800 shadow-lg my-4">
         <h2 className="text-lg font-semibold">Nova Run</h2>
         <div className="grid gap-3">
           <div className="grid gap-1">
@@ -722,6 +722,17 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
               {templates.length ? templates.map((t: Template, i: number) => (<option key={t.id} value={i}>{t.category} • {t.name}</option>)) : TEMPLATES.map((t, i) => (<option key={i} value={i}>{t.label}</option>))}
             </Select>
           </label>
+          {/* Template Preview */}
+          {!customPrompt.trim() && (
+            <div className="grid gap-1">
+              <div className="text-sm text-neutral-500">Preview do Template</div>
+              <div className="p-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 max-h-32 overflow-y-auto">
+                <div className="text-sm text-neutral-700 dark:text-neutral-300 whitespace-pre-wrap">
+                  {templates.length ? templates[templateIdx]?.text || 'Template não encontrado' : TEMPLATES[templateIdx]?.text || 'Template não encontrado'}
+                </div>
+              </div>
+            </div>
+          )}
           <label className="grid gap-1">
             <div className="text-sm text-neutral-500">Prompt personalizado (opcional)</div>
             <textarea value={customPrompt} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCustomPrompt(e.target.value)} placeholder="Escreva aqui seu prompt..." className="min-h-[120px] p-2 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent" />
