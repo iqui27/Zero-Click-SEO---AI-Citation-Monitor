@@ -87,7 +87,7 @@ function Layout() {
             viewBox="0 0 640 160"
             xmlns="http://www.w3.org/2000/svg"
             role="img"
-            aria-label="Fluxo mágico – AI Citation Monitor & Zero-Click SEO"
+            aria-label="GEO – AI Citation Monitor & Zero-Click SEO"
             className="h-12 sm:h-14 w-auto"
           >
             <g transform="translate(20,20)" fill="none" stroke="currentColor" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round">
@@ -112,7 +112,7 @@ function Layout() {
                 fontWeight={800}
                 letterSpacing={0.2}
               >
-                Fluxo mágico
+                GEO
               </text>
               <text
                 x="4"

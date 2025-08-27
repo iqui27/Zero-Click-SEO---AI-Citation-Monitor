@@ -488,7 +488,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [forceTool, setForceTool] = useState<boolean>(false)
   const [searchContextSize, setSearchContextSize] = useState<'low'|'medium'|'high'>('low')
   const [reasoningEffort, setReasoningEffort] = useState<'low'|'medium'|'high'>('low')
-  const [maxOutputTokens, setMaxOutputTokens] = useState<string>('2048')
+  const [maxOutputTokens, setMaxOutputTokens] = useState<string>('9000')
   const [systemPrompt, setSystemPrompt] = useState<string>(
     'Você é um analista objetivo. Não faça perguntas nem peça confirmações. Responda diretamente, de forma assertiva e organizada. Sempre liste as fontes no final com URLs completas (http).'
   )
