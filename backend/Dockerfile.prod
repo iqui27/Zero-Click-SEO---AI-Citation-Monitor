@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg2 \
     apt-transport-https \
+    unixodbc \
+    unixodbc-dev \
     libglib2.0-0 \
     libnss3 \
     libatk1.0-0 \
@@ -31,10 +33,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     libxml2-dev \
     libxslt1-dev \
+ && curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg \
+ && echo "deb [arch=amd64,arm64] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list \
+ && apt-get update \
+ && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
  && rm -rf /var/lib/apt/lists/*
 
-# Usar requirements básicos (sem Azure SQL) para compatibilidade local
-COPY backend/requirements_basic.txt /app/requirements.txt
+# Usar requirements completos (com Azure SQL) para produção
+COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt 
 
 COPY backend/app /app/app

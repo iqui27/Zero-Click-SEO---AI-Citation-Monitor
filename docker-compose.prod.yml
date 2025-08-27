@@ -41,12 +41,12 @@ services:
       retries: 3
 
 
-  # Backend API (uvicorn) — built from existing backend Dockerfile
+  # Backend API (uvicorn) — built from production Dockerfile
   api:
     image: seo-analyzer-api:latest
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: backend/Dockerfile.prod
     restart: always
     expose:
       - "8000"
@@ -77,7 +77,7 @@ services:
     image: seo-analyzer-worker:latest
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: backend/Dockerfile.prod
     restart: always
     env_file:
       - .env
