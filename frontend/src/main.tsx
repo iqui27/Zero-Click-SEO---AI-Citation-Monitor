@@ -9,8 +9,10 @@ import SubprojectsPage from './pages/Subprojects'
 import SubprojectDetail from './pages/SubprojectDetail'
 import WorkspacePage from './pages/Workspace'
 import SettingsPage from './pages/Settings'
+import MonitorsPage from './pages/Monitors'
 import './index.css'
 import { Button } from './components/ui/button'
+import { Toaster } from 'sonner'
 
 function LiveBadge() {
   const [mode, setMode] = useState<string>('')
@@ -130,14 +132,15 @@ function Layout() {
         <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
         <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
         <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
-        <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">⚙️ Settings</Link>
+        <Link to="/monitors" className="text-sm opacity-80 hover:opacity-100">Monitores</Link>
+        <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">Settings</Link>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-2">
             <input
               ref={searchRef}
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/runs?q=${encodeURIComponent(search)}`) }}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') navigate(`/runs?q=${encodeURIComponent(search)}`) }}
               placeholder="Buscar (/)"
               aria-label="Buscar"
               className="text-sm px-3 py-1.5 border rounded-md bg-transparent border-neutral-300 dark:border-neutral-700"
@@ -156,6 +159,7 @@ function Layout() {
           <Outlet />
         </div>
       </main>
+      <Toaster richColors position="top-right" />
     </div>
   )
 }
@@ -177,6 +181,7 @@ const router = createBrowserRouter([
       { path: 'subprojects', element: <SubprojectsPage /> },
       { path: 'subprojects/:id', element: <SubprojectDetail /> },
       { path: 'prompts', element: <TemplatesPage /> },
+      { path: 'monitors', element: <MonitorsPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },

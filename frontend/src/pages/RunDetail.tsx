@@ -268,28 +268,35 @@ export default function RunDetail() {
     
     for (let i = 0; i < list.length; i++) {
       const e = list[i]
-      current.push(e)
-      
       const step = (e.step || '').toLowerCase()
       const status = (e.status || '').toLowerCase()
       const nextEvent = list[i + 1]
       
+      // Se é o início de um novo ciclo (fetch após delay), finaliza o ciclo anterior
+      if (step === 'fetch' && current.length > 0) {
+        const prevEvent = list[i - 1]
+        if (prevEvent && (prevEvent.step || '').toLowerCase() === 'delay') {
+          buckets.push(current)
+          current = []
+        }
+      }
+      
+      current.push(e)
+      
       // Detecta fim de ciclo por:
       // 1. 'completed' com status 'ok'
       // 2. 'error' 
-      // 3. 'delay' seguido de 'fetch' (início do próximo ciclo)
+      // 3. último evento da lista
       const isEndOfCycle = 
         (step === 'completed' && status === 'ok') ||
         step === 'error' ||
-        (step === 'delay' && status === 'ok' && nextEvent && nextEvent.step === 'fetch')
+        (i === list.length - 1)
       
       if (isEndOfCycle) {
         buckets.push(current)
         current = []
       }
     }
-    
-    if (current.length) buckets.push(current)
     
     // Ajuste para o número esperado de ciclos, se conhecido
     const total = Math.max(1, detail?.cycles_total || buckets.length || 1)
@@ -302,6 +309,13 @@ export default function RunDetail() {
       const tailMerged = buckets.slice(total - 1).flat()
       return [...head, tailMerged]
     }
+    
+    console.log(`Cycles detected: ${buckets.length}, expected: ${total}`)
+    buckets.forEach((bucket, i) => {
+      const chunks = bucket.filter(e => e.step === 'chunk').length
+      console.log(`Cycle ${i + 1}: ${bucket.length} events, ${chunks} chunks`)
+    })
+    
     return buckets
   }, [events, detail?.cycles_total])
   // Garantir que o ciclo selecionado esteja sempre dentro do intervalo válido
@@ -313,15 +327,17 @@ export default function RunDetail() {
   const eventsForView: EventItem[] = useMemo(() => {
     const totalCycles = detail?.cycles_total || cyclesBuckets.length || 1
     const idx = Math.max(0, Math.min(totalCycles - 1, selectedCycle - 1))
-    return cyclesBuckets[idx] || []
-  }, [cyclesBuckets, selectedCycle, detail?.cycles_total])
+    const cycleEvents = cyclesBuckets[idx] || []
+    console.log(`Cycle ${selectedCycle} (idx ${idx}): ${cycleEvents.length} events`)
+    return cycleEvents
+  }, [cyclesBuckets, selectedCycle, detail?.cycles_total, events.length])
 
   // Deriva markdown do ciclo selecionado a partir de eventos 'chunk'
   const cycleMd: string = useMemo(() => {
     const chunks = eventsForView.filter(e => (e.step || '').toLowerCase() === 'chunk' && typeof e.message === 'string')
     if (!chunks.length) return ''
     return chunks.map(c => c.message as string).join('\n')
-  }, [eventsForView])
+  }, [eventsForView, selectedCycle, events.length])
 
   const md = cycleMd || streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
 

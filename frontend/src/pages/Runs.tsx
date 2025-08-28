@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
-import { Trash2, Plus, Search, Filter, X, RefreshCw } from 'lucide-react'
+import { Trash2, Plus, Search, Filter, X, RefreshCw, Clock } from 'lucide-react'
 import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { formatNumberCompact } from '../lib/utils'
@@ -299,6 +299,19 @@ function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void |
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
   const [isDelayPhase, setIsDelayPhase] = useState(false)
   const [currentCycle, setCurrentCycle] = useState<number>(1)
+  const formatDate = (d?: string) => {
+    if (!d) return '-'
+    // if timestamp lacks timezone, assume UTC to avoid local offset issues
+    const hasTZ = /Z|[+\-]\d{2}:?\d{2}$/.test(d)
+    const dt = new Date(hasTZ ? d : d + 'Z')
+    return isNaN(dt.getTime()) ? d : dt.toLocaleString()
+  }
+  const formatTime = (d?: string) => {
+    if (!d) return '-'
+    const hasTZ = /Z|[+\-]\d{2}:?\d{2}$/.test(d)
+    const dt = new Date(hasTZ ? d : d + 'Z')
+    return isNaN(dt.getTime()) ? d : dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
   
   // Calculate time until next run and total remaining time
   useEffect(() => {
@@ -434,10 +447,12 @@ function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void |
                 <div className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200">
                   {r.engine}
                 </div>
-                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  <span>Início: {r.started_at || '-'}</span>
-                  {r.finished_at ? <span> • Fim: {r.finished_at}</span> : null}
-                </div>
+                {r.finished_at && (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                    <Clock className="h-3 w-3" />
+                    <span>{formatTime(r.finished_at)}</span>
+                  </div>
+                )}
                 <div className="mt-2 flex items-center gap-3 text-xs text-gray-600 dark:text-gray-300">
                   <span>ZCRS: {r.zcrs?.toFixed(1) ?? '-'}</span>
                   <span>Ciclos: {typeof r.cycles_total === 'number' ? r.cycles_total : '-'}</span>
@@ -492,7 +507,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [systemPrompt, setSystemPrompt] = useState<string>(
     'Você é um analista objetivo. Não faça perguntas nem peça confirmações. Responda diretamente, de forma assertiva e organizada. Sempre liste as fontes no final com URLs completas (http).'
   )
-  const [country, setCountry] = useState<string>('')
+  const [country, setCountry] = useState<string>('BR')
   const [city, setCity] = useState<string>('')
   const [region, setRegion] = useState<string>('')
   // Google SERP opções
@@ -610,7 +625,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             reasoning_effort: reasoningEffort,
             ...(maxOutputTokens ? { max_output_tokens: parseInt(maxOutputTokens) } : {}),
             ...(forceTool ? { web_search_force: true } : {}),
-            ...((country || city || region) ? { user_location: { type: 'approximate', country: country || undefined, city: city || undefined, region: region || undefined } } : {}),
+            ...((country || city || region) ? { user_location: { type: 'BR', country: country || undefined, city: city || undefined, region: region || undefined } } : {}),
             ...(systemPrompt ? { system: systemPrompt } : {}),
           }
         } else if (engine.name === 'google_serp') {
