@@ -16,6 +16,7 @@ playwright==1.46.0
 beautifulsoup4==4.12.3
 google-genai == 1.29.0
 lxml==5.2.2
+croniter==2.0.1
 
 # Azure SQL (MSSQL) drivers
 pyodbc==5.1.0

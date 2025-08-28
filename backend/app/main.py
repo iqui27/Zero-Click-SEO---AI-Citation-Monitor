@@ -2,11 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+import asyncio
+import threading
 
 from app.core.config import settings
 from app.db.session import engine, SessionLocal
 from app.db.base import Base
 from app.api.routes import api_router
+from app.services.scheduler import start_scheduler
 
 app = FastAPI(title="Zero-Click SEO & AI Citation Monitor", version="0.1.0")
 
@@ -20,7 +23,7 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     # Cria tabelas e tenta aplicar colunas novas em bancos existentes (sem Alembic)
     Base.metadata.create_all(bind=engine)
     # Migração leve (apenas Postgres): adicionar colunas de métricas, se não existirem
@@ -139,6 +142,16 @@ def on_startup() -> None:
     except Exception:
         # tolerar ambiente que não suporte IF NOT EXISTS
         pass
+    
+    # Start the monitor scheduler in a background thread
+    def run_scheduler():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(start_scheduler())
+    
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    print("[SCHEDULER] Monitor scheduler started in background thread")
 
 
 @app.get("/health")

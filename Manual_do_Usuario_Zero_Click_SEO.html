@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual do Usuário - Zero-Click SEO & AI Citation Monitor</title>
+    
+    <style>
+    @media print {
+        body { margin: 0; }
+        .no-print { display: none; }
+    }
+    
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 20mm;
+        background: white;
+    }
+    
+    h1 {
+        color: #2c3e50;
+        border-bottom: 3px solid #3498db;
+        padding-bottom: 10px;
+        page-break-after: avoid;
+        font-size: 2.2em;
+        margin-top: 0;
+    }
+    
+    h2 {
+        color: #34495e;
+        border-bottom: 2px solid #ecf0f1;
+        padding-bottom: 5px;
+        margin-top: 30px;
+        page-break-after: avoid;
+        font-size: 1.8em;
+    }
+    
+    h3 {
+        color: #7f8c8d;
+        margin-top: 25px;
+        page-break-after: avoid;
+        font-size: 1.4em;
+    }
+    
+    h4 {
+        color: #95a5a6;
+        margin-top: 20px;
+        page-break-after: avoid;
+        font-size: 1.2em;
+    }
+    
+    code {
+        background-color: #f8f9fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.9em;
+    }
+    
+    pre {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        border-left: 4px solid #3498db;
+        overflow-x: auto;
+        page-break-inside: avoid;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.85em;
+    }
+    
+    pre code {
+        background: none;
+        padding: 0;
+    }
+    
+    blockquote {
+        border-left: 4px solid #3498db;
+        margin: 20px 0;
+        padding-left: 20px;
+        color: #7f8c8d;
+        font-style: italic;
+    }
+    
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 20px 0;
+        page-break-inside: avoid;
+    }
+    
+    th, td {
+        border: 1px solid #ddd;
+        padding: 12px;
+        text-align: left;
+    }
+    
+    th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+    
+    ul, ol {
+        padding-left: 30px;
+        margin: 15px 0;
+    }
+    
+    li {
+        margin-bottom: 8px;
+        page-break-inside: avoid;
+    }
+    
+    p {
+        margin: 15px 0;
+        text-align: justify;
+    }
+    
+    hr {
+        border: none;
+        border-top: 2px solid #ecf0f1;
+        margin: 30px 0;
+        page-break-after: avoid;
+    }
+    
+    .emoji {
+        font-size: 1.2em;
+    }
+    
+    /* Quebras de página estratégicas */
+    h1 {
+        page-break-before: auto;
+    }
+    
+    h2 {
+        page-break-before: avoid;
+    }
+    
+    .page-break {
+        page-break-before: always;
+    }
+    
+    /* Cabeçalho e rodapé para impressão */
+    @page {
+        margin: 2cm;
+        @top-center {
+            content: "Manual do Usuário - Zero-Click SEO & AI Citation Monitor";
+            font-size: 10pt;
+            color: #666;
+        }
+        @bottom-center {
+            content: "Página " counter(page);
+            font-size: 10pt;
+            color: #666;
+        }
+    }
+    </style>
+    
+</head>
+<body>
+    <div class="no-print" style="background: #3498db; color: white; padding: 15px; margin: -20mm -20mm 20px -20mm; text-align: center;">
+        <h2 style="margin: 0; border: none; color: white;">📄 Para converter para PDF: Ctrl+P → Salvar como PDF</h2>
+        <p style="margin: 5px 0 0 0; opacity: 0.9;">Configure margens personalizadas e ative "Gráficos de fundo" para melhor resultado</p>
+    </div>
+    <h1 id="manual-do-usuario-zero-click-seo-ai-citation-monitor">Manual do Usuário - Zero-Click SEO &amp; AI Citation Monitor</h1>
+<h2 id="visao-geral">Visão Geral</h2>
+<p>O <strong>Zero-Click SEO &amp; AI Citation Monitor</strong> é uma plataforma avançada para monitoramento de citações em respostas de IA (AI Overviews, Bing Copilot, Perplexity, etc.) e análise de SERP com KPIs especializados. A ferramenta permite acompanhar como seu conteúdo é citado em respostas zero-click e otimizar sua estratégia de SEO para IA.</p>
+<h3 id="acesso-a-plataforma">Acesso à Plataforma</h3>
+<ul>
+<li><strong>URL Principal</strong>: http://iqui27.app</li>
+<li><strong>Interface</strong>: Aplicação web moderna com modo escuro/claro</li>
+<li><strong>Navegação</strong>: Atalhos de teclado disponíveis (<code>/</code> para busca, <code>r</code> para nova run, <code>g+d</code> para dashboard)</li>
+</ul>
+<hr />
+<h2 id="primeiros-passos">🚀 Primeiros Passos</h2>
+<h3 id="1-configuracao-inicial">1. Configuração Inicial</h3>
+<p>Ao acessar a plataforma pela primeira vez:</p>
+<ol>
+<li><strong>Criar Projeto</strong>: Use o botão "Criar rápido" no modal "Nova Run" para configurar automaticamente um projeto</li>
+<li><strong>Configurar Domínios</strong>: Acesse Settings → Domínios para adicionar seus domínios-alvo</li>
+<li><strong>Configurar APIs</strong>: As chaves de API são configuradas via variáveis de ambiente (OPENAI_API_KEY, PERPLEXITY_API_KEY, etc.)</li>
+</ol>
+<h3 id="2-estrutura-organizacional">2. Estrutura Organizacional</h3>
+<p>A plataforma organiza o trabalho em:
+- <strong>Projetos</strong>: Container principal (ex: "Projeto Banco – BR pt-BR")
+- <strong>Subprojetos/Temas</strong>: Grupos temáticos (ex: "Conta Universitária", "Seguros")
+- <strong>Templates</strong>: Prompts reutilizáveis por categoria
+- <strong>Runs</strong>: Execuções individuais de análise</p>
+<hr />
+<h2 id="funcionalidades-principais">📊 Funcionalidades Principais</h2>
+<h3 id="runs-execucao-de-analises"><strong>Runs - Execução de Análises</strong></h3>
+<h4 id="criar-nova-run">Criar Nova Run</h4>
+<ol>
+<li>Clique em "Nova Run" ou pressione <code>r</code></li>
+<li>Selecione:</li>
+<li><strong>Projeto</strong>: Container organizacional</li>
+<li><strong>Subprojeto</strong> (opcional): Tema específico</li>
+<li><strong>Template</strong>: Prompt pré-configurado ou customizado</li>
+<li><strong>Engine</strong>: Modelo de IA (OpenAI GPT-5, Gemini 2.5, Perplexity, Google SERP)</li>
+<li><strong>Ciclos</strong>: Número de execuções (1-10)</li>
+<li><strong>Delay</strong>: Intervalo entre ciclos (em segundos)</li>
+</ol>
+<h4 id="engines-disponiveis">Engines Disponíveis</h4>
+<ul>
+<li><strong>OpenAI GPT-5/4.1</strong>: Com web search e configurações avançadas</li>
+<li><strong>Gemini 2.5 Pro/Flash</strong>: Google Search integrado</li>
+<li><strong>Perplexity Sonar Pro</strong>: Especializado em citações</li>
+<li><strong>Google SERP</strong>: AI Overview via SerpAPI</li>
+</ul>
+<h4 id="configuracoes-avancadas-openai">Configurações Avançadas (OpenAI)</h4>
+<ul>
+<li><strong>Web Search</strong>: Ativar/desativar busca na web</li>
+<li><strong>Context Size</strong>: low/medium/high</li>
+<li><strong>Reasoning Effort</strong>: Nível de raciocínio</li>
+<li><strong>Max Output Tokens</strong>: Limite de resposta</li>
+<li><strong>System Prompt</strong>: Personalizar comportamento</li>
+<li><strong>Location</strong>: País/cidade/região para localização</li>
+</ul>
+<h3 id="monitoramento-em-tempo-real"><strong>Monitoramento em Tempo Real</strong></h3>
+<h4 id="run-detail-acompanhamento-ao-vivo">Run Detail - Acompanhamento ao Vivo</h4>
+<ul>
+<li><strong>Timeline</strong>: Progresso em tempo real via SSE (Server-Sent Events)</li>
+<li><strong>Toolbelt</strong>: Status das ferramentas (LLM, Search, SERP, Screenshot)</li>
+<li><strong>Streaming</strong>: Resposta sendo gerada em tempo real</li>
+<li><strong>Ciclos</strong>: Navegação entre múltiplos ciclos de execução</li>
+</ul>
+<h4 id="indicadores-de-status">Indicadores de Status</h4>
+<ul>
+<li><strong>Verde</strong>: Operação concluída com sucesso</li>
+<li><strong>Azul</strong>: Em execução</li>
+<li><strong>Vermelho</strong>: Erro</li>
+<li><strong>Cinza</strong>: Aguardando</li>
+</ul>
+<h3 id="templates-gerenciamento-de-prompts"><strong>Templates - Gerenciamento de Prompts</strong></h3>
+<h4 id="funcionalidades">Funcionalidades</h4>
+<ul>
+<li><strong>Categorização</strong>: Organizar por temas (ex: "Abertura PF", "Seguro Auto")</li>
+<li><strong>Reutilização</strong>: Templates podem ser usados em múltiplas runs</li>
+<li><strong>Personalização</strong>: Editar prompts existentes ou criar novos</li>
+<li><strong>Vinculação</strong>: Associar templates a subprojetos específicos</li>
+</ul>
+<h4 id="templates-pre-configurados">Templates Pré-configurados</h4>
+<ul>
+<li>Tarifas bancárias</li>
+<li>Abertura de contas</li>
+<li>Produtos financeiros</li>
+<li>Seguros</li>
+<li>Investimentos</li>
+</ul>
+<h3 id="monitores-automacao"><strong>Monitores - Automação</strong></h3>
+<h4 id="agendamento-automatico">Agendamento Automático</h4>
+<ul>
+<li><strong>Presets CRON</strong>: </li>
+<li>Diário 02:00 (<code>0 2 * * *</code>)</li>
+<li>Dias úteis 06:00 (<code>0 6 * * 1-5</code>)</li>
+<li>Semanal domingo 03:00 (<code>0 3 * * 0</code>)</li>
+<li><strong>Múltiplos Templates</strong>: Executar vários prompts em lote</li>
+<li><strong>Múltiplas Engines</strong>: Testar diferentes modelos simultaneamente</li>
+<li><strong>Toggle Ativo/Inativo</strong>: Pausar/retomar monitoramento</li>
+<li><strong>Execução Manual</strong>: Botão "Rodar agora"</li>
+</ul>
+<h3 id="analytics-e-kpis"><strong>Analytics e KPIs</strong></h3>
+<h4 id="metricas-principais">Métricas Principais</h4>
+<ul>
+<li><strong>AMR (AI Mention Rate)</strong>: Taxa de menção em respostas de IA</li>
+<li><strong>DCR (Domain Citation Rate)</strong>: Taxa de citação do domínio</li>
+<li><strong>ZCRS (Zero-Click Response Score)</strong>: Pontuação de resposta zero-click</li>
+<li><strong>SoV-AI (Share of Voice AI)</strong>: Participação de voz em IA</li>
+</ul>
+<h4 id="dashboard-por-subprojeto">Dashboard por Subprojeto</h4>
+<ul>
+<li><strong>KPIs Agregados</strong>: Visão consolidada das métricas</li>
+<li><strong>Série Temporal</strong>: Evolução do ZCRS ao longo do tempo</li>
+<li><strong>Top Domínios</strong>: Domínios mais citados</li>
+<li><strong>Exportação CSV</strong>: Download de dados para análise externa</li>
+</ul>
+<h3 id="citacoes-e-evidencias"><strong>Citações e Evidências</strong></h3>
+<h4 id="analise-de-citacoes">Análise de Citações</h4>
+<ul>
+<li><strong>Detecção Automática</strong>: URLs extraídas das respostas</li>
+<li><strong>Normalização</strong>: Remoção de UTMs e fragmentos</li>
+<li><strong>Classificação</strong>: "Nosso" vs. concorrentes</li>
+<li><strong>Favicon</strong>: Identificação visual dos domínios</li>
+<li><strong>Títulos</strong>: Captura automática via <code>og:title</code></li>
+</ul>
+<h4 id="evidencias">Evidências</h4>
+<ul>
+<li><strong>Raw Data</strong>: Dados brutos das APIs</li>
+<li><strong>Parsed Content</strong>: Conteúdo processado</li>
+<li><strong>Screenshots</strong>: Capturas de tela (quando disponível)</li>
+<li><strong>Metadata</strong>: Informações técnicas da execução</li>
+</ul>
+<hr />
+<h2 id="configuracoes-e-personalizacao">🔧 Configurações e Personalização</h2>
+<h3 id="settings-configuracoes-do-projeto"><strong>Settings - Configurações do Projeto</strong></h3>
+<h4 id="dominios-alvo">Domínios-Alvo</h4>
+<ul>
+<li><strong>Adicionar</strong>: Inserir domínios para monitoramento</li>
+<li><strong>Remover</strong>: Excluir domínios desnecessários</li>
+<li><strong>Validação</strong>: Verificação automática de formato</li>
+</ul>
+<h4 id="engines-por-projeto">Engines por Projeto</h4>
+<ul>
+<li><strong>Configuração JSON</strong>: Personalizar parâmetros por engine</li>
+<li><strong>Web Search</strong>: Ativar/desativar busca para modelos suportados</li>
+<li><strong>Modelos</strong>: Selecionar versões específicas (GPT-5, Gemini 2.5, etc.)</li>
+</ul>
+<h3 id="workspace-organizacao"><strong>Workspace - Organização</strong></h3>
+<h4 id="projetos">Projetos</h4>
+<ul>
+<li><strong>Criar</strong>: Novos projetos com país, idioma e timezone</li>
+<li><strong>Editar</strong>: Modificar configurações existentes</li>
+<li><strong>Excluir</strong>: Remover projetos (cuidado: ação irreversível)</li>
+</ul>
+<h4 id="subprojetostemas">Subprojetos/Temas</h4>
+<ul>
+<li><strong>Agrupamento</strong>: Organizar runs por temas</li>
+<li><strong>Analytics</strong>: Dashboards específicos por tema</li>
+<li><strong>Templates</strong>: Vincular prompts a temas específicos</li>
+</ul>
+<hr />
+<h2 id="analise-e-relatorios">📈 Análise e Relatórios</h2>
+<h3 id="visualizacao-de-dados"><strong>Visualização de Dados</strong></h3>
+<h4 id="run-detail">Run Detail</h4>
+<ul>
+<li><strong>Resposta Markdown</strong>: Formatação rica com GFM (GitHub Flavored Markdown)</li>
+<li><strong>Citações</strong>: Cards com favicon e classificação</li>
+<li><strong>Métricas</strong>: Tokens, custo, latência, ciclos</li>
+<li><strong>Progresso</strong>: Timeline detalhada de execução</li>
+</ul>
+<h4 id="acoes-de-copia">Ações de Cópia</h4>
+<ul>
+<li><strong>Markdown</strong>: Copiar resposta em formato MD</li>
+<li><strong>HTML</strong>: Copiar como HTML estruturado</li>
+<li><strong>Citações</strong>: Links diretos para fontes</li>
+</ul>
+<h3 id="exportacao-de-dados"><strong>Exportação de Dados</strong></h3>
+<h4 id="csv-export">CSV Export</h4>
+<ul>
+<li><strong>Endpoint</strong>: <code>GET /api/analytics/subprojects/{id}/export.csv</code></li>
+<li><strong>Conteúdo</strong>: KPIs, citações, métricas por run</li>
+<li><strong>Filtros</strong>: Por período, engine, status</li>
+</ul>
+<hr />
+<h2 id="busca-e-filtros">🔍 Busca e Filtros</h2>
+<h3 id="filtros-disponiveis"><strong>Filtros Disponíveis</strong></h3>
+<ul>
+<li><strong>Subprojeto</strong>: Filtrar por tema específico</li>
+<li><strong>Engine</strong>: Filtrar por modelo de IA</li>
+<li><strong>Status</strong>: completed, running, failed</li>
+<li><strong>Período</strong>: Por data de execução</li>
+</ul>
+<h3 id="busca-global"><strong>Busca Global</strong></h3>
+<ul>
+<li><strong>Atalho</strong>: Pressione <code>/</code> para focar na busca</li>
+<li><strong>Escopo</strong>: IDs de run, templates, engines</li>
+<li><strong>Auto-refresh</strong>: Atualização automática a cada 5 segundos</li>
+</ul>
+<hr />
+<h2 id="troubleshooting">🚨 Troubleshooting</h2>
+<h3 id="problemas-comuns"><strong>Problemas Comuns</strong></h3>
+<h4 id="live-stream-nao-atualiza">Live Stream Não Atualiza</h4>
+<ul>
+<li><strong>Causa</strong>: Conexão SSE falhando</li>
+<li><strong>Solução</strong>: Sistema faz fallback automático para polling</li>
+<li><strong>Verificação</strong>: Badge "Conectado (SSE)" vs "Conectado (Polling)"</li>
+</ul>
+<h4 id="erro-vite-not-found">Erro "vite: not found"</h4>
+<ul>
+<li><strong>Causa</strong>: Problemas com node_modules</li>
+<li><strong>Solução</strong>: 
+  <code>bash
+  docker compose restart frontend</code></li>
+</ul>
+<h4 id="playwrightchromium-lento">Playwright/Chromium Lento</h4>
+<ul>
+<li><strong>Causa</strong>: Primeira instalação do Chromium</li>
+<li><strong>Solução</strong>: Aguardar download completo (logs no backend)</li>
+</ul>
+<h4 id="azure-sql-database-timeout">Azure SQL Database Timeout</h4>
+<ul>
+<li><strong>Causa</strong>: Database pausado automaticamente</li>
+<li><strong>Solução</strong>: Reativar database no portal Azure</li>
+</ul>
+<h3 id="logs-e-debug"><strong>Logs e Debug</strong></h3>
+<pre class="codehilite"><code class="language-bash"># Ver logs específicos
+docker compose logs -f backend
+docker compose logs -f worker
+docker compose logs -f frontend
+
+# Status dos containers
+docker compose ps
+</code></pre>
+
+<hr />
+<h2 id="seguranca-e-apis">🔐 Segurança e APIs</h2>
+<h3 id="chaves-de-api-necessarias"><strong>Chaves de API Necessárias</strong></h3>
+<ul>
+<li><code>PERPLEXITY_API_KEY</code>: Para Perplexity Sonar</li>
+<li><code>GOOGLE_API_KEY</code>: Para Gemini (Google AI)</li>
+<li><code>OPENAI_API_KEY</code>: Para GPT-5/4.1</li>
+<li><code>SERPAPI_KEY</code>: Para Google SERP/AI Overview</li>
+</ul>
+<h3 id="configuracao-segura"><strong>Configuração Segura</strong></h3>
+<ul>
+<li>Chaves armazenadas em variáveis de ambiente</li>
+<li>Não expostas no frontend</li>
+<li>Rotação periódica recomendada</li>
+</ul>
+<hr />
+<h2 id="interface-e-usabilidade">📱 Interface e Usabilidade</h2>
+<h3 id="atalhos-de-teclado"><strong>Atalhos de Teclado</strong></h3>
+<ul>
+<li><code>/</code>: Focar na busca</li>
+<li><code>r</code>: Nova run</li>
+<li><code>g + d</code>: Ir para dashboard</li>
+<li><code>Esc</code>: Fechar modais</li>
+</ul>
+<h3 id="modo-escuroclaro"><strong>Modo Escuro/Claro</strong></h3>
+<ul>
+<li><strong>Toggle</strong>: Botão no header</li>
+<li><strong>Persistência</strong>: Preferência salva localmente</li>
+<li><strong>Auto-detecção</strong>: Respeita configuração do sistema</li>
+</ul>
+<h3 id="responsividade"><strong>Responsividade</strong></h3>
+<ul>
+<li><strong>Mobile</strong>: Interface adaptada para dispositivos móveis</li>
+<li><strong>Tablet</strong>: Layout otimizado para telas médias</li>
+<li><strong>Desktop</strong>: Experiência completa</li>
+</ul>
+<hr />
+<h2 id="fluxo-de-trabalho-recomendado">🔄 Fluxo de Trabalho Recomendado</h2>
+<h3 id="setup-inicial"><strong>Setup Inicial</strong></h3>
+<ol>
+<li>Criar projeto com "Criar rápido"</li>
+<li>Configurar domínios-alvo em Settings</li>
+<li>Criar subprojetos por tema</li>
+<li>Configurar templates por categoria</li>
+</ol>
+<h3 id="execucao-diaria"><strong>Execução Diária</strong></h3>
+<ol>
+<li>Verificar runs automáticas (monitores)</li>
+<li>Analisar citações e KPIs</li>
+<li>Criar runs manuais para testes específicos</li>
+<li>Exportar dados para relatórios</li>
+</ol>
+<h3 id="otimizacao-continua"><strong>Otimização Contínua</strong></h3>
+<ol>
+<li>Ajustar prompts baseado em resultados</li>
+<li>Testar diferentes engines</li>
+<li>Configurar novos monitores</li>
+<li>Analisar tendências nos dashboards</li>
+</ol>
+<hr />
+<h2 id="suporte-e-recursos">📞 Suporte e Recursos</h2>
+<h3 id="documentacao-tecnica"><strong>Documentação Técnica</strong></h3>
+<ul>
+<li><code>docs/README-UX.md</code>: Fluxo de experiência do usuário</li>
+<li><code>DEVELOPMENT.md</code>: Guia para desenvolvedores</li>
+<li><code>README-DEPLOYMENT.md</code>: Instruções de deploy</li>
+</ul>
+<h3 id="endpoints-da-api"><strong>Endpoints da API</strong></h3>
+<ul>
+<li><strong>Swagger</strong>: <code>http://localhost:8000/docs</code> (desenvolvimento)</li>
+<li><strong>Produção</strong>: <code>http://iqui27.app/api/docs</code></li>
+</ul>
+<h3 id="monitoramento"><strong>Monitoramento</strong></h3>
+<ul>
+<li><strong>Health Check</strong>: Verificação automática de saúde dos serviços</li>
+<li><strong>Logs</strong>: Sistema de logging estruturado</li>
+<li><strong>Métricas</strong>: Acompanhamento de performance</li>
+</ul>
+<hr />
+<h2 id="casos-de-uso-praticos">🎯 Casos de Uso Práticos</h2>
+<h3 id="bancofintech"><strong>Banco/Fintech</strong></h3>
+<ul>
+<li>Monitorar citações em consultas sobre produtos financeiros</li>
+<li>Acompanhar menções em comparações de tarifas</li>
+<li>Otimizar conteúdo para AI Overviews</li>
+</ul>
+<h3 id="e-commerce"><strong>E-commerce</strong></h3>
+<ul>
+<li>Rastrear citações em pesquisas de produtos</li>
+<li>Monitorar comparações de preços</li>
+<li>Acompanhar reviews e recomendações</li>
+</ul>
+<h3 id="conteudomidia"><strong>Conteúdo/Mídia</strong></h3>
+<ul>
+<li>Verificar citações de artigos</li>
+<li>Monitorar autoridade em tópicos específicos</li>
+<li>Acompanhar share of voice vs. concorrentes</li>
+</ul>
+<h3 id="consultoriaagencia"><strong>Consultoria/Agência</strong></h3>
+<ul>
+<li>Relatórios para clientes</li>
+<li>Benchmarking competitivo</li>
+<li>Otimização de conteúdo para IA</li>
+</ul>
+<hr />
+<h2 id="metricas-e-interpretacao">📊 Métricas e Interpretação</h2>
+<h3 id="amr-ai-mention-rate"><strong>AMR (AI Mention Rate)</strong></h3>
+<ul>
+<li><strong>Definição</strong>: Percentual de menções em respostas de IA</li>
+<li><strong>Cálculo</strong>: (Menções / Total de Queries) × 100</li>
+<li><strong>Meta</strong>: &gt;20% para tópicos relevantes</li>
+</ul>
+<h3 id="dcr-domain-citation-rate"><strong>DCR (Domain Citation Rate)</strong></h3>
+<ul>
+<li><strong>Definição</strong>: Taxa de citação do domínio</li>
+<li><strong>Cálculo</strong>: (Citações do Domínio / Total de Citações) × 100</li>
+<li><strong>Meta</strong>: &gt;15% em nicho específico</li>
+</ul>
+<h3 id="zcrs-zero-click-response-score"><strong>ZCRS (Zero-Click Response Score)</strong></h3>
+<ul>
+<li><strong>Definição</strong>: Pontuação de qualidade da resposta zero-click</li>
+<li><strong>Fatores</strong>: Relevância, autoridade, frescor</li>
+<li><strong>Escala</strong>: 0-100 (&gt;70 considerado excelente)</li>
+</ul>
+<hr />
+<p><em>Este manual é atualizado regularmente. Para dúvidas específicas ou suporte técnico, consulte a documentação técnica ou entre em contato com a equipe de desenvolvimento.</em></p>
+    <div style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #ecf0f1; text-align: center; color: #7f8c8d; font-size: 0.9em;">
+        <p><strong>Manual do Usuário - Zero-Click SEO & AI Citation Monitor</strong></p>
+        <p>Gerado automaticamente em 1756328230.4044669</p>
+    </div>
+</body>
+</html>
