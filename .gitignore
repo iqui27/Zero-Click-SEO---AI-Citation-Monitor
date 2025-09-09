@@ -79,3 +79,6 @@ docker-compose.override.yml
 
 # Editor-specific caches
 .cursor/
+
+.venv_filter_repo/
+.git-secret-replacements.txt
