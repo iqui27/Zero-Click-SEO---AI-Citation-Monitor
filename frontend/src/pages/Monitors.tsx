@@ -28,7 +28,7 @@ const ENGINE_PRESETS: EnginePreset[] = [
   { name: 'openai', region: 'BR', device: 'mobile', config_json: { model: 'o5' }, label: 'OpenAI o5 (Mobile)' },
   { name: 'openai', region: 'BR', device: 'desktop', config_json: { model: 'o5-mini' }, label: 'OpenAI o5-mini (Desktop)' },
   { name: 'openai', region: 'BR', device: 'mobile', config_json: { model: 'o5-mini' }, label: 'OpenAI o5-mini (Mobile)' },
-  { name: 'perplexity', region: 'BR', device: 'desktop', config_json: { model: 'llama-3.1-sonar-huge-128k-online' }, label: 'Perplexity Sonar (Desktop)' },
+  { name: 'perplexity', region: 'BR', device: 'desktop', config_json: { model: 'sonar-pro' }, label: 'Perplexity Sonar (Desktop)' },
 ]
 
 type Monitor = {

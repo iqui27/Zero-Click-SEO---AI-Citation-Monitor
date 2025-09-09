@@ -109,6 +109,10 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                     mot_i = None
                 if mot_i is None or mot_i <= 0:
                     cfg_eff["max_output_tokens"] = 9000
+            elif name_lower in ("perplexity", "pplx"):
+                # Defaults: model seguro e citações
+                if not cfg_eff.get("model"):
+                    cfg_eff["model"] = "sonar-pro"
         except Exception:
             pass
 
