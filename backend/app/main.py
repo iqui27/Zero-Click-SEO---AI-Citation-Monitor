@@ -137,6 +137,75 @@ async def on_startup() -> None:
                     ALTER TABLE dbo.insights ADD run_id VARCHAR(50) NULL;
                 END
             """, "Add insights.run_id column")
+
+            # Garantir FK runs.monitor_id -> monitors.id com ON DELETE SET NULL
+            _exec_safe("""
+                -- Drop FK existente (qualquer nome) entre runs.monitor_id e monitors.id
+                DECLARE @fk NVARCHAR(128);
+                SELECT TOP 1 @fk = fk.name
+                FROM sys.foreign_keys fk
+                JOIN sys.tables t ON fk.parent_object_id = t.object_id
+                JOIN sys.tables rt ON fk.referenced_object_id = rt.object_id
+                WHERE t.name = 'runs' AND rt.name = 'monitors';
+                IF @fk IS NOT NULL
+                BEGIN
+                    DECLARE @sql NVARCHAR(MAX) = N'ALTER TABLE dbo.runs DROP CONSTRAINT ' + QUOTENAME(@fk) + ';';
+                    EXEC sp_executesql @sql;
+                END
+            """, "Drop existing FK runs -> monitors if any")
+
+            _exec_safe("""
+                -- Garantir coluna nula e recriar FK com ON DELETE SET NULL
+                IF EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'monitor_id'
+                )
+                BEGIN
+                    ALTER TABLE dbo.runs ALTER COLUMN monitor_id VARCHAR(50) NULL;
+                END
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys WHERE name = N'fk_runs_monitor'
+                )
+                BEGIN
+                    ALTER TABLE dbo.runs 
+                    ADD CONSTRAINT fk_runs_monitor FOREIGN KEY (monitor_id)
+                    REFERENCES dbo.monitors(id) ON DELETE SET NULL;
+                END
+            """, "Ensure FK runs.monitor_id ON DELETE SET NULL")
+
+            # Adicionar colunas de metadados de agendamento em runs, se não existirem
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'schedule_date'
+                ) BEGIN
+                    ALTER TABLE dbo.runs ADD schedule_date DATETIME NULL;
+                END
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'schedule_slot'
+                ) BEGIN
+                    ALTER TABLE dbo.runs ADD schedule_slot VARCHAR(20) NULL;
+                END
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'schedule_index_today'
+                ) BEGIN
+                    ALTER TABLE dbo.runs ADD schedule_index_today INT NULL;
+                END
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'schedule_total_today'
+                ) BEGIN
+                    ALTER TABLE dbo.runs ADD schedule_total_today INT NULL;
+                END
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = 'schedule_source'
+                ) BEGIN
+                    ALTER TABLE dbo.runs ADD schedule_source VARCHAR(30) NULL;
+                END
+            """, "Add scheduling metadata columns to runs")
             
             print("[MIGRATION] SQL Server migration completed.")
     except Exception:

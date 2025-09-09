@@ -13,6 +13,13 @@ export interface SimpleRunsFilterProps {
   engines: string[]
   engineFilter: string
   setEngineFilter: (v: string) => void
+  // new filters
+  sources?: Array<'manual'|'monitor'|'monitor_now'>
+  sourceFilter?: string
+  setSourceFilter?: (v: string) => void
+  monitors?: Array<{ id: string; name: string }>
+  monitorFilter?: string
+  setMonitorFilter?: (v: string) => void
   onRefresh?: () => void
 }
 
@@ -24,7 +31,7 @@ export default function SimpleRunsFilter(props: SimpleRunsFilterProps) {
 
   return (
     <div className="border rounded-md p-3 bg-white dark:bg-neutral-900">
-      <div className="grid gap-3 sm:grid-cols-3 items-end">
+      <div className="grid gap-3 sm:grid-cols-5 items-end">
         <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
           <span>Tema</span>
           <Select
@@ -50,6 +57,30 @@ export default function SimpleRunsFilter(props: SimpleRunsFilterProps) {
               <option key={e} value={e}>
                 {e}
               </option>
+            ))}
+          </Select>
+        </label>
+        <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+          <span>Fonte</span>
+          <Select
+            value={props.sourceFilter || ''}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setSourceFilter && props.setSourceFilter(e.target.value)}
+          >
+            <option value="">Todas</option>
+            {(['manual','monitor','monitor_now'] as const).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
+        </label>
+        <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+          <span>Monitor</span>
+          <Select
+            value={props.monitorFilter || ''}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => props.setMonitorFilter && props.setMonitorFilter(e.target.value)}
+          >
+            <option value="">Todos</option>
+            {(props.monitors || []).map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </Select>
         </label>

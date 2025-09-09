@@ -127,7 +127,7 @@ class Run(Base):
     prompt_version_id: Mapped[str] = mapped_column(ForeignKey("prompt_versions.id"))
     engine_id: Mapped[str] = mapped_column(ForeignKey("engines.id"))
     subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
-    monitor_id: Mapped[Optional[str]] = mapped_column(ForeignKey("monitors.id"), nullable=True)
+    monitor_id: Mapped[Optional[str]] = mapped_column(ForeignKey("monitors.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String, default="queued")
     cycles_total: Mapped[int] = mapped_column(Integer, default=1)
     cycle_delay_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -149,6 +149,13 @@ class Run(Base):
     model_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     error_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     config_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # Agendamento/Monitor metadata
+    schedule_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    schedule_slot: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # "HH:MM"
+    schedule_index_today: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    schedule_total_today: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    schedule_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # monitor|monitor_now|manual
 
 
 class Evidence(Base):

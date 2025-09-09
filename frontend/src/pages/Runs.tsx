@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
 import { Trash2, Plus, Search, Filter, X, RefreshCw, Clock } from 'lucide-react'
-import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun } from '../lib/api'
+import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun, getMonitors } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { formatNumberCompact } from '../lib/utils'
 import { Input } from '../components/ui/input'
@@ -26,6 +26,13 @@ type RunItem = {
   cycle_delay_seconds?: number
   template_category?: string
   subproject_name?: string
+  // monitor/schedule
+  monitor_id?: string
+  schedule_date?: string
+  schedule_slot?: string
+  schedule_index_today?: number
+  schedule_total_today?: number
+  schedule_source?: string
 }
 
 type Project = { id: string; name: string }
@@ -63,10 +70,13 @@ export default function Runs() {
   const [runs, setRuns] = useState<RunItem[]>([])
   const [showModal, setShowModal] = useState(false)
   const [engineFilter, setEngineFilter] = useState<string>('')
+  const [sourceFilter, setSourceFilter] = useState<string>('')
+  const [monitorFilter, setMonitorFilter] = useState<string>('')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('project_id') || '')
   const [subprojects, setSubprojects] = useState<Subproject[]>([])
   const [subprojectId, setSubprojectId] = useState<string>('')
+  const [monitors, setMonitors] = useState<Array<{ id: string; name: string }>>([])
   const [loading, setLoading] = useState<boolean>(false)
   // Map template name -> { category, subproject_id }
   const [templateCatIndex, setTemplateCatIndex] = useState<Record<string, { category: string; subproject_id?: string }>>({})
@@ -76,6 +86,8 @@ export default function Runs() {
     if (projectId) params.project_id = projectId
     if (subprojectId) params.subproject_id = subprojectId
     if (engineFilter) params.engine = engineFilter
+    if (sourceFilter) params.schedule_source = sourceFilter
+    if (monitorFilter) params.monitor_id = monitorFilter
     const showLoading = opts?.showLoading ?? runs.length === 0
     if (showLoading) setLoading(true)
     try {
@@ -103,7 +115,8 @@ export default function Runs() {
   }, [location.search])
 
   useEffect(() => { fetchRuns({ showLoading: true }) }, [engineFilter, subprojectId])
-  useEffect(() => { const t = setInterval(() => fetchRuns({ showLoading: false }), 5000); return () => clearInterval(t) }, [engineFilter, subprojectId])
+  useEffect(() => { fetchRuns({ showLoading: true }) }, [sourceFilter, monitorFilter])
+  useEffect(() => { const t = setInterval(() => fetchRuns({ showLoading: false }), 5000); return () => clearInterval(t) }, [engineFilter, subprojectId, sourceFilter, monitorFilter])
   useEffect(() => { if (projectId) { fetchRuns({ showLoading: true }) } }, [projectId])
 
   // Build template name -> category index for current project
@@ -120,6 +133,7 @@ export default function Runs() {
     if (!projectId) return
     localStorage.setItem('project_id', projectId)
     getSubprojects(projectId).then((r) => setSubprojects(r))
+    getMonitors(projectId).then((ms) => setMonitors(ms.map(m => ({ id: m.id, name: m.name }))))
   }, [projectId])
 
   const engines = useMemo(() => Array.from(new Set(runs.map((r: RunItem) => r.engine))), [runs])
@@ -196,6 +210,12 @@ export default function Runs() {
         engines={engines}
         engineFilter={engineFilter}
         setEngineFilter={setEngineFilter}
+        sources={['manual','monitor','monitor_now']}
+        sourceFilter={sourceFilter}
+        setSourceFilter={setSourceFilter}
+        monitors={monitors}
+        monitorFilter={monitorFilter}
+        setMonitorFilter={setMonitorFilter}
         onRefresh={fetchRuns}
       />
       
@@ -413,6 +433,26 @@ function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void |
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors duration-200 ${statusCls}`}>
                   {r.status}
                 </span>
+                {r.monitor_id && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300 transition-colors duration-200">
+                    Monitor
+                  </span>
+                )}
+                {r.schedule_source && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs border border-neutral-300 dark:border-neutral-700">
+                    fonte: {r.schedule_source}
+                  </span>
+                )}
+                {(r.schedule_date || r.schedule_slot) && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs border border-neutral-300 dark:border-neutral-700">
+                    {r.schedule_date ? new Date(r.schedule_date).toISOString().slice(0,10) : ''}{r.schedule_slot ? ` • ${r.schedule_slot}` : ''}
+                  </span>
+                )}
+                {typeof r.schedule_index_today === 'number' && typeof r.schedule_total_today === 'number' && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs border border-neutral-300 dark:border-neutral-700">
+                    {r.schedule_index_today}/{r.schedule_total_today}
+                  </span>
+                )}
                 {r.cycles_total && r.cycles_total > 1 && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300 transition-colors duration-200">
                     {r.cycles_total} cycles

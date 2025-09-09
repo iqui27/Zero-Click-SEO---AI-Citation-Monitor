@@ -3,7 +3,7 @@ Monitor Scheduler Service - Handles CRON-based automated monitoring execution
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from croniter import croniter
 from sqlalchemy.orm import Session
@@ -59,7 +59,73 @@ class MonitorScheduler:
             
             for monitor in monitors:
                 if self._should_execute_monitor(monitor, current_time, db):
-                    await self._execute_monitor(monitor, db)
+                    # Catch-up: compute how many slots were missed since last run and execute up to a small backlog
+                    try:
+                        sched = (monitor.schedule_cron or "").strip()
+                        cron_part = sched.split(";")[0].strip()
+                        exprs = [e.strip() for e in cron_part.split("|") if e.strip()]
+                        # Determine last time reference
+                        last_run = (
+                            db.query(Run)
+                            .filter(Run.monitor_id == monitor.id)
+                            .order_by(Run.started_at.desc())
+                            .first()
+                        )
+                        ref = last_run.started_at if last_run and last_run.started_at else (current_time - timedelta(minutes=self.check_interval))
+                        # Generate next occurrences from ref until now
+                        due_slots: list[tuple[datetime, str, int, int]] = []  # (when, slotHHMM, indexToday, totalToday)
+                        # Build today's times to compute index/total for each day
+                        def _extract_times_from_cron(expr: str) -> list[str]:
+                            times: list[str] = []
+                            try:
+                                fields = [f for f in expr.split() if f]
+                                if len(fields) >= 2:
+                                    mm = int(fields[0]); hh = int(fields[1])
+                                    times.append(f"{hh:02d}:{mm:02d}")
+                            except Exception:
+                                return []
+                            return times
+                        # union of times across exprs for a given day will be re-evaluated per occurrence
+                        for ex in exprs:
+                            try:
+                                it = croniter(ex, ref)
+                                while True:
+                                    nxt = it.get_next(datetime)
+                                    if nxt.tzinfo is None:
+                                        nxt = nxt.replace(tzinfo=timezone.utc)
+                                    if nxt > current_time:
+                                        break
+                                    # derive slot and index for that day
+                                    hh = f"{nxt.hour:02d}"; mm = f"{nxt.minute:02d}"
+                                    slot = f"{hh}:{mm}"
+                                    # compute total/index for the date of nxt
+                                    day_times: list[str] = []
+                                    for ex2 in exprs:
+                                        try:
+                                            # walk through ex2 within the same UTC day
+                                            it2 = croniter(ex2, datetime(nxt.year, nxt.month, nxt.day, tzinfo=timezone.utc))
+                                            t2 = it2.get_next(datetime)
+                                            # advance until next day
+                                            while t2.date() == nxt.date():
+                                                day_times.append(f"{t2.hour:02d}:{t2.minute:02d}")
+                                                t2 = it2.get_next(datetime)
+                                        except Exception:
+                                            continue
+                                    # unique + sort
+                                    day_times = sorted(sorted(set(day_times)))
+                                    total_today = len(day_times) or None
+                                    idx_today = (day_times.index(slot) + 1) if (slot in day_times) else None
+                                    due_slots.append((nxt, slot, idx_today, total_today))
+                            except Exception:
+                                continue
+                        # sort by time asc and cap backlog
+                        due_slots.sort(key=lambda x: x[0])
+                        max_backlog = 5
+                        for when, slot, idx, tot in due_slots[-max_backlog:]:
+                            await self._execute_monitor(monitor, db, schedule_slot=slot, idx_today=idx, total_today=tot, schedule_date=when.replace(hour=0, minute=0, second=0, microsecond=0))
+                    except Exception:
+                        # Fallback: at least execute once
+                        await self._execute_monitor(monitor, db)
                     
         except Exception as e:
             logger.error(f"Error checking monitors: {e}")
@@ -67,35 +133,92 @@ class MonitorScheduler:
             db.close()
     
     def _should_execute_monitor(self, monitor: Monitor, current_time: datetime, db: Session) -> bool:
-        """Check if a monitor should be executed based on its CRON schedule"""
+        """Check if a monitor should be executed based on its schedule.
+
+        Supports:
+        - Single CRON expression (legacy)
+        - Multiple CRON expressions separated by '|' (e.g., "0 8 * * * | 0 12 * * *")
+        - Optional expiry using suffix "; until=YYYY-MM-DD" (UTC date end-of-day)
+        """
         try:
-            if not monitor.schedule_cron:
+            sched = (monitor.schedule_cron or "").strip()
+            if not sched:
                 return False
-            
+
+            # Parse optional options after ';'
+            cron_part = sched
+            until_dt: Optional[datetime] = None
+            if ";" in sched:
+                parts = [p.strip() for p in sched.split(";")]
+                cron_part = parts[0].strip()
+                # parse key=value options
+                for opt in parts[1:]:
+                    if not opt:
+                        continue
+                    kv = [x.strip() for x in opt.split("=", 1)]
+                    if len(kv) == 2 and kv[0].lower() == "until":
+                        try:
+                            # Interpret as UTC date end-of-day
+                            y, m, d = [int(x) for x in kv[1].split("-")]
+                            until_dt = datetime(y, m, d, 23, 59, 59, tzinfo=timezone.utc)
+                        except Exception:
+                            until_dt = None
+
+            # If expired, do not execute
+            if until_dt is not None and current_time > until_dt:
+                return False
+
+            # Split possible multiple CRON expressions by '|'
+            cron_exprs = [c.strip() for c in cron_part.split("|") if c.strip()]
+            if not cron_exprs:
+                return False
+
             # Get the last execution time for this monitor
-            last_run = db.query(Run).filter(
-                Run.monitor_id == monitor.id
-            ).order_by(Run.started_at.desc()).first()
-            
-            # If no previous runs, check if it's time to run
+            last_run = (
+                db.query(Run)
+                .filter(Run.monitor_id == monitor.id)
+                .order_by(Run.started_at.desc())
+                .first()
+            )
+
+            # If no previous runs: check if any cron would have triggered within the last interval
             if not last_run:
-                cron = croniter(monitor.schedule_cron, current_time)
-                next_run = cron.get_prev(datetime)
-                # If the previous scheduled time was within the last check interval, execute
-                time_diff = (current_time - next_run).total_seconds()
-                return 0 <= time_diff <= self.check_interval
-            
-            # Check if enough time has passed since last run based on CRON schedule
-            cron = croniter(monitor.schedule_cron, last_run.started_at)
-            next_scheduled = cron.get_next(datetime)
-            
+                for expr in cron_exprs:
+                    try:
+                        cron = croniter(expr, current_time)
+                        prev_time = cron.get_prev(datetime)
+                        time_diff = (current_time - prev_time).total_seconds()
+                        if 0 <= time_diff <= self.check_interval:
+                            return True
+                    except Exception:
+                        # ignore bad expressions, continue
+                        continue
+                return False
+
+            # With a previous run: compute the earliest next schedule across all expressions
+            next_times: List[datetime] = []
+            for expr in cron_exprs:
+                try:
+                    cron = croniter(expr, last_run.started_at)
+                    nxt = cron.get_next(datetime)
+                    # Normalize naive datetimes to UTC if needed
+                    if nxt.tzinfo is None:
+                        nxt = nxt.replace(tzinfo=timezone.utc)
+                    next_times.append(nxt)
+                except Exception:
+                    continue
+
+            if not next_times:
+                return False
+
+            next_scheduled = min(next_times)
             return current_time >= next_scheduled
-            
+
         except Exception as e:
             logger.error(f"Error checking monitor schedule for {monitor.id}: {e}")
             return False
     
-    async def _execute_monitor(self, monitor: Monitor, db: Session):
+    async def _execute_monitor(self, monitor: Monitor, db: Session, *, schedule_slot: str | None = None, idx_today: int | None = None, total_today: int | None = None, schedule_date: datetime | None = None):
         """Execute a monitor by running all its associated templates with all engines"""
         try:
             logger.info(f"Executing monitor {monitor.id} ({monitor.name})")
@@ -115,6 +238,53 @@ class MonitorScheduler:
                 logger.warning(f"Monitor {monitor.id} has no engines configured")
                 return
             
+            # Derive schedule metadata for today from schedule_cron
+            def _extract_times_from_cron(expr: str) -> list[str]:
+                times: list[str] = []
+                try:
+                    cron_part = expr.split(';')[0].strip()
+                    parts = [p.strip() for p in cron_part.split('|') if p.strip()]
+                    for p in parts:
+                        fields = [f for f in p.split() if f]
+                        if len(fields) >= 2:
+                            try:
+                                mm = int(fields[0])
+                                hh = int(fields[1])
+                                times.append(f"{hh:02d}:{mm:02d}")
+                            except Exception:
+                                continue
+                except Exception:
+                    return []
+                # sort by day time ascending
+                try:
+                    times.sort(key=lambda t: int(t.split(':')[0])*60 + int(t.split(':')[1]))
+                except Exception:
+                    pass
+                return times
+
+            now_utc = datetime.now(timezone.utc)
+            if schedule_slot is None or idx_today is None or total_today is None:
+                times_today = _extract_times_from_cron(monitor.schedule_cron or "")
+                total_today = len(times_today) if times_today else None
+                idx_today = None
+                slot = None
+                if times_today:
+                    cur_min = now_utc.hour * 60 + now_utc.minute
+                    diffs = []
+                    for i, t in enumerate(times_today):
+                        try:
+                            hh, mm = [int(x) for x in t.split(':')]
+                            m = hh*60 + mm
+                            diffs.append((abs(cur_min - m), i))
+                        except Exception:
+                            continue
+                    if diffs:
+                        diffs.sort(key=lambda x: x[0])
+                        idx_today = diffs[0][1] + 1
+                        slot = times_today[diffs[0][1]]
+            else:
+                slot = schedule_slot
+
             created_runs = []
             
             # Execute each template with each engine
@@ -122,18 +292,35 @@ class MonitorScheduler:
                 template = db.get(PromptTemplate, mt.template_id)
                 if not template:
                     continue
-                
-                # Get the latest prompt version for this template
-                prompt_version = db.query(PromptVersion).join(
-                    PromptTemplate, PromptTemplate.prompt_id == PromptVersion.prompt_id
-                ).filter(
-                    PromptTemplate.id == template.id
-                ).order_by(PromptVersion.version.desc()).first()
-                
-                if not prompt_version:
-                    logger.warning(f"No prompt version found for template {template.id}")
+
+                # Create a Prompt and a first PromptVersion from this template (same path as manual run)
+                prompt = None
+                try:
+                    from app.models.models import Prompt  # local import to avoid cycles
+                    prompt = Prompt(
+                        project_id=monitor.project_id,
+                        name=f"Run: {template.name}",
+                        text=template.text,
+                        intent=template.intent,
+                        persona=template.persona,
+                    )
+                    db.add(prompt)
+                    db.commit()
+                    db.refresh(prompt)
+                except Exception as e:
+                    logger.error(f"Failed to create Prompt for template {template.id}: {e}")
                     continue
-                
+
+                pv = None
+                try:
+                    pv = PromptVersion(prompt_id=prompt.id, version=1, text=template.text)
+                    db.add(pv)
+                    db.commit()
+                    db.refresh(pv)
+                except Exception as e:
+                    logger.error(f"Failed to create PromptVersion for template {template.id}: {e}")
+                    continue
+
                 # Create runs for each engine
                 for engine_config in engines_config:
                     try:
@@ -148,26 +335,93 @@ class MonitorScheduler:
                         ).first()
                         
                         if not engine:
+                            # Defensive defaults for Engines from monitor config
+                            cfg_json = dict(engine_config.get('config_json') or {})
+                            try:
+                                name_lower = str(engine_config.get('name') or '').lower()
+                            except Exception:
+                                name_lower = ''
+                            # Gemini defaults: ensure search is enabled and forced; set a safe token cap if missing
+                            try:
+                                if name_lower == 'gemini':
+                                    cfg_json.setdefault('use_search', True)
+                                    cfg_json.setdefault('force_search', True)
+                                    cfg_json.setdefault('max_output_tokens', 9000)
+                            except Exception:
+                                pass
+                            # OpenAI defaults: prefer enabling web_search unless explicitly disabled
+                            try:
+                                if name_lower == 'openai':
+                                    cfg_json.setdefault('web_search', True)
+                            except Exception:
+                                pass
                             engine = Engine(
                                 project_id=monitor.project_id,
                                 name=engine_config.get('name'),
                                 region=engine_config.get('region'),
                                 device=engine_config.get('device'),
-                                config_json=engine_config.get('config_json', {})
+                                config_json=cfg_json
                             )
                             db.add(engine)
                             db.commit()
                             db.refresh(engine)
+                        else:
+                            # If exists but config differs, create an ephemeral engine for this run
+                            req_cfg = (engine_config.get('config_json') or None)
+                            cur_cfg = (engine.config_json or None)
+                            try:
+                                cfg_differs = (req_cfg is not None and req_cfg != cur_cfg)
+                            except Exception:
+                                cfg_differs = False
+                            if cfg_differs:
+                                tmp_cfg = dict(req_cfg)
+                                try:
+                                    tmp_cfg.setdefault('_ephemeral', True)
+                                    tmp_cfg.pop('_main', None)
+                                except Exception:
+                                    pass
+                                # Defensive defaults for per-run ephemeral config
+                                try:
+                                    name_lower = str(engine_config.get('name') or '').lower()
+                                except Exception:
+                                    name_lower = ''
+                                try:
+                                    if name_lower == 'gemini':
+                                        tmp_cfg.setdefault('use_search', True)
+                                        tmp_cfg.setdefault('force_search', True)
+                                        tmp_cfg.setdefault('max_output_tokens', 9000)
+                                except Exception:
+                                    pass
+                                try:
+                                    if name_lower == 'openai':
+                                        tmp_cfg.setdefault('web_search', True)
+                                except Exception:
+                                    pass
+                                engine = Engine(
+                                    project_id=monitor.project_id,
+                                    name=engine_config.get('name'),
+                                    region=engine_config.get('region'),
+                                    device=engine_config.get('device'),
+                                    config_json=tmp_cfg,
+                                )
+                                db.add(engine)
+                                db.commit()
+                                db.refresh(engine)
                         
                         # Create run
                         run = Run(
                             project_id=monitor.project_id,
-                            prompt_version_id=prompt_version.id,
+                            prompt_version_id=pv.id,
                             engine_id=engine.id,
-                            subproject_id=monitor.subproject_id,
+                            subproject_id=(template.subproject_id or monitor.subproject_id),
                             monitor_id=monitor.id,
                             status="queued",
-                            cycles_total=1
+                            cycles_total=1,
+                            schedule_source="monitor",
+                            schedule_date=(schedule_date or now_utc.replace(hour=0, minute=0, second=0, microsecond=0)),
+                            schedule_slot=slot,
+                            schedule_index_today=idx_today,
+                            schedule_total_today=total_today,
                         )
                         db.add(run)
                         db.commit()

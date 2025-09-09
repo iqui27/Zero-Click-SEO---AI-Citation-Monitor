@@ -67,44 +67,77 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         ).mappings().first()
         prompt_text = query_text["text"] if query_text else ""
 
+        # Construir config EFETIVO por engine (evita nulls e reflete defaults reais)
+        cfg_raw = dict(engine.config_json or {})
+        name_lower = (engine.name or "").lower()
+        cfg_eff = dict(cfg_raw)
+        try:
+            if name_lower in ("openai", "gpt"):
+                # defaults para OpenAI Responses/Chat (aplicar também quando vier None ou vazio)
+                if cfg_eff.get("web_search") is None:
+                    cfg_eff["web_search"] = True
+                if cfg_eff.get("use_search") is None:
+                    # espelhar web_search para ter um campo comum nas UIs
+                    try:
+                        cfg_eff["use_search"] = bool(cfg_eff.get("web_search"))
+                    except Exception:
+                        cfg_eff["use_search"] = True
+                if not cfg_eff.get("search_context_size"):
+                    cfg_eff["search_context_size"] = "low"
+                if cfg_eff.get("reasoning_effort") is None:
+                    cfg_eff["reasoning_effort"] = "low"
+                try:
+                    mot = cfg_eff.get("max_output_tokens")
+                    mot_i = int(mot) if mot is not None else None
+                except Exception:
+                    mot_i = None
+                if mot_i is None or mot_i <= 0:
+                    cfg_eff["max_output_tokens"] = 8192
+            elif name_lower in ("gemini", "google_gemini"):
+                if cfg_eff.get("use_search") is None:
+                    cfg_eff["use_search"] = True
+                # For monitor-triggered runs, enforce default force_search unless explicitly disabled
+                try:
+                    if (run.schedule_source or "").startswith("monitor") and cfg_eff.get("force_search") is None:
+                        cfg_eff["force_search"] = True
+                except Exception:
+                    pass
+                try:
+                    mot = cfg_eff.get("max_output_tokens")
+                    mot_i = int(mot) if mot is not None else None
+                except Exception:
+                    mot_i = None
+                if mot_i is None or mot_i <= 0:
+                    cfg_eff["max_output_tokens"] = 9000
+        except Exception:
+            pass
+
+        # Forçar país/region BR em todas as runs, conforme política do projeto
         fetch_input = {
             "query": prompt_text,
             "language": "pt-BR",
-            "region": engine.region or "BR",
-            "device": engine.device or "desktop",
-            "config": engine.config_json or {},
+            "region": "BR",
+            "device": (engine.device or "desktop"),
+            "config": cfg_eff,
         }
 
         # Logar opções efetivas usadas no fetch para auditoria/debug
         try:
-            cfg = (engine.config_json or {})
-
-            # Calcular web_search efetivo respeitando defaults por engine
-            def compute_effective_web_search(engine_name: str, cfg_dict: dict) -> bool:
-                name = (engine_name or "").lower()
-                if name == "gemini":
-                    # Gemini: default é True, a não ser que use_search === False
-                    if "use_search" in cfg_dict:
-                        return bool(cfg_dict.get("use_search"))
-                    if "web_search" in cfg_dict:
-                        return bool(cfg_dict.get("web_search"))
-                    return True
-                # Demais engines: considerar apenas web_search explícito (default False)
-                if "web_search" in cfg_dict:
-                    return bool(cfg_dict.get("web_search"))
-                return False
-
+            cfg = dict(cfg_eff)
             cfg_used = {
                 "model": cfg.get("model"),
-                # Mantém compatibilidade, mas agora reflete o default correto por engine
-                "web_search": compute_effective_web_search(engine.name, cfg),
-                # Reporta também o campo específico do Gemini quando presente
+                # valores efetivos (sem null) após merge de defaults
+                "web_search": cfg.get("web_search"),
                 "use_search": cfg.get("use_search"),
                 "search_context_size": cfg.get("search_context_size"),
                 "reasoning_effort": cfg.get("reasoning_effort"),
                 "max_output_tokens": cfg.get("max_output_tokens"),
                 "web_search_force": cfg.get("web_search_force"),
                 "user_location": cfg.get("user_location"),
+                # Contexto efetivo
+                "language": fetch_input.get("language"),
+                "region": fetch_input.get("region"),
+                "device": fetch_input.get("device"),
             }
             _log(db, run.id, "opts", "ok", json.dumps(cfg_used, ensure_ascii=False)[:4000])
         except Exception:
@@ -137,7 +170,11 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 time.sleep(delay_seconds)
                 _log(db, run.id, "delay", "ok", f"Delay completed for cycle {i+1}")
             
-            _log(db, run.id, "fetch", "started", f"Engine: {engine.name} (cycle {i+1}/{total_cycles})")
+            try:
+                model_for_log = (engine.config_json or {}).get("model")
+            except Exception:
+                model_for_log = None
+            _log(db, run.id, "fetch", "started", f"Engine: {engine.name} model={model_for_log} (cycle {i+1}/{total_cycles})")
             t_fetch0 = time.perf_counter()
             try:
                 raw, parsed, extracted = run_engine(engine.name, fetch_input, timeout_seconds=timeout_seconds)
@@ -159,23 +196,52 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             if parsed.get("text"):
                 _log(db, run.id, "chunk", "ok", (parsed.get("text") or "")[:4000])
 
-            # persist evidence
+            # persist evidence (JSON-safe + resilient)
             _log(db, run.id, "persist", "started")
             t_persist0 = time.perf_counter()
-            ev = Evidence(
-                run_id=run.id,
-                raw_url=raw.get("raw_url"),
-                parsed_json={
-                    "raw": raw.get("raw"),
-                    "parsed": {"text": parsed.get("text"), "links": parsed.get("links"), "meta": parsed.get("meta")},
-                },
-                screenshot_url=None,
-                content_hash=None,
-            )
-            db.add(ev)
-            db.commit()
-            t_persist1 = time.perf_counter()
-            _log(db, run.id, "persist", "ok", f"{int((t_persist1 - t_persist0)*1000)} ms")
+            def _make_json_safe(obj: Any):
+                import json as _json
+                try:
+                    _json.dumps(obj, ensure_ascii=False, default=str)
+                    return obj
+                except Exception:
+                    pass
+                # strip problematic internals
+                try:
+                    if isinstance(obj, dict):
+                        return {k: _make_json_safe(v) for k, v in obj.items() if k not in ("__obj", "__obj_fallback")}  # type: ignore[dict-item]
+                    if isinstance(obj, list):
+                        return [_make_json_safe(x) for x in obj]
+                except Exception:
+                    return str(obj)
+                try:
+                    return str(obj)
+                except Exception:
+                    return None
+            raw_safe = _make_json_safe(raw.get("raw"))
+            parsed_safe = _make_json_safe({
+                "text": parsed.get("text"),
+                "links": parsed.get("links"),
+                "meta": parsed.get("meta"),
+            })
+            try:
+                ev = Evidence(
+                    run_id=run.id,
+                    raw_url=raw.get("raw_url"),
+                    parsed_json={"raw": raw_safe, "parsed": parsed_safe},
+                    screenshot_url=None,
+                    content_hash=None,
+                )
+                db.add(ev)
+                db.commit()
+                t_persist1 = time.perf_counter()
+                _log(db, run.id, "persist", "ok", f"{int((t_persist1 - t_persist0)*1000)} ms")
+            except Exception as e:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                _log(db, run.id, "persist", "fail", (str(e) or "persist_exception")[:4000])
 
             # extract citations
             _log(db, run.id, "extract", "started")

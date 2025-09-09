@@ -83,21 +83,77 @@ class GeminiAdapter:
             return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
 
         model_name = self._resolve_model(input.get("config"))
-        prompt = input["query"]
+        base_prompt = input["query"]
         cfg = input.get("config") or {}
 
-        # Try with google_search (recommended). If SDK rejects the tool, fall back to legacy or no tools.
-        errors: List[str] = []
-        for strategy in ("google_search", "google_search_retrieval", "none"):
+        # Strategies order can be influenced by config.force_search
+        use_search: bool = cfg.get("use_search", True)
+        force_search: bool = bool(cfg.get("force_search"))
+        # Strengthen instruction to encourage tool usage and explicit citations
+        if use_search:
+            sys_hint = (
+                "Você é um analista objetivo de busca na Web. Use a ferramenta Google Search para buscar informações em tempo real "
+                "e inclua de 2 a 5 fontes no final, usando URLs completas começando com http. Evite citar sem link."
+            )
+            prompt = f"{sys_hint}\n\n{base_prompt}"
+        else:
+            prompt = base_prompt
+
+        def _has_grounding(data: Dict[str, Any]) -> bool:
             try:
-                if strategy == "google_search":
-                    config = self._make_config_with_search(cfg, model_name)
-                elif strategy == "google_search_retrieval":
-                    # Force legacy tool by bypassing primary path
-                    dyn_only = {"use_search": True, "dynamic_retrieval": (cfg.get("dynamic_retrieval") or {"mode": "MODE_DYNAMIC", "dynamic_threshold": 0.7})}
-                    config = self._make_config_with_search(dyn_only, model_name)
-                else:
-                    config = types.GenerateContentConfig()
+                cand0 = (data.get("candidates") or [{}])[0]
+                gm = cand0.get("groundingMetadata", {}) or cand0.get("grounding_metadata", {})
+                chunks = gm.get("groundingChunks", []) or gm.get("grounding_chunks", [])
+                if chunks:
+                    return True
+                cite = cand0.get("citationMetadata", {}) or cand0.get("citation_metadata", {})
+                srcs = cite.get("citationSources", []) or cite.get("citations", [])
+                if srcs:
+                    return True
+            except Exception:
+                pass
+            return False
+
+        def _config_for_strategy(strategy: str) -> types.GenerateContentConfig:
+            if strategy == "google_search":
+                return self._make_config_with_search(cfg, model_name)
+            if strategy == "google_search_retrieval":
+                # Build retrieval tool explicitly (no generation_config to avoid extra_forbidden)
+                try:
+                    dyn_cfg = (cfg or {}).get("dynamic_retrieval") or {}
+                    # If force_search, require retrieval
+                    if bool(cfg.get("force_search")):
+                        mode_name = "MODE_REQUIRED"
+                    else:
+                        mode_name = str(dyn_cfg.get("mode") or "MODE_DYNAMIC")
+                    mode = getattr(types.DynamicRetrievalConfigMode, mode_name, types.DynamicRetrievalConfigMode.MODE_DYNAMIC)
+                    thr = dyn_cfg.get("dynamic_threshold")
+                    if thr is not None:
+                        drc = types.DynamicRetrievalConfig(mode=mode, dynamic_threshold=float(thr))
+                    else:
+                        drc = types.DynamicRetrievalConfig(mode=mode)
+                    retrieval = types.GoogleSearchRetrieval(dynamic_retrieval_config=drc) if drc else types.GoogleSearchRetrieval()
+                    tool = types.Tool(google_search_retrieval=retrieval)
+                    return types.GenerateContentConfig(tools=[tool])
+                except Exception:
+                    # Fallback to empty config
+                    return types.GenerateContentConfig()
+            # none
+            return types.GenerateContentConfig()
+
+        # Build strategy order
+        if not use_search:
+            strategies = ["none"]
+        else:
+            strategies = ["google_search_retrieval", "google_search", "none"] if force_search else ["google_search", "google_search_retrieval", "none"]
+
+        # Try strategies; if web search yields no grounding, attempt the alternate tool before returning
+        errors: List[str] = []
+        last_success: Dict[str, Any] | None = None
+        tried: set[str] = set()
+        for strategy in strategies:
+            try:
+                config = _config_for_strategy(strategy)
 
                 def _gen_content(params: Dict[str, Any]):
                     return self.client.models.generate_content(**params)
@@ -105,13 +161,27 @@ class GeminiAdapter:
                     _gen_content,
                     {
                         "model": model_name,
-                        "contents": prompt,
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                         "config": config,
                     },
                 )
+                # Try to extract a full structured dict (candidates + grounding)
+                data: Dict[str, Any] = {}
                 try:
-                    data = resp.to_dict()  # structured dict with candidates + groundingMetadata
+                    if hasattr(resp, "model_dump"):
+                        data = resp.model_dump()  # type: ignore[attr-defined]
+                    elif hasattr(resp, "to_dict"):
+                        data = resp.to_dict()  # type: ignore[attr-defined]
+                    elif hasattr(resp, "dict"):
+                        data = resp.dict()  # type: ignore[attr-defined]
+                    else:
+                        import json
+                        to_json = getattr(resp, "model_dump_json", None) or getattr(resp, "to_json", None)
+                        if callable(to_json):
+                            data = json.loads(to_json())
                 except Exception:
+                    data = {}
+                if not isinstance(data, dict) or not data:
                     data = {"text": getattr(resp, "text", ""), "raw": str(resp)}
                 # Se não extrairmos texto de imediato, tentar um minimal fallback pedindo saída textual
                 try:
@@ -128,15 +198,35 @@ class GeminiAdapter:
                             _gen_content2,
                             {
                                 "model": model_name,
-                                "contents": "Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final.",
+                                "contents": [{"role": "user", "parts": [{"text": "Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final."}]}],
                                 "config": config,
                             },
                         )
-                        d2 = resp2.to_dict()
+                        # Best-effort to dict
+                        try:
+                            if hasattr(resp2, "model_dump"):
+                                d2 = resp2.model_dump()  # type: ignore[attr-defined]
+                            elif hasattr(resp2, "to_dict"):
+                                d2 = resp2.to_dict()  # type: ignore[attr-defined]
+                            elif hasattr(resp2, "dict"):
+                                d2 = resp2.dict()  # type: ignore[attr-defined]
+                            else:
+                                import json
+                                to_json2 = getattr(resp2, "model_dump_json", None) or getattr(resp2, "to_json", None)
+                                d2 = json.loads(to_json2()) if callable(to_json2) else {"text": getattr(resp2, "text", "")}
+                        except Exception:
+                            d2 = {"text": getattr(resp2, "text", "")}
                         # anexar ao payload para o parse ter alternativas
                         data["fallback"] = d2
                     except Exception:
                         pass
+                # If search was enabled but no grounding detected, attempt alternate strategy if available
+                if use_search and strategy != "none" and not _has_grounding(data):
+                    last_success = data
+                    tried.add(strategy)
+                    # If we haven't tried the other search tool yet, continue loop to try it
+                    if ("google_search_retrieval" in strategies and "google_search_retrieval" not in tried) or ("google_search" in strategies and "google_search" not in tried):
+                        continue
                 return {"raw_url": None, "raw": data}
             except Exception as e:
                 msg = str(e)
@@ -155,12 +245,22 @@ class GeminiAdapter:
                     "502",
                     "500",
                 )
-                if any(t in msg for t in ("Unknown field", "INVALID_ARGUMENT", "not recognized", "unrecognized")) or any(
+                recoverable_markers = (
+                    "Unknown field",
+                    "INVALID_ARGUMENT",
+                    "not recognized",
+                    "unrecognized",
+                    "extra inputs are not permitted",
+                    "extra_forbidden",
+                )
+                if any(t in msg for t in recoverable_markers) or any(
                     t in lower for t in transient_markers
                 ):
                     continue
                 return {"raw_url": None, "raw": {"error": "fetch_failed", "message": msg, "request": input}}
-
+        # If we had a successful non-grounded response, return it; otherwise surface errors
+        if last_success is not None:
+            return {"raw_url": None, "raw": last_success}
         return {"raw_url": None, "raw": {"error": "no_tool_worked", "message": "; ".join(errors), "request": input}}
 
     async def parse(self, raw: RawEvidence) -> ParsedAnswer:

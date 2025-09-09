@@ -111,6 +111,13 @@ class RunListItem(BaseModel):
     tokens_total: Optional[int] = None
     cycles_total: Optional[int] = None
     cycle_delay_seconds: Optional[int] = None
+    # monitor/schedule
+    monitor_id: Optional[str] = None
+    schedule_date: Optional[datetime] = None
+    schedule_slot: Optional[str] = None
+    schedule_index_today: Optional[int] = None
+    schedule_total_today: Optional[int] = None
+    schedule_source: Optional[str] = None
 
 
 class RunDetailOut(BaseModel):
@@ -133,6 +140,13 @@ class RunDetailOut(BaseModel):
     latency_ms: Optional[int] = None
     cycles_total: Optional[int] = None
     cycle_delay_seconds: Optional[int] = None
+    # monitor/schedule
+    monitor_id: Optional[str] = None
+    schedule_date: Optional[datetime] = None
+    schedule_slot: Optional[str] = None
+    schedule_index_today: Optional[int] = None
+    schedule_total_today: Optional[int] = None
+    schedule_source: Optional[str] = None
 
 
 class CitationOut(BaseModel):

@@ -10,6 +10,7 @@ import SubprojectDetail from './pages/SubprojectDetail'
 import WorkspacePage from './pages/Workspace'
 import SettingsPage from './pages/Settings'
 import MonitorsPage from './pages/Monitors'
+import SandboxPage from './pages/Sandbox'
 import './index.css'
 import { Button } from './components/ui/button'
 import { Toaster } from 'sonner'
@@ -133,6 +134,7 @@ function Layout() {
         <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
         <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
         <Link to="/monitors" className="text-sm opacity-80 hover:opacity-100">Monitores</Link>
+        <Link to="/sandbox" className="text-sm opacity-80 hover:opacity-100">Sandbox</Link>
         <Link to="/settings" className="text-sm opacity-80 hover:opacity-100">Settings</Link>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-2">
@@ -182,6 +184,7 @@ const router = createBrowserRouter([
       { path: 'subprojects/:id', element: <SubprojectDetail /> },
       { path: 'prompts', element: <TemplatesPage /> },
       { path: 'monitors', element: <MonitorsPage /> },
+      { path: 'sandbox', element: <SandboxPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },

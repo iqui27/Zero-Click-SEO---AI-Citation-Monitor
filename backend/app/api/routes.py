@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text, literal_column, and_
+from sqlalchemy import func, text, literal_column, and_, or_, Date
 from fastapi.responses import StreamingResponse
+from datetime import datetime, timezone, timedelta
+from croniter import croniter
 import asyncio
+import threading
 import io
 import csv
 import os
@@ -34,7 +37,9 @@ from app.schemas.schemas import (
     GroupedRunWithEvidences,
 )
 from app.services.tasks import enqueue_run
+from app.services.scheduler import stop_scheduler, start_scheduler
 from app.services.kpis import compute_run_report
+from app.services.engine_runner import run_engine
 from app.services.insights import generate_basic_insights, generate_subproject_insights as svc_generate_subproject_insights
 import httpx
 from bs4 import BeautifulSoup
@@ -101,12 +106,154 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    # Pausar scheduler para evitar criação concorrente de runs durante a deleção
+    try:
+        stop_scheduler()
+    except Exception:
+        pass
     # Remover Insights vinculados ao projeto para evitar restrição de FK (NO ACTION)
     db.query(Insight).filter(Insight.project_id == project_id).delete(synchronize_session=False)
+    # 1) Apagar monitores e vínculos de templates do projeto (e desassociar runs deles)
+    mon_ids = [mid for (mid,) in db.query(Monitor.id).filter(Monitor.project_id == project_id).all()]
+    if mon_ids:
+        # Desativar monitores imediatamente para evitar novos disparos
+        db.query(Monitor).filter(Monitor.id.in_(mon_ids)).update({Monitor.active: False}, synchronize_session=False)
+        db.commit()
+        try:
+            db.query(Run).filter(Run.project_id == project_id).update({Run.monitor_id: None}, synchronize_session=False)
+        except Exception:
+            pass
+        db.query(MonitorTemplate).filter(MonitorTemplate.monitor_id.in_(mon_ids)).delete(synchronize_session=False)
+        db.query(Monitor).filter(Monitor.id.in_(mon_ids)).delete(synchronize_session=False)
+        db.commit()
+    # 2) Coletar IDs de runs do projeto e apagar dependências + runs
+    # (após remover monitores, não haverá novas runs sendo criadas por scheduler)
+    # Tentar repetidamente esvaziar todas as runs (tratando condições de corrida)
+    for _ in range(5):
+        run_ids = [rid for (rid,) in db.query(Run.id).filter(Run.project_id == project_id).all()]
+        if not run_ids:
+            break
+        # Apagar dependências de runs (defensivo para SQL Server quando FKs não estão com CASCADE)
+        db.query(Evidence).filter(Evidence.run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(Citation).filter(Citation.run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(Reason).filter(Reason.run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(RunEvent).filter(RunEvent.run_id.in_(run_ids)).delete(synchronize_session=False)
+        # Zerar vínculos de insights com runs (caso existam)
+        try:
+            db.query(Insight).filter(Insight.run_id.in_(run_ids)).update({Insight.run_id: None}, synchronize_session=False)
+        except Exception:
+            pass
+        # Por fim, apagar as runs
+        db.query(Run).filter(Run.id.in_(run_ids)).delete(synchronize_session=False)
+        db.commit()
+
+    # Apagar engines do projeto: garantir que não existam runs referenciando-os
+    eng_ids = [eid for (eid,) in db.query(Engine.id).filter(Engine.project_id == project_id).all()]
+    if eng_ids:
+        # Se, por alguma razão, restaram runs, apague-as agora por engine_id
+        db.query(Run).filter(Run.engine_id.in_(eng_ids)).delete(synchronize_session=False)
+        db.commit()
+        db.query(Engine).filter(Engine.id.in_(eng_ids)).delete(synchronize_session=False)
+
+    # Apagar prompts/prompt_versions ligados ao projeto (defensivo)
+    pr_ids = [pid for (pid,) in db.query(Prompt.id).filter(Prompt.project_id == project_id).all()]
+    if pr_ids:
+        db.query(PromptVersion).filter(PromptVersion.prompt_id.in_(pr_ids)).delete(synchronize_session=False)
+        db.query(Prompt).filter(Prompt.id.in_(pr_ids)).delete(synchronize_session=False)
+
+    # Apagar domínios e subprojetos (defensivo, caso FKs não estejam com CASCADE)
+    db.query(Domain).filter(Domain.project_id == project_id).delete(synchronize_session=False)
+    db.query(SubProject).filter(SubProject.project_id == project_id).delete(synchronize_session=False)
+
+    db.commit()
+    # Por fim, apagar o projeto
     db.delete(project)
     db.commit()
+    # Tentar religar o scheduler em background
+    try:
+        def _restart_scheduler_bg():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(start_scheduler())
+        threading.Thread(target=_restart_scheduler_bg, daemon=True).start()
+    except Exception:
+        pass
     return {"ok": True}
 
+
+@api_router.post("/monitors/{monitor_id}/stop")
+def stop_monitor(monitor_id: str, db: Session = Depends(get_db)):
+    mon = db.get(Monitor, monitor_id)
+    if not mon:
+        raise HTTPException(status_code=404, detail="Monitor não encontrado")
+    # Desativar
+    mon.active = False
+    db.commit()
+    # Cancelar runs ainda não iniciadas (queued)
+    now = datetime.utcnow()
+    queued = (
+        db.query(Run)
+        .filter(Run.monitor_id == monitor_id, Run.status == "queued")
+        .all()
+    )
+    for r in queued:
+        r.status = "failed"
+        r.error_code = "user_cancelled"
+        r.finished_at = now
+        db.add(RunEvent(run_id=r.id, version="error", status="fail", message="Stopped by user"))
+    db.commit()
+    return {"ok": True, "queued_cancelled": len(queued)}
+
+
+@api_router.get("/monitors/{monitor_id}/stats")
+def monitor_stats(monitor_id: str, days: int = 7, db: Session = Depends(get_db)):
+    days = max(1, min(int(days or 7), 90))
+    since = datetime.utcnow() - timedelta(days=days)
+    # Resumo por dia
+    date_col = func.cast(Run.started_at, Date)
+    rows = (
+        db.query(
+            date_col.label("date"),
+            func.count(Run.id).label("total"),
+            func.sum(case((Run.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((Run.status == "failed", 1), else_=0)).label("failed"),
+        )
+        .filter(Run.monitor_id == monitor_id, Run.started_at >= since)
+        .group_by(date_col)
+        .order_by(date_col.desc())
+        .all()
+    )
+    # Totais gerais
+    total = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.started_at >= since).scalar() or 0
+    completed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.started_at >= since, Run.status == "completed").scalar() or 0
+    failed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.started_at >= since, Run.status == "failed").scalar() or 0
+    return {
+        "since": since.isoformat(),
+        "totals": {"total": int(total), "completed": int(completed), "failed": int(failed)},
+        "by_day": [
+            {"date": str(r.date), "total": int(r.total or 0), "completed": int(r.completed or 0), "failed": int(r.failed or 0)}
+            for r in rows
+        ],
+    }
+
+
+@api_router.delete("/monitors/{monitor_id}/runs")
+def delete_monitor_runs(monitor_id: str, db: Session = Depends(get_db)):
+    mon = db.get(Monitor, monitor_id)
+    if not mon:
+        raise HTTPException(status_code=404, detail="Monitor não encontrado")
+    run_ids = [rid for (rid,) in db.query(Run.id).filter(Run.monitor_id == monitor_id).all()]
+    if not run_ids:
+        return {"deleted": 0}
+    # apagar dependências
+    db.query(Evidence).filter(Evidence.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Citation).filter(Citation.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Reason).filter(Reason.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(RunEvent).filter(RunEvent.run_id.in_(run_ids)).delete(synchronize_session=False)
+    # apagar runs
+    db.query(Run).filter(Run.id.in_(run_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": len(run_ids)}
 
 @api_router.post("/projects/{project_id}/domains", response_model=DomainOut)
 def add_domain(project_id: str, payload: DomainCreate, db: Session = Depends(get_db)):
@@ -295,6 +442,7 @@ def create_runs(payload: RunCreate, db: Session = Depends(get_db)):
             engine_id=engine.id,
             subproject_id=payload.subproject_id,
             status="queued",
+            schedule_source="manual",
         )
         # refletir número de ciclos solicitado
         try:
@@ -412,6 +560,8 @@ def list_runs(
     subproject_id: str | None = None,
     engine: str | None = None,
     status: str | None = None,
+    schedule_source: str | None = None,
+    monitor_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     page: int = 1,
@@ -433,6 +583,12 @@ def list_runs(
             Run.tokens_total,
             Run.cycles_total,
             Run.cycle_delay_seconds,
+            Run.monitor_id,
+            Run.schedule_date,
+            Run.schedule_slot,
+            Run.schedule_index_today,
+            Run.schedule_total_today,
+            Run.schedule_source,
             func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
             PromptTemplate.category.label("template_category"),
             func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
@@ -444,7 +600,13 @@ def list_runs(
             PromptTemplate,
             and_(
                 PromptTemplate.project_id == Run.project_id,
-                func.replace(Prompt.name, 'Template: ', '') == PromptTemplate.name,
+                # Map Prompt.name (strip prefixes) to template name
+                func.replace(func.replace(Prompt.name, 'Template: ', ''), 'Run: ', '') == PromptTemplate.name,
+                # Prefer the template from the same subproject (tema)
+                or_(
+                    PromptTemplate.subproject_id == Run.subproject_id,
+                    and_(PromptTemplate.subproject_id.is_(None), Run.subproject_id.is_(None)),
+                ),
             ),
         )
         .outerjoin(SubProject, SubProject.id == Run.subproject_id)
@@ -457,6 +619,10 @@ def list_runs(
         q = q.filter(Engine.name == engine)
     if status:
         q = q.filter(Run.status == status)
+    if schedule_source:
+        q = q.filter(Run.schedule_source == schedule_source)
+    if monitor_id:
+        q = q.filter(Run.monitor_id == monitor_id)
     if date_from:
         q = q.filter(Run.started_at >= text(":df")).params(df=date_from)
     if date_to:
@@ -501,6 +667,13 @@ def list_runs(
             cost_usd=getattr(r, "cost_usd", None),
             tokens_total=getattr(r, "tokens_total", None),
             cycles_total=getattr(r, "cycles_total", None),
+            cycle_delay_seconds=getattr(r, "cycle_delay_seconds", None),
+            monitor_id=getattr(r, "monitor_id", None),
+            schedule_date=getattr(r, "schedule_date", None),
+            schedule_slot=getattr(r, "schedule_slot", None),
+            schedule_index_today=getattr(r, "schedule_index_today", None),
+            schedule_total_today=getattr(r, "schedule_total_today", None),
+            schedule_source=getattr(r, "schedule_source", None),
         )
         for r in rows
     ]
@@ -759,6 +932,13 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         cost_usd=run.cost_usd,
         latency_ms=run.latency_ms,
         cycles_total=run.cycles_total,
+        cycle_delay_seconds=run.cycle_delay_seconds,
+        monitor_id=run.monitor_id,
+        schedule_date=run.schedule_date,
+        schedule_slot=run.schedule_slot,
+        schedule_index_today=run.schedule_index_today,
+        schedule_total_today=run.schedule_total_today,
+        schedule_source=run.schedule_source,
     )
 
 
@@ -1188,12 +1368,123 @@ def create_monitor(project_id: str, payload: dict, db: Session = Depends(get_db)
 @api_router.get("/projects/{project_id}/monitors")
 def list_monitors(project_id: str, db: Session = Depends(get_db)):
     mons = db.query(Monitor).filter(Monitor.project_id == project_id).all()
+    def _schedule_info(sched: str | None) -> dict | None:
+        if not sched:
+            return None
+        try:
+            tz_br = timezone(timedelta(hours=-3))  # Brasília UTC-3 (sem DST)
+            now_utc = datetime.now(timezone.utc)
+            now_br = now_utc.astimezone(tz_br)
+            # Parse optional options after ';'
+            cron_part = sched
+            until_date = None
+            if ";" in sched:
+                parts = [p.strip() for p in sched.split(";")]
+                cron_part = parts[0].strip()
+                for opt in parts[1:]:
+                    if not opt:
+                        continue
+                    kv = [x.strip() for x in opt.split("=", 1)]
+                    if len(kv) == 2 and kv[0].lower() == "until":
+                        try:
+                            y, m, d = [int(x) for x in kv[1].split("-")]
+                            # store as ISO date string for UI
+                            until_date = f"{y:04d}-{m:02d}-{d:02d}"
+                        except Exception:
+                            until_date = None
+            exprs = [e.strip() for e in cron_part.split("|") if e.strip()]
+            if not exprs:
+                return {"tz": "UTC-3", "tz_label": "Brasília (UTC-3)"}
+            # Collect next occurrences across all expressions (global next)
+            upcoming: list[datetime] = []
+            for ex in exprs:
+                try:
+                    it = croniter(ex, now_utc)
+                    # Pull a few next occurrences from this expression
+                    for _ in range(5):
+                        dt = it.get_next(datetime)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        upcoming.append(dt)
+                except Exception:
+                    continue
+            if not upcoming:
+                return {"tz": "UTC-3", "tz_label": "Brasília (UTC-3)"}
+            # Merge, sort and unique by minute
+            upcoming.sort()
+            uniq: list[datetime] = []
+            seen = set()
+            for dt in upcoming:
+                k = dt.replace(second=0, microsecond=0)
+                if k not in seen:
+                    seen.add(k)
+                    uniq.append(dt)
+            uniq = uniq[:5]
+            # Convert to Brasília and format
+            def _fmt(dt_utc: datetime) -> str:
+                dt_br = dt_utc.astimezone(tz_br)
+                return f"{dt_br.hour:02d}:{dt_br.minute:02d} {dt_br.day:02d}/{dt_br.month:02d}"
+            next_runs_br = [_fmt(x) for x in uniq]
+            next_run_br = next_runs_br[0] if next_runs_br else None
+
+            # Build today's schedule in Brasília timezone
+            today_br = now_br.date()
+            day_start_br = datetime(today_br.year, today_br.month, today_br.day, 0, 0, tzinfo=tz_br)
+            day_end_br = day_start_br + timedelta(days=1)
+            day_start_utc = day_start_br.astimezone(timezone.utc)
+            day_end_utc = day_end_br.astimezone(timezone.utc)
+            times_today_utc: list[datetime] = []
+            for ex in exprs:
+                try:
+                    it_day = croniter(ex, day_start_utc)
+                    # advance until first >= start
+                    t = it_day.get_next(datetime)
+                    # accumulate occurrences within day window
+                    guard = 0
+                    while t <= day_end_utc and guard < 100:
+                        times_today_utc.append(t if t.tzinfo else t.replace(tzinfo=timezone.utc))
+                        t = it_day.get_next(datetime)
+                        guard += 1
+                except Exception:
+                    continue
+            # Deduplicate by minute and sort
+            times_today_utc.sort()
+            seen2 = set(); uniq_today_utc: list[datetime] = []
+            for dt in times_today_utc:
+                k = dt.replace(second=0, microsecond=0)
+                if k not in seen2:
+                    seen2.add(k); uniq_today_utc.append(dt)
+            daily_slots_br = [dt.astimezone(tz_br).strftime("%H:%M") for dt in uniq_today_utc]
+            total_today = len(daily_slots_br)
+            next_index_today = None
+            if next_run_br:
+                try:
+                    # Extract HH:MM from next_run_br string
+                    hhmm = next_run_br.split()[0]
+                    if hhmm in daily_slots_br:
+                        next_index_today = daily_slots_br.index(hhmm) + 1
+                except Exception:
+                    next_index_today = None
+            return {
+                "tz": "UTC-3",
+                "tz_label": "Brasília (UTC-3)",
+                "next_run_br": next_run_br,
+                "next_runs_br": next_runs_br,
+                "until": until_date,
+                "daily_slots_br": daily_slots_br,
+                "next_index_today": next_index_today,
+                "total_today": total_today,
+            }
+        except Exception:
+            return {"tz": "UTC-3", "tz_label": "Brasília (UTC-3)"}
+
     return [
         {
             "id": m.id,
             "name": m.name,
             "subproject_id": m.subproject_id,
             "schedule_cron": m.schedule_cron,
+            "schedule_info": _schedule_info(m.schedule_cron),
             "engines_json": m.engines_json,
             "active": m.active,
         }
@@ -1252,23 +1543,69 @@ def run_monitor_now(monitor_id: str, db: Session = Depends(get_db)):
                 .first()
             )
             if not engine:
+                cfg_json = dict(e.get("config_json") or {})
+                # Default Gemini tokens if not set
+                try:
+                    if str(e.get("name") or "").lower() == "gemini" and "max_output_tokens" not in cfg_json:
+                        cfg_json["max_output_tokens"] = 9000
+                except Exception:
+                    pass
                 engine = Engine(
                     project_id=mon.project_id,
                     name=e.get("name"),
                     region=e.get("region"),
                     device=e.get("device"),
-                    config_json=e.get("config_json"),
+                    config_json=cfg_json,
                 )
                 db.add(engine)
                 db.commit()
                 db.refresh(engine)
+            else:
+                # If exists but requested config differs, create an ephemeral engine just for this run
+                req_cfg = (e.get("config_json") or None)
+                cur_cfg = (engine.config_json or None)
+                cfg_differs = False
+                try:
+                    cfg_differs = (req_cfg is not None and req_cfg != cur_cfg)
+                except Exception:
+                    cfg_differs = False
+                if cfg_differs:
+                    tmp_cfg = dict(req_cfg)
+                    try:
+                        tmp_cfg.setdefault("_ephemeral", True)
+                        tmp_cfg.pop("_main", None)
+                    except Exception:
+                        pass
+                    # Default Gemini tokens if missing
+                    try:
+                        if str(e.get("name") or "").lower() == "gemini" and "max_output_tokens" not in tmp_cfg:
+                            tmp_cfg["max_output_tokens"] = 9000
+                    except Exception:
+                        pass
+                    engine = Engine(
+                        project_id=mon.project_id,
+                        name=e.get("name"),
+                        region=e.get("region"),
+                        device=e.get("device"),
+                        config_json=tmp_cfg,
+                    )
+                    db.add(engine)
+                    db.commit()
+                    db.refresh(engine)
+            # schedule metadata (run-now)
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
+            slot = f"{now_utc.hour:02d}:{now_utc.minute:02d}"
             run = Run(
                 project_id=mon.project_id,
                 prompt_version_id=pv.id,
                 engine_id=engine.id,
-                subproject_id=mon.subproject_id,
+                subproject_id=(tpl.subproject_id or mon.subproject_id),
                 monitor_id=mon.id,
                 status="queued",
+                schedule_source="monitor_now",
+                schedule_date=now_utc.replace(hour=0, minute=0, second=0, microsecond=0),
+                schedule_slot=slot,
             )
             db.add(run)
             db.commit()
@@ -1298,16 +1635,56 @@ def remove_template_from_monitor(monitor_id: str, template_id: str, db: Session 
     return {"ok": True}
 
 
+@api_router.delete("/monitors/{monitor_id}")
+def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
+    mon = db.get(Monitor, monitor_id)
+    if not mon:
+        raise HTTPException(status_code=404, detail="Monitor não encontrado")
+    # Desassociar runs para evitar bloqueio de FK
+    try:
+        db.query(Run).filter(Run.monitor_id == monitor_id).update({Run.monitor_id: None}, synchronize_session=False)
+    except Exception:
+        pass
+    # Remover vínculos de templates (FK CASCADE já cobre, mas fazermos explicitamente por segurança)
+    db.query(MonitorTemplate).filter(MonitorTemplate.monitor_id == monitor_id).delete(synchronize_session=False)
+    db.delete(mon)
+    db.commit()
+    return {"ok": True}
+
+
 @api_router.get("/monitors/{monitor_id}/runs")
 def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
     rows = (
-        db.query(Run.id, Run.status, Run.started_at, Run.finished_at, Run.zcrs)
+        db.query(
+            Run.id,
+            Run.status,
+            Run.started_at,
+            Run.finished_at,
+            Run.zcrs,
+            Run.cycles_total,
+            Run.cost_usd,
+            Engine.name.label("engine"),
+        )
+        .join(Engine, Engine.id == Run.engine_id)
         .filter(Run.monitor_id == monitor_id)
-        .order_by(Run.started_at.desc().nullslast(), Run.id.desc())
+        .order_by(
+            case((Run.started_at.is_(None), 1), else_=0).asc(),
+            Run.started_at.desc(),
+            Run.id.desc(),
+        )
         .all()
     )
     return [
-        {"id": r.id, "status": r.status, "started_at": r.started_at, "finished_at": r.finished_at, "zcrs": r.zcrs}
+        {
+            "id": r.id,
+            "status": r.status,
+            "started_at": r.started_at,
+            "finished_at": r.finished_at,
+            "zcrs": r.zcrs,
+            "cycles_total": r.cycles_total,
+            "cost_usd": r.cost_usd,
+            "engine": getattr(r, "engine", None),
+        }
         for r in rows
     ]
 
@@ -2182,6 +2559,132 @@ def smoke_test(payload: dict = Body(...), db: Session = Depends(get_db)) -> dict
         enqueue_run(run.id, cycles=1)
         queued.append(run.id)
     return {"queued_runs": queued}
+
+
+@api_router.post("/sandbox/test")
+def sandbox_test(payload: dict = Body(...)) -> dict:
+    """Execute a single adapter end-to-end without touching DB.
+
+    Body params:
+    - engine: one of [openai, gemini, perplexity, google_serp, sandbox]
+    - prompt (or query): text
+    - model: optional, forwarded into config.model
+    - config: optional dict with engine-specific settings
+    - language, region, device: optional context
+    - timeout_seconds: optional float
+    """
+    import time
+    engine_name: str = (payload.get("engine") or "openai").strip()
+    prompt: str = (payload.get("prompt") or payload.get("query") or "").strip()
+    cfg: dict = dict(payload.get("config") or {})
+    if payload.get("model") and not cfg.get("model"):
+        cfg["model"] = payload.get("model")
+    language = (payload.get("language") or "pt-BR").strip() or "pt-BR"
+    region = (payload.get("region") or "BR").strip() or "BR"
+    device = (payload.get("device") or "desktop").strip() or "desktop"
+    try:
+        timeout_seconds = float(payload.get("timeout_seconds") or 30)
+    except Exception:
+        timeout_seconds = 30.0
+
+    fetch_input = {
+        "query": prompt,
+        "language": language,
+        "region": region,
+        "device": device,
+        "config": cfg,
+    }
+
+    t0 = time.perf_counter()
+    try:
+        raw, parsed, citations = run_engine(engine_name, fetch_input, timeout_seconds=timeout_seconds)
+        t1 = time.perf_counter()
+    except Exception as e:
+        return {
+            "ok": False,
+            "engine": engine_name,
+            "model": cfg.get("model"),
+            "error": str(e),
+        }
+
+    # Raw preview helpers
+    raw_payload = raw.get("raw") if isinstance(raw, dict) else raw
+    # If adapter reported an error in raw, surface it clearly as failure
+    if isinstance(raw_payload, dict) and raw_payload.get("error"):
+        err = str(raw_payload.get("error"))
+        msg = str(raw_payload.get("message") or "")
+        req = raw_payload.get("request") if isinstance(raw_payload.get("request"), dict) else None
+        return {
+            "ok": False,
+            "engine": engine_name,
+            "model": cfg.get("model"),
+            "error": f"{err}: {msg}".strip(": "),
+            "request": req,
+        }
+    raw_keys = list(raw_payload.keys())[:12] if isinstance(raw_payload, dict) else []
+    output_types = []
+    try:
+        rd = raw_payload.get("response") or raw_payload
+        out = rd.get("output") or []
+        for item in out[:8]:
+            if isinstance(item, dict) and item.get("type"):
+                output_types.append(item.get("type"))
+    except Exception:
+        pass
+
+    full_text = parsed.get("text") or ""
+    text_preview = full_text[:800]
+    truncated = len(full_text) > len(text_preview)
+    meta = parsed.get("meta") or {}
+    # Usage and max tokens for diagnostics
+    usage = meta.get("raw_usage") or {}
+    cfg_max_tokens = cfg.get("max_output_tokens")
+    return {
+        "ok": True,
+        "engine": engine_name,
+        "model": cfg.get("model"),
+        "timing_ms": int((t1 - t0) * 1000),
+        "text_preview": text_preview,
+        "text": full_text,
+        "truncated": truncated,
+        "links": parsed.get("links", [])[:10],
+        "web_search_used": bool(meta.get("web_search_used")),
+        "web_search_calls": int(meta.get("web_search_calls") or 0),
+        "usage": usage,
+        "config_max_output_tokens": cfg_max_tokens,
+        "raw_keys": raw_keys,
+        "output_types": output_types,
+    }
+
+
+@api_router.get("/sandbox/openai/models")
+def sandbox_openai_models(org: str | None = None, project: str | None = None) -> dict:
+    """List available models for the current OpenAI API key.
+
+    Optional query params:
+    - org: Organization ID to scope the request
+    - project: Project ID to scope the request
+    """
+    if OpenAI is None:
+        return {"ok": False, "error": "openai_client_unavailable"}
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"ok": False, "error": "missing_api_key"}
+    used_org = org or os.getenv("OPENAI_ORG_ID") or os.getenv("OPENAI_ORGANIZATION")
+    used_project = project or os.getenv("OPENAI_PROJECT_ID") or os.getenv("OPENAI_PROJECT")
+    try:
+        client = OpenAI(api_key=api_key, organization=used_org, project=used_project) if (used_org or used_project) else OpenAI(api_key=api_key)
+        lst = client.models.list()
+        # Defensive extraction across SDK versions
+        data = getattr(lst, "data", []) or []
+        ids: list[str] = []
+        for m in data:
+            mid = getattr(m, "id", None) or (m.get("id") if isinstance(m, dict) else None)
+            if mid:
+                ids.append(str(mid))
+        return {"ok": True, "ids": ids, "count": len(ids), "organization": used_org, "project": used_project}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "organization": used_org, "project": used_project}
 
 
 @api_router.get("/projects/{project_id}/stats")

@@ -21,8 +21,18 @@ class OpenAIAdapter:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         # Keep env override but allow per-request override in fetch()
         # Default to a widely available model for compatibility
-        self.model = model or os.getenv("OPENAI_MODEL", "gpt-5")
-        self.client = OpenAI(api_key=self.api_key) if self.api_key else None
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o")
+        # Optional org/project from env (new OpenAI Projects model)
+        env_org = os.getenv("OPENAI_ORG_ID") or os.getenv("OPENAI_ORGANIZATION")
+        env_project = os.getenv("OPENAI_PROJECT_ID") or os.getenv("OPENAI_PROJECT")
+        if self.api_key:
+            try:
+                if env_org or env_project:
+                    self.client = OpenAI(api_key=self.api_key, organization=env_org, project=env_project)
+                else:
+                    self.client = OpenAI(api_key=self.api_key)
+            except Exception:
+                self.client = OpenAI(api_key=self.api_key)
 
     async def fetch(self, input: FetchInput) -> RawEvidence:
         """Call OpenAI Responses API, optionally with web_search_preview."""
@@ -30,6 +40,15 @@ class OpenAIAdapter:
             return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
 
         cfg: Dict[str, Any] = (input.get("config") or {})
+        # Allow per-request org/project (will build a temporary client)
+        req_org = (cfg.get("organization") or cfg.get("org") or os.getenv("OPENAI_ORG_ID") or os.getenv("OPENAI_ORGANIZATION"))
+        req_project = (cfg.get("project") or os.getenv("OPENAI_PROJECT_ID") or os.getenv("OPENAI_PROJECT"))
+        client = self.client
+        try:
+            if self.api_key and (req_org or req_project):
+                client = OpenAI(api_key=self.api_key, organization=req_org, project=req_project)
+        except Exception:
+            client = self.client
 
         # Use `instructions` (system prompt) per Responses API best-practice
         system = cfg.get("system") or (
@@ -39,9 +58,27 @@ class OpenAIAdapter:
         )
 
         # Allow model + token limit override via config
-        model = cfg.get("model") or self.model
+        raw_model = cfg.get("model") or self.model
+        # Normalizar aliases comuns
+        try:
+            m = str(raw_model or "").strip().lower().replace(" ", "")
+            alias_map = {
+                # 4o aliases
+                "o4": "gpt-4o",
+                "o4mini": "gpt-4o-mini",
+                "gpt4o": "gpt-4o",
+                "gpt4omini": "gpt-4o-mini",
+                # normalize gpt5 shorthand to dashed form
+                "gpt5": "gpt-5",
+                "gpt5mini": "gpt-5-mini",
+                # normalize o5mini spacing (se usado)
+                "o5mini": "o5-mini",
+            }
+            model = alias_map.get(m, raw_model)
+        except Exception:
+            model = raw_model
         # aumentar default para evitar cortes prematuros
-        max_output_tokens = int(cfg.get("max_output_tokens") or 2048)
+        max_output_tokens = int(cfg.get("max_output_tokens") or 8192)
 
         # Optional web search tool (Responses API)
         # Sinalizadores aceitos em Engine.config_json:
@@ -71,7 +108,7 @@ class OpenAIAdapter:
 
         # Apenas Responses API (sem fallback)
         try:
-            if not hasattr(self.client, "responses"):
+            if not hasattr(client, "responses"):
                 raise RuntimeError("OpenAI client sem suporte a Responses API")
             kwargs: Dict[str, Any] = {
                 "model": model,
@@ -82,8 +119,10 @@ class OpenAIAdapter:
             }
             # Raciocínio: alguns modelos (ex.: gpt-4.1) não aceitam o campo reasoning
             reasoning_effort = (cfg.get("reasoning_effort") or "low")
-            if isinstance(model, str) and model.lower().startswith("gpt-5"):
-                kwargs["reasoning"] = {"effort": reasoning_effort}
+            if isinstance(model, str):
+                lm = model.lower()
+                if lm.startswith("gpt-5") or lm.startswith("o5"):
+                    kwargs["reasoning"] = {"effort": reasoning_effort}
             if tools:
                 kwargs["tools"] = tools
                 # tool_choice configurable
@@ -95,7 +134,7 @@ class OpenAIAdapter:
                 else:
                     kwargs["tool_choice"] = "auto"
             def _create_with(kwargs_: Dict[str, Any]):
-                return self.client.responses.create(**kwargs_)  # type: ignore[attr-defined]
+                return client.responses.create(**kwargs_)  # type: ignore[attr-defined]
 
             # Estratégia de tentativas progressivas: full → sem reasoning → sem tools
             last_err: Exception | None = None
@@ -120,7 +159,35 @@ class OpenAIAdapter:
                     # outros erros: abortar
                     break
             if resp is None and last_err is not None:
-                raise last_err
+                # Fallback: tentar Chat Completions (sem web_search) se Responses falhar
+                try:
+                    chat_model = model
+                    # Alguns modelos (o5/razonadores) não suportam chat.completions; mapear para gpt-4o
+                    if isinstance(chat_model, str) and chat_model.lower().startswith("o5"):
+                        chat_model = "gpt-4o"
+                    comp = await asyncio.to_thread(
+                        lambda: client.chat.completions.create(
+                            model=chat_model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": input["query"]},
+                            ],
+                            max_tokens=max_output_tokens,
+                        )
+                    )
+                    raw_dict = comp.model_dump() if hasattr(comp, "model_dump") else (comp.to_dict() if hasattr(comp, "to_dict") else {})
+                    # Normalizar saída de chat
+                    text_out = ""
+                    try:
+                        ch = (raw_dict.get("choices") or [{}])[0]
+                        msg = ch.get("message") or {}
+                        text_out = msg.get("content") or ""
+                    except Exception:
+                        text_out = ""
+                    final_dict = {"output": [{"type": "message", "content": [{"type": "output_text", "text": text_out}]}], "usage": raw_dict.get("usage")}
+                    return {"raw_url": None, "raw": {"response": final_dict, "model": chat_model}}
+                except Exception:
+                    raise last_err
             # Extrair de forma robusta o dict completo da resposta
             raw_dict: Dict[str, Any] = {}
             try:
@@ -148,10 +215,17 @@ class OpenAIAdapter:
 
             # Se não houver mensagem no output, faz um turn de finalização usando previous_response_id
             def _has_message(d: Dict[str, Any]) -> bool:
+                """True when there is at least one message item with non-empty text content."""
                 try:
                     for item in (d.get("output") or []):
-                        if isinstance(item, dict) and item.get("type") == "message":
-                            return True
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("type") == "message":
+                            for c in (item.get("content") or []):
+                                if isinstance(c, dict):
+                                    t = c.get("text") or c.get("content")
+                                    if isinstance(t, str) and t.strip():
+                                        return True
                 except Exception:
                     pass
                 return False
@@ -183,6 +257,34 @@ class OpenAIAdapter:
                 except Exception:
                     # fallback: manter raw_dict mesmo sem message
                     final_dict = raw_dict
+                # Se ainda sem mensagem, fallback para Chat Completions
+                if not _has_message(final_dict):
+                    try:
+                        chat_model = model
+                        if isinstance(chat_model, str) and chat_model.lower().startswith("o5"):
+                            chat_model = "gpt-4o"
+                        comp = await asyncio.to_thread(
+                            lambda: client.chat.completions.create(
+                                model=chat_model,
+                                messages=[
+                                    {"role": "system", "content": system},
+                                    {"role": "user", "content": input["query"]},
+                                ],
+                                max_tokens=max_output_tokens,
+                            )
+                        )
+                        raw_chat = comp.model_dump() if hasattr(comp, "model_dump") else (comp.to_dict() if hasattr(comp, "to_dict") else {})
+                        text_out = ""
+                        try:
+                            ch = (raw_chat.get("choices") or [{}])[0]
+                            msg = ch.get("message") or {}
+                            text_out = msg.get("content") or ""
+                        except Exception:
+                            text_out = ""
+                        final_dict = {"output": [{"type": "message", "content": [{"type": "output_text", "text": text_out}]}], "usage": raw_chat.get("usage")}
+                        previous_dict = raw_dict
+                    except Exception:
+                        pass
 
             raw_payload: Dict[str, Any] = {
                 "response": final_dict,
@@ -199,6 +301,8 @@ class OpenAIAdapter:
                 "web_search_options": web_search_options if isinstance(web_search_options, dict) else None,
                 "max_output_tokens": max_output_tokens,
             }
+            if req_org or req_project:
+                sanitized_request.update({"organization": req_org, "project": req_project})
             return {"raw_url": None, "raw": {"error": "openai_request_failed", "message": str(e), "request": sanitized_request}}
 
     async def parse(self, raw: RawEvidence) -> ParsedAnswer:
@@ -206,28 +310,39 @@ class OpenAIAdapter:
 
         # Prefer the SDK-provided output_text; fallback para reconstruir a partir do dict
         content: str = data.get("output_text") or ""
-        if not content:
-            rd = data.get("response") or {}
-            # 1) Tentar extrair de output[].content[] com type=output_text
+        def _extract_from_dict(rd: Dict[str, Any]) -> str:
+            txt = ""
+            # 1) Tentar extrair de output[].content[] com type=output_text (para qualquer tipo de item)
             try:
                 outputs = rd.get("output") or []
                 parts: list[str] = []
                 for item in outputs:
                     if not isinstance(item, dict):
                         continue
-                    if item.get("type") == "message":
-                        for c in (item.get("content") or []):
-                            if isinstance(c, dict):
-                                t = c.get("text") or c.get("content")
-                                if isinstance(t, str) and t.strip():
-                                    parts.append(t)
+                    # Caso 1: item já é um output_text de topo
+                    if (item.get("type") == "output_text") and isinstance(item.get("text"), str) and item.get("text").strip():
+                        parts.append(item.get("text").strip())
+                        continue
+                    # Caso 2: item é message e possui content[] com output_text
+                    for c in (item.get("content") or []):
+                        if isinstance(c, dict):
+                            t = c.get("text") or c.get("content")
+                            if isinstance(t, str) and t.strip():
+                                parts.append(t)
                 if parts:
-                    content = "\n".join(parts).strip()
+                    txt = "\n".join(parts).strip()
             except Exception:
                 pass
             # 2) Fallback legado para formatos alternativos
-            if not content:
-                content = self._extract_text_from_response_dict(rd)
+            if not txt:
+                txt = self._extract_text_from_response_dict(rd)
+            return txt
+
+        if not content:
+            rd = data.get("response") or {}
+            content = _extract_from_dict(rd)
+        if not content and isinstance(data.get("previous_response"), dict):
+            content = _extract_from_dict(data.get("previous_response") or {})
 
         # Extract possible URLs from the text and also append URL citations from annotations if present
         links: List[Dict[str, str]] = []
@@ -245,6 +360,14 @@ class OpenAIAdapter:
                     continue
                 if item.get("type") == "web_search_call":
                     web_search_calls += 1
+                if item.get("type") == "output_text":
+                    # Algumas respostas trazem annotations diretamente no item de topo
+                    for ann in (item.get("annotations") or []):
+                        if isinstance(ann, dict) and ann.get("type") == "url_citation":
+                            url = ann.get("url")
+                            title = ann.get("title")
+                            if url and all(l.get("url") != url for l in links):
+                                links.append({"url": url, "title": title})
                 if item.get("type") == "message":
                     for c in (item.get("content") or []):
                         ann_list = (c or {}).get("annotations") or []

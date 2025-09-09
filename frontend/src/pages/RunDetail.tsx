@@ -45,6 +45,14 @@ type RunDetail = {
   cost_usd?: number
   latency_ms?: number
   cycles_total?: number
+  cycle_delay_seconds?: number
+  // monitor/schedule
+  monitor_id?: string
+  schedule_date?: string
+  schedule_slot?: string
+  schedule_index_today?: number
+  schedule_total_today?: number
+  schedule_source?: 'manual'|'monitor'|'monitor_now'
 }
 
 // helper simples para renderizar markdown minimalista
@@ -445,6 +453,19 @@ export default function RunDetail() {
         <span className={`px-2 py-0.5 rounded-md border ${wsUsed ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'border-neutral-300 dark:border-neutral-700'}`}>Web search: {wsUsed ? 'on' : 'off'}</span>
         {typeof wsCalls === 'number' && <span className="px-2 py-0.5 border rounded-md">calls: {wsCalls}</span>}
         {ctxSize && <span className="px-2 py-0.5 border rounded-md">ctx: {ctxSize}</span>}
+        {/* Schedule/Monitor badges */}
+        {detail?.monitor_id && (
+          <span className="px-2 py-0.5 rounded-md border border-purple-300 dark:border-purple-800 text-purple-700 dark:text-purple-300">Monitor</span>
+        )}
+        {detail?.schedule_source && (
+          <span className="px-2 py-0.5 rounded-md border">fonte: {detail.schedule_source}</span>
+        )}
+        {(detail?.schedule_date || detail?.schedule_slot) && (
+          <span className="px-2 py-0.5 rounded-md border">{detail?.schedule_date ? new Date(detail.schedule_date).toISOString().slice(0,10) : ''}{detail?.schedule_slot ? ` • ${detail.schedule_slot}` : ''}</span>
+        )}
+        {(typeof detail?.schedule_index_today === 'number' && typeof detail?.schedule_total_today === 'number') && (
+          <span className="px-2 py-0.5 rounded-md border">{detail?.schedule_index_today}/{detail?.schedule_total_today}</span>
+        )}
       </div>
 
       <section className="grid gap-2">

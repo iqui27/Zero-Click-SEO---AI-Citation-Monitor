@@ -31,7 +31,24 @@ const ENGINE_PRESETS: EnginePreset[] = [
   { name: 'perplexity', region: 'BR', device: 'desktop', config_json: { model: 'llama-3.1-sonar-huge-128k-online' }, label: 'Perplexity Sonar (Desktop)' },
 ]
 
-type Monitor = { id: string; name: string; subproject_id?: string; schedule_cron?: string; engines_json: any; active: boolean }
+type Monitor = {
+  id: string
+  name: string
+  subproject_id?: string
+  schedule_cron?: string
+  engines_json: any
+  active: boolean
+  schedule_info?: {
+    tz: string
+    tz_label: string
+    next_run_br?: string | null
+    next_runs_br?: string[]
+    until?: string | null
+    daily_slots_br?: string[]
+    next_index_today?: number | null
+    total_today?: number | null
+  } | null
+}
 
 type Template = { id: string; category: string; name: string; subproject_id?: string }
 
@@ -41,7 +58,8 @@ type Subproject = { id: string; name: string }
 
 type Project = { id: string; name: string }
 
-type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null }
+type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null }
+
 async function getMonitorRuns(monitorId: string): Promise<MonitorRun[]> {
   const res = await axios.get<MonitorRun[]>(`${API}/monitors/${monitorId}/runs`)
   return res.data
@@ -72,6 +90,22 @@ export default function MonitorsPage() {
   const [showAdvancedLink, setShowAdvancedLink] = useState<Record<string, boolean>>({})
   const [linking, setLinking] = useState<Record<string, boolean>>({})
   const [batchLinking, setBatchLinking] = useState<Record<string, boolean>>({})
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({})
+  const [stopping, setStopping] = useState<Record<string, boolean>>({})
+  const [clearing, setClearing] = useState<Record<string, boolean>>({})
+  const [stats, setStats] = useState<Record<string, { totals: { total: number; completed: number; failed: number }, by_day: Array<{ date: string; total: number; completed: number; failed: number }> }>>({})
+  // Advanced schedule (Create)
+  const [useAdvancedSchedule, setUseAdvancedSchedule] = useState<boolean>(false)
+  const [timesPerDay, setTimesPerDay] = useState<number>(1)
+  const [timeInputs, setTimeInputs] = useState<string[]>(['08:00'])
+  const [durationType, setDurationType] = useState<'none'|'7d'|'10d'|'30d'|'custom'>('none')
+  const [customUntil, setCustomUntil] = useState<string>('')
+  // Advanced schedule (Per monitor editor)
+  const [advOpen, setAdvOpen] = useState<Record<string, boolean>>({})
+  const [advTimes, setAdvTimes] = useState<Record<string, string[]>>({})
+  const [advCount, setAdvCount] = useState<Record<string, number>>({})
+  const [advDuration, setAdvDuration] = useState<Record<string, 'none'|'7d'|'10d'|'30d'|'custom'>>({})
+  const [advCustomUntil, setAdvCustomUntil] = useState<Record<string, string>>({})
 
   const loadProjects = async () => {
     try {
@@ -87,6 +121,143 @@ export default function MonitorsPage() {
     }
   }
 
+  const stopMonitor = async (monitorId: string) => {
+    if (!window.confirm('Parar monitor agora? Runs em fila serão canceladas e o monitor ficará inativo.')) return
+    setStopping((prev) => ({ ...prev, [monitorId]: true }))
+    try {
+      await axios.post(`${API}/monitors/${monitorId}/stop`, {})
+      toast.success('Monitor parado')
+      await refresh()
+    } catch (e) {
+      toast.error('Falha ao parar monitor')
+    } finally {
+      setStopping((prev) => ({ ...prev, [monitorId]: false }))
+    }
+  }
+
+  const clearMonitorRuns = async (monitorId: string) => {
+    if (!window.confirm('Apagar TODAS as runs deste monitor? Esta ação é irreversível.')) return
+    setClearing((prev) => ({ ...prev, [monitorId]: true }))
+    try {
+      const r = await axios.delete(`${API}/monitors/${monitorId}/runs`)
+      const n = (r.data?.deleted ?? 0)
+      toast.success(`Apagadas ${n} runs`)
+      await refresh()
+    } catch (e) {
+      toast.error('Falha ao apagar runs do monitor')
+    } finally {
+      setClearing((prev) => ({ ...prev, [monitorId]: false }))
+    }
+  }
+
+  const deleteMonitor = async (monitorId: string) => {
+    if (!window.confirm('Tem certeza que deseja apagar este monitor?\nAs runs antigas continuarão no histórico.')) return
+    setDeleting(prev => ({ ...prev, [monitorId]: true }))
+    try {
+      await axios.delete(`${API}/monitors/${monitorId}`)
+      toast.success('Monitor apagado')
+      await refresh()
+    } catch (e) {
+      toast.error('Falha ao apagar monitor')
+    } finally {
+      setDeleting(prev => ({ ...prev, [monitorId]: false }))
+    }
+  }
+
+  // Helper: vincular todos os templates restantes ao monitor
+  const attachAllTemplates = async (monitorId: string, subId?: string) => {
+    setBatchLinking((prev: Record<string, boolean>) => ({ ...prev, [monitorId]: true }))
+    try {
+      const linksRes = await axios.get<MonitorTemplateLink[]>(`${API}/monitors/${monitorId}/templates`)
+      const already = new Set((linksRes.data || []).map((l: MonitorTemplateLink) => l.template_id))
+      const pool = templates.filter((t: Template) => (!subId || t.subproject_id === subId))
+      const toLink = pool.filter((t: Template) => !already.has(t.id))
+      if (!toLink.length) { toast.info('Nenhum template novo para vincular'); return }
+      await Promise.all(toLink.map((t: Template) => axios.post(`${API}/monitors/${monitorId}/templates/${t.id}`)))
+      toast.success(`Vinculados ${toLink.length} templates`)
+      setTemplatesRefresh((prev: Record<string, number>) => ({ ...prev, [monitorId]: (prev[monitorId] || 0) + 1 }))
+      setLinkPanelOpen((prev: Record<string, boolean>) => ({ ...prev, [monitorId]: false }))
+    } catch (e) {
+      toast.error('Falha ao vincular todos os templates')
+    } finally {
+      setBatchLinking((prev: Record<string, boolean>) => ({ ...prev, [monitorId]: false }))
+    }
+  }
+
+  // Helper: montar schedule com vários horários por dia e período
+  // Conversão: entradas de horário são no fuso UTC-3 (Brasília). Convertê-las para UTC ao montar CRON.
+  function _brTimeToUtcHour(h: number): number { return (h + 3) % 24 }
+  function _shiftHourFieldToUTC(field: string): string {
+    const f = (field || '').trim()
+    if (!f || f === '*') return f
+    // Suporte a lista de horas "6,12,18" e número simples "6". Outros padrões permanecem como estão.
+    if (/^\d{1,2}$/.test(f)) {
+      const h = parseInt(f, 10)
+      if (!Number.isNaN(h)) return String(_brTimeToUtcHour(h))
+      return f
+    }
+    if (/^\d{1,2}(,\d{1,2})+$/.test(f)) {
+      const parts = f.split(',').map(x => parseInt(x, 10)).filter(x => !Number.isNaN(x))
+      return parts.map(_brTimeToUtcHour).map(x => String(x)).join(',')
+    }
+    // range/step complexos não convertidos automaticamente
+    return f
+  }
+  function _convertCronExprLocalBRtoUTC(expr: string): string {
+    const parts = (expr || '').trim().split(/\s+/)
+    if (parts.length < 2) return expr
+    const mm = parts[0]
+    const hh = _shiftHourFieldToUTC(parts[1])
+    const rest = parts.slice(2).join(' ')
+    return [mm, hh, rest].filter(Boolean).join(' ').trim()
+  }
+  function _convertScheduleLocalBRtoUTC(schedule: string | null): string | null {
+    if (!schedule) return null
+    // tratar sufixo "; until=YYYY-MM-DD" e expressões separadas por "|"
+    const [cronPart, ...opts] = schedule.split(';')
+    const exprs = cronPart.split('|').map(s => s.trim()).filter(Boolean)
+    const converted = exprs.map(_convertCronExprLocalBRtoUTC).join(' | ')
+    const suffix = opts.length ? ('; ' + opts.join(';').trim()) : ''
+    return (converted + (suffix ? ' ' + suffix : '')).trim()
+  }
+  function buildScheduleFromTimes(times: string[], dur: 'none'|'7d'|'10d'|'30d'|'custom', custom: string): string | null {
+    const normalized = (times || []).map(t => (t || '').trim()).filter(Boolean)
+    if (!normalized.length) return null
+    const exprs = normalized.map((t) => {
+      const [hh, mm] = t.split(':')
+      const h = parseInt(hh || '0', 10)
+      const m = parseInt(mm || '0', 10)
+      if (Number.isNaN(h) || Number.isNaN(m)) return ''
+      const hUTC = _brTimeToUtcHour(h)
+      return `${m} ${hUTC} * * *`
+    }).filter(Boolean)
+    if (!exprs.length) return null
+    let out = exprs.join(' | ')
+    let until: string | null = null
+    if (dur === '7d' || dur === '10d' || dur === '30d') {
+      const add = dur === '7d' ? 7 : dur === '10d' ? 10 : 30
+      const d = new Date()
+      d.setDate(d.getDate() + add)
+      // Use date part in UTC
+      until = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString().slice(0,10)
+    } else if (dur === 'custom' && custom) {
+      until = custom
+    }
+    if (until) out += `; until=${until}`
+    return out
+  }
+
+  // Helper: garantir quantidade de inputs de horário
+  function ensureTimeInputs(n: number) {
+    setTimesPerDay(n)
+    setTimeInputs((prev: string[]) => {
+      const arr = [...prev]
+      while (arr.length < n) arr.push('08:00')
+      if (arr.length > n) arr.length = n
+      return arr
+    })
+  }
+
   const refresh = async () => {
     if (!projectId) return
     const res = await axios.get<Monitor[]>(`${API}/projects/${projectId}/monitors`)
@@ -96,6 +267,13 @@ export default function MonitorsPage() {
 
     // Update busy map for each monitor based on latest runs
     res.data.forEach((m: Monitor) => updateBusy(m.id))
+    // Load stats for each monitor (last 7d)
+    res.data.forEach(async (m: Monitor) => {
+      try {
+        const s = await axios.get(`${API}/monitors/${m.id}/stats`, { params: { days: 7 } })
+        setStats((prev: any) => ({ ...prev, [m.id]: s.data }))
+      } catch {}
+    })
   }
   
   useEffect(() => { loadProjects() }, [])
@@ -133,7 +311,9 @@ export default function MonitorsPage() {
 
   const create = async () => {
     if (!projectId) { toast.error('Selecione um projeto para continuar'); return }
-    const finalCron = selectedCronPreset || customCron || null
+    // Montar CRON interpretando entradas como UTC-3 e convertendo para UTC antes de salvar
+    const localCron = useAdvancedSchedule ? buildScheduleFromTimes(timeInputs, durationType, customUntil) : (selectedCronPreset || customCron || null)
+    const finalCron = _convertScheduleLocalBRtoUTC(localCron)
     const finalEngines = selectedEngines.map((index: number) => ENGINE_PRESETS[index])
 
     setIsCreating(true)
@@ -159,6 +339,11 @@ export default function MonitorsPage() {
     setName('')
     setSelectedCronPreset('')
     setCustomCron('')
+    setUseAdvancedSchedule(false)
+    setTimesPerDay(1)
+    setTimeInputs(['08:00'])
+    setDurationType('none')
+    setCustomUntil('')
     setSelectedEngines([0])
     setSubprojectId('')
   }
@@ -302,13 +487,22 @@ export default function MonitorsPage() {
         <section className="border rounded-md p-4 space-y-3">
           <div>
             <div className="text-sm font-medium">Agendamento</div>
-            <div className="text-xs opacity-70">Escolha um preset recomendado ou informe uma expressão CRON.</div>
+            <div className="text-xs opacity-70">Escolha um preset recomendado, informe uma expressão CRON, ou use o modo avançado por horários.</div>
             <div className="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-              Selecionado: {selectedCronPreset
-                ? `${CRON_PRESETS.find(p => p.cron === selectedCronPreset)?.label} (${selectedCronPreset})`
-                : (customCron ? `Personalizado: ${customCron}` : '—')}
+              Selecionado: {useAdvancedSchedule
+                ? (buildScheduleFromTimes(timeInputs, durationType, customUntil) || '—')
+                : selectedCronPreset
+                  ? `${CRON_PRESETS.find(p => p.cron === selectedCronPreset)?.label} (${selectedCronPreset})`
+                  : (customCron ? `Personalizado: ${customCron}` : '—')}
             </div>
           </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={useAdvancedSchedule} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUseAdvancedSchedule(e.target.checked)} />
+              Usar modo avançado (várias vezes por dia + duração)
+            </label>
+          </div>
+          {!useAdvancedSchedule && (
           <div className="grid gap-2 sm:grid-cols-2">
             {CRON_PRESETS.map((preset: { label: string; cron: string; description: string }, index: number) => (
               <label
@@ -351,6 +545,41 @@ export default function MonitorsPage() {
               </div>
             </label>
           </div>
+          )}
+          {useAdvancedSchedule && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm">Vezes por dia:</span>
+              <Select value={String(timesPerDay)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => ensureTimeInputs(Number(e.target.value) || 1)}>
+                {[1,2,3,4,6].map(n => <option key={n} value={n}>{n}x</option>)}
+              </Select>
+              <Button size="sm" variant="outline" onClick={() => { ensureTimeInputs(3); setTimeInputs(['08:00','12:00','18:00']) }}>Preset 3x (08:00, 12:00, 18:00)</Button>
+              <Button size="sm" variant="outline" onClick={() => { ensureTimeInputs(4); setTimeInputs(['06:00','12:00','18:00','22:00']) }}>Preset 4x (06:00, 12:00, 18:00, 22:00)</Button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+              {timeInputs.slice(0, timesPerDay).map((t, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <label className="text-xs w-24">Horário {idx+1}</label>
+                  <input type="time" value={t} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTimeInputs(prev => prev.map((x, i) => i === idx ? e.target.value : x))} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm">Duração:</span>
+              <Select value={durationType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setDurationType(e.target.value as any)}>
+                <option value="none">Indefinido</option>
+                <option value="7d">1 semana</option>
+                <option value="10d">10 dias</option>
+                <option value="30d">30 dias</option>
+                <option value="custom">Data final…</option>
+              </Select>
+              {durationType === 'custom' && (
+                <input type="date" value={customUntil} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomUntil(e.target.value)} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+              )}
+            </div>
+            <div className="text-xs opacity-70">Expressão salva: <span className="font-mono">{buildScheduleFromTimes(timeInputs, durationType, customUntil) || '—'}</span></div>
+          </div>
+          )}
         </section>
 
         <section className="border rounded-md p-4 space-y-3">
@@ -419,10 +648,64 @@ export default function MonitorsPage() {
               <Button variant="secondary" onClick={() => runNow(m.id)} disabled={!!running[m.id] || !!busy[m.id]}>
                 {running[m.id] ? 'Executando…' : busy[m.id] ? 'Em execução…' : 'Executar agora'}
               </Button>
+              {!m.active && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-green-700 border-green-300 dark:border-green-800"
+                  onClick={async () => { await axios.patch(`${API}/monitors/${m.id}`, { active: true }); toast.success('Monitor reativado'); await refresh() }}
+                >
+                  Retomar monitor
+                </Button>
+              )}
+              <Button variant="outline" size="sm" className="text-red-600 border-red-300 dark:border-red-800" onClick={() => stopMonitor(m.id)} disabled={!!stopping[m.id]}>
+                {stopping[m.id] ? 'Parando…' : 'Parar monitor'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => clearMonitorRuns(m.id)} disabled={!!clearing[m.id]}>
+                {clearing[m.id] ? 'Limpando…' : 'Limpar runs'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => deleteMonitor(m.id)} disabled={!!deleting[m.id]} className="text-red-600">
+                {deleting[m.id] ? 'Apagando…' : 'Apagar'}
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => setExpanded((prev: Record<string, boolean>) => ({ ...prev, [m.id]: !prev[m.id] }))}>
                 {expanded[m.id] ? 'Recolher' : 'Detalhes'}
               </Button>
             </div>
+            {/* Schedule diagnostics (UTC-3 Brasília) */}
+            {m.schedule_info && (
+              <div className="text-xs flex flex-wrap items-center gap-2 opacity-80">
+                <span className="px-2 py-0.5 rounded border">Timezone: <b>{m.schedule_info.tz_label || 'UTC-3'}</b></span>
+                <span className="px-2 py-0.5 rounded border">Próxima (UTC-3): <b>{m.schedule_info.next_run_br || '—'}</b></span>
+                <span className="px-2 py-0.5 rounded border">Próximas: {(m.schedule_info.next_runs_br || []).join(', ') || '—'}</span>
+                {Array.isArray(m.schedule_info.daily_slots_br) && m.schedule_info.daily_slots_br.length > 0 && (
+                  <span className="px-2 py-0.5 rounded border">Hoje: {(m.schedule_info.daily_slots_br || []).join(', ')}</span>
+                )}
+                {(typeof m.schedule_info.next_index_today === 'number') && (
+                  <span className="px-2 py-0.5 rounded border">Próximo índice hoje: <b>{m.schedule_info.next_index_today}/{m.schedule_info.total_today || '-'}</b></span>
+                )}
+                {m.schedule_info.until && <span className="px-2 py-0.5 rounded border">Válido até: <b>{m.schedule_info.until}</b></span>}
+                <span className="text-[10px] opacity-60">Horários já convertidos para Brasília (UTC-3)</span>
+              </div>
+            )}
+
+            {/* Stats summary */}
+            {stats[m.id] && (() => {
+              const s = stats[m.id]
+              const today = new Date().toISOString().slice(0,10)
+              const rec = (s.by_day || []).find((d: any) => d.date === today)
+              const tTotal = rec?.total || 0
+              const tOk = rec?.completed || 0
+              const tRate = tTotal > 0 ? Math.round((tOk / tTotal) * 100) : 0
+              return (
+                <div className="text-xs flex flex-wrap items-center gap-2 opacity-80">
+                  <span className="px-2 py-0.5 rounded border">7d total: <b>{s.totals.total}</b></span>
+                  <span className="px-2 py-0.5 rounded border text-green-700 dark:text-green-300 border-green-300 dark:border-green-800">ok: <b>{s.totals.completed}</b></span>
+                  <span className="px-2 py-0.5 rounded border text-red-700 dark:text-red-300 border-red-300 dark:border-red-800">falhas: <b>{s.totals.failed}</b></span>
+                  <span className="px-2 py-0.5 rounded border">hoje: <b>{tTotal}</b></span>
+                  <span className="px-2 py-0.5 rounded border">sucesso hoje: <b>{tRate}%</b></span>
+                </div>
+              )
+            })()}
             {!cleanMode && <div className="text-xs opacity-70">Tema: {m.subproject_id || '—'} | Engines: {JSON.stringify(m.engines_json.engines)}</div>}
 
             {(!cleanMode || expanded[m.id]) && (
@@ -496,6 +779,14 @@ export default function MonitorsPage() {
                     >
                       {batchLinking[m.id] ? 'Vinculando…' : 'Vincular todos da categoria'}
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => attachAllTemplates(m.id, m.subproject_id)}
+                      disabled={!!batchLinking[m.id]}
+                    >
+                      {batchLinking[m.id] ? 'Vinculando…' : 'Vincular TODOS os templates'}
+                    </Button>
                   </>
                 )}
                 {linkSelect[m.id] && (
@@ -522,7 +813,85 @@ export default function MonitorsPage() {
               <label className="flex items-center gap-1 text-xs">
                 <input type="checkbox" defaultChecked={m.active} onChange={async (e: React.ChangeEvent<HTMLInputElement>)=>{ await axios.patch(`${API}/monitors/${m.id}`, { active: e.target.checked }); await refresh() }} /> ativo
               </label>
+              <Button size="sm" variant="outline" onClick={() => setAdvOpen(prev => ({ ...prev, [m.id]: !prev[m.id] }))}>
+                {advOpen[m.id] ? 'Fechar agendamento avançado' : 'Agendamento avançado'}
+              </Button>
             </div>
+            {advOpen[m.id] && (
+              <div className="mt-2 border rounded-md p-3 space-y-2">
+                {stats[m.id]?.by_day?.length ? (
+                  <div className="overflow-auto text-xs">
+                    <div className="font-medium mb-1">Execuções por dia (últimos 7d)</div>
+                    <table className="min-w-[320px]">
+                      <thead>
+                        <tr>
+                          <th className="text-left p-1">Dia</th>
+                          <th className="text-right p-1">Total</th>
+                          <th className="text-right p-1">OK</th>
+                          <th className="text-right p-1">Falhas</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stats[m.id].by_day.map((d: any) => (
+                          <tr key={d.date} className="border-t border-neutral-800">
+                            <td className="p-1">{d.date}</td>
+                            <td className="p-1 text-right">{d.total}</td>
+                            <td className="p-1 text-right text-green-600">{d.completed}</td>
+                            <td className="p-1 text-right text-red-600">{d.failed}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm">Vezes por dia:</span>
+                  <Select value={String(advCount[m.id] || 1)} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                    const n = Number(e.target.value) || 1
+                    setAdvCount(prev => ({ ...prev, [m.id]: n }))
+                    setAdvTimes(prev => {
+                      const cur = prev[m.id] || ['08:00']
+                      const arr = [...cur]
+                      while (arr.length < n) arr.push('08:00')
+                      if (arr.length > n) arr.length = n
+                      return { ...prev, [m.id]: arr }
+                    })
+                  }}>
+                    {[1,2,3,4,6].map(n => <option key={n} value={n}>{n}x</option>)}
+                  </Select>
+                  <Button size="sm" variant="outline" onClick={() => setAdvTimes(prev => ({ ...prev, [m.id]: ['08:00','12:00','18:00'] }))}>Preset 3x</Button>
+                  <Button size="sm" variant="outline" onClick={() => setAdvTimes(prev => ({ ...prev, [m.id]: ['06:00','12:00','18:00','22:00'] }))}>Preset 4x</Button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                  {(advTimes[m.id] || ['08:00']).slice(0, advCount[m.id] || 1).map((t, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <label className="text-xs w-24">Horário {idx+1}</label>
+                      <input type="time" value={t} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAdvTimes(prev => ({ ...prev, [m.id]: (prev[m.id] || ['08:00']).map((x, i) => i === idx ? e.target.value : x) }))} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm">Duração:</span>
+                  <Select value={advDuration[m.id] || 'none'} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setAdvDuration(prev => ({ ...prev, [m.id]: e.target.value as any }))}>
+                    <option value="none">Indefinido</option>
+                    <option value="7d">1 semana</option>
+                    <option value="10d">10 dias</option>
+                    <option value="30d">30 dias</option>
+                    <option value="custom">Data final…</option>
+                  </Select>
+                  {(advDuration[m.id] || 'none') === 'custom' && (
+                    <input type="date" value={advCustomUntil[m.id] || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAdvCustomUntil(prev => ({ ...prev, [m.id]: e.target.value }))} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+                  )}
+                  <Button size="sm" onClick={async () => {
+                    const expr = buildScheduleFromTimes(advTimes[m.id] || ['08:00'], (advDuration[m.id] || 'none'), advCustomUntil[m.id] || '')
+                    await axios.patch(`${API}/monitors/${m.id}`, { schedule_cron: expr })
+                    toast.success('Agendamento atualizado')
+                    await refresh()
+                  }}>Aplicar</Button>
+                </div>
+                <div className="text-xs opacity-70">Expressão: <span className="font-mono">{buildScheduleFromTimes(advTimes[m.id] || ['08:00'], (advDuration[m.id] || 'none'), advCustomUntil[m.id] || '') || '—'}</span></div>
+              </div>
+            )}
             </>
             )}
           </div>
@@ -600,21 +969,36 @@ function MonitorRuns({ monitorId }: { monitorId: string }) {
   const [runs, setRuns] = useState<MonitorRun[]>([])
   useEffect(() => { getMonitorRuns(monitorId).then(setRuns) }, [monitorId])
   const formatDate = (d?: string) => (d ? new Date(d).toLocaleString() : '-')
+  const fmtCost = (v?: number | null) => (v == null ? '-' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(v))
   return (
     <div className="overflow-auto text-xs">
       <table className="min-w-full">
-        <thead><tr><th className="text-left p-1">Run</th><th className="text-left p-1">Status</th><th className="text-left p-1">Início</th><th className="text-left p-1">Fim</th><th className="text-left p-1">ZCRS</th></tr></thead>
+        <thead>
+          <tr>
+            <th className="text-left p-1">Run</th>
+            <th className="text-left p-1">Engine</th>
+            <th className="text-left p-1">Status</th>
+            <th className="text-left p-1">Início</th>
+            <th className="text-left p-1">Fim</th>
+            <th className="text-left p-1">ZCRS</th>
+            <th className="text-left p-1">Ciclos</th>
+            <th className="text-left p-1">Custo</th>
+          </tr>
+        </thead>
         <tbody>
           {runs.map((r: MonitorRun) => (
             <tr key={r.id} className="border-t border-neutral-800">
               <td className="p-1"><a className="text-blue-600" href={`/runs/${r.id}`}>{r.id}</a></td>
+              <td className="p-1">{r.engine || '-'}</td>
               <td className="p-1">{r.status}</td>
               <td className="p-1">{formatDate(r.started_at)}</td>
               <td className="p-1">{formatDate(r.finished_at)}</td>
               <td className="p-1">{r.zcrs ?? '-'}</td>
+              <td className="p-1">{r.cycles_total ?? 1}</td>
+              <td className="p-1">{fmtCost(r.cost_usd)}</td>
             </tr>
           ))}
-          {!runs.length && <tr><td className="p-1" colSpan={5}>Sem runs.</td></tr>}
+          {!runs.length && <tr><td className="p-1" colSpan={8}>Sem runs.</td></tr>}
         </tbody>
       </table>
     </div>

@@ -12,6 +12,7 @@ export const http: AxiosInstance = axios.create({
 export type Project = { id: string; name: string }
 export type Subproject = { id: string; name: string; description?: string }
 export type Template = { id: string; category: string; name: string; text: string; intent?: string; persona?: string; subproject_id?: string }
+export type Monitor = { id: string; name: string; subproject_id?: string; schedule_cron?: string | null; engines_json?: any; active: boolean }
 
 export type RunListItem = {
   id: string
@@ -29,6 +30,13 @@ export type RunListItem = {
   tokens_total?: number
   cycles_total?: number
   cycle_delay_seconds?: number
+  // monitor/schedule
+  monitor_id?: string
+  schedule_date?: string
+  schedule_slot?: string
+  schedule_index_today?: number
+  schedule_total_today?: number
+  schedule_source?: string
 }
 
 export type EngineConfig = {
@@ -64,6 +72,14 @@ export type RunDetail = {
   cost_usd?: number
   latency_ms?: number
   cycles_total?: number
+  cycle_delay_seconds?: number
+  // monitor/schedule
+  monitor_id?: string
+  schedule_date?: string
+  schedule_slot?: string
+  schedule_index_today?: number
+  schedule_total_today?: number
+  schedule_source?: 'manual'|'monitor'|'monitor_now'
 }
 
 export type EventItem = { step: string; status: string; message?: string; created_at: string }
@@ -92,12 +108,20 @@ export const createPrompt = (projectId: string, body: { name: string; text: stri
   http.post(`/projects/${projectId}/prompts`, body).then(r => r.data)
 export const getPromptVersions = (promptId: string) => http.get<Array<{ id: string }>>(`/prompts/${promptId}/versions`).then(r => r.data)
 
+// ---------- Monitors ----------
+export const getMonitors = (projectId: string) => http.get<Monitor[]>(`/projects/${projectId}/monitors`).then(r => r.data)
+export const stopMonitor = (monitorId: string) => http.post(`/monitors/${monitorId}/stop`, {}).then(r => r.data)
+export const monitorStats = (monitorId: string, days = 7) => http.get<{ since: string; totals: { total: number; completed: number; failed: number }; by_day: Array<{ date: string; total: number; completed: number; failed: number }> }>(`/monitors/${monitorId}/stats`, { params: { days } }).then(r => r.data)
+export const deleteMonitorRuns = (monitorId: string) => http.delete<{ deleted: number }>(`/monitors/${monitorId}/runs`).then(r => r.data)
+
 // ---------- Runs ----------
 export type ListRunsParams = Partial<{
   project_id: string
   subproject_id: string
   engine: string
   status: string
+  schedule_source: 'manual'|'monitor'|'monitor_now'
+  monitor_id: string
   date_from: string // ISO with T00:00:00
   date_to: string   // ISO with T23:59:59
   page: number
@@ -139,3 +163,47 @@ export const getUrlTitle = (url: string) => http.get<{ title: string }>(`/utils/
 
 // ---------- Streaming (SSE) helper ----------
 export const openRunStream = (id: string) => new EventSource(`${API_BASE}/runs/${id}/stream`)
+
+// ---------- Sandbox ----------
+export type SandboxRequest = {
+  engine: 'openai' | 'gemini' | 'perplexity' | 'google_serp' | 'sandbox'
+  prompt: string
+  model?: string
+  config?: Record<string, any>
+  language?: string
+  region?: string
+  device?: string
+  timeout_seconds?: number
+}
+
+export type SandboxResponse = {
+  ok: boolean
+  engine: string
+  model?: string
+  timing_ms?: number
+  text_preview?: string
+  text?: string
+  truncated?: boolean
+  links?: Array<{ url: string; title?: string }>
+  web_search_used?: boolean
+  web_search_calls?: number
+  raw_keys?: string[]
+  output_types?: string[]
+  error?: string
+  request?: any
+}
+
+export const sandboxTest = (payload: SandboxRequest) =>
+  http.post<SandboxResponse>('/sandbox/test', payload).then(r => r.data)
+
+export type OpenAIModelsResponse = {
+  ok: boolean
+  ids?: string[]
+  count?: number
+  error?: string
+  organization?: string
+  project?: string
+}
+
+export const listOpenAIModels = (params: { org?: string; project?: string }) =>
+  http.get<OpenAIModelsResponse>('/sandbox/openai/models', { params }).then(r => r.data)
