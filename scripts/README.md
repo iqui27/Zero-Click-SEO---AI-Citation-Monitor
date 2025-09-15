@@ -240,6 +240,65 @@ For issues:
 3. Check system resources: `df -h && free -h`
 4. Contact system administrator or check MAINTENANCE.md
 
+## 🔄 Azure SQL Data Migration
+
+Use the migration helper to copy data between two Azure SQL (SQL Server) databases using the project's SQLAlchemy models. This preserves IDs and respects foreign keys.
+
+### 1) Prepare connection URLs
+- Always URL-encode special characters in passwords (e.g., `@` -> `%40`, `!` -> `%21`).
+- Format:
+
+```bash
+mssql+pyodbc://USERNAME:PASSWORD@HOST:1433/DATABASE?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
+```
+
+- Example TARGET (provided by infra):
+
+```bash
+mssql+pyodbc://usrMonumenta:Monu%402025%21@db-aigeo.database.windows.net:1433/db-ai-geo-hml?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
+```
+
+- SOURCE should be your current production Azure SQL URL.
+  Replace with your real values and encode the password if needed.
+
+### 2) Run the migration locally (recommended)
+
+```bash
+# From the repo root
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r backend/requirements.txt
+
+export SOURCE_DATABASE_URL="mssql+pyodbc://<user>:<pass_enc>@<old-host>:1433/<old-db>?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes"
+export TARGET_DATABASE_URL="mssql+pyodbc://usrMonumenta:Monu%402025%21@db-aigeo.database.windows.net:1433/db-ai-geo-hml?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes"
+
+python scripts/migrate_azure_sql.py
+```
+
+The script will:
+- Create the target schema if missing (`Base.metadata.create_all`).
+- Copy tables in FK-safe order, skipping rows that already exist by primary key.
+- Handle `monitor_templates` specially (identity PK) to avoid conflicts.
+
+### 3) Point the app to the new database
+
+Update your `.env` used by Docker Compose with:
+
+```env
+DATABASE_URL=mssql+pyodbc://usrMonumenta:Monu%402025%21@db-aigeo.database.windows.net:1433/db-ai-geo-hml?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
+```
+
+Then restart services:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### Notes
+- Ensure outbound traffic to port 1433 is allowed from your server.
+- Avoid committing `.env` or secrets to version control. Rotate old credentials if they were exposed.
+- If you previously relied on `extra_hosts` for DNS, update it to the new DB host if necessary.
+
 ---
 
 **Last Updated**: $(date)

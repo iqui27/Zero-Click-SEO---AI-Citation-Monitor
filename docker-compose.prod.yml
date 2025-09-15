@@ -34,7 +34,7 @@ services:
       - public_net
       - internal_net
     healthcheck:
-      test: ["CMD-SHELL", "nginx -t && curl -f http://localhost:80/health || exit 1"]
+      test: ["CMD-SHELL", "nginx -t && curl -f http://localhost:80/nginx-health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
