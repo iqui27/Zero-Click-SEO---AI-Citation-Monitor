@@ -300,6 +300,7 @@ class MonitorHistory(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     monitor_id: Mapped[str] = mapped_column(VARCHAR(50), nullable=False)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="NO ACTION"))
+    subproject_id: Mapped[str | None] = mapped_column(ForeignKey("subprojects.id", ondelete="NO ACTION"), nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     deleted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     runs_total: Mapped[int] = mapped_column(Integer, default=0)
@@ -309,4 +310,20 @@ class MonitorHistory(Base):
     __table_args__ = (
         UniqueConstraint("monitor_id", name="uq_monitor_history_monitor_id"),
         Index("ix_monitor_history_project", "project_id"),
+    )
+
+
+class MonitorHistoryRun(Base):
+    __tablename__ = "monitor_history_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    history_monitor_id: Mapped[str] = mapped_column(
+        VARCHAR(50), ForeignKey("monitor_history.monitor_id", ondelete="CASCADE")
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+
+    __table_args__ = (
+        Index("ix_monitor_history_runs_hist", "history_monitor_id"),
+        Index("ix_monitor_history_runs_run", "run_id"),
+        UniqueConstraint("history_monitor_id", "run_id", name="uq_monitor_history_run"),
     )

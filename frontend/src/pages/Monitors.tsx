@@ -60,6 +60,19 @@ type Project = { id: string; name: string }
 
 type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null; prompt_id?: string | null; prompt_name?: string | null; schedule_date?: string | null; schedule_slot?: string | null; schedule_source?: 'monitor'|'monitor_now'|'manual'|string }
 
+type MonitorHistoryItem = {
+  monitor_id: string
+  project_id: string
+  subproject_id?: string | null
+  name: string
+  status: 'active' | 'deleted'
+  runs_total: number
+  runs_completed: number
+  runs_failed: number
+  deleted_at?: string | null
+  inferred?: boolean
+}
+
 async function getMonitorRuns(monitorId: string): Promise<MonitorRun[]> {
   const res = await axios.get<MonitorRun[]>(`${API}/monitors/${monitorId}/runs`)
   return res.data
@@ -106,6 +119,52 @@ export default function MonitorsPage() {
   const [advCount, setAdvCount] = useState<Record<string, number>>({})
   const [advDuration, setAdvDuration] = useState<Record<string, 'none'|'7d'|'10d'|'30d'|'custom'>>({})
   const [advCustomUntil, setAdvCustomUntil] = useState<Record<string, string>>({})
+
+  // History for export FULL (ativos / deletados / pré-snapshot)
+  const [history, setHistory] = useState<MonitorHistoryItem[]>([])
+  const [exportType, setExportType] = useState<'active'|'deleted'|'inferred'>('active')
+  const [exportMonitorId, setExportMonitorId] = useState<string>('')
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await axios.get<MonitorHistoryItem[]>(`${API}/monitors/history`, { params: { project_id: projectId || undefined } })
+        setHistory(res.data || [])
+      } catch (e) {
+        // noop
+      }
+    }
+    load()
+  }, [projectId])
+
+  const exportOptions = useMemo(() => {
+    return (history || []).filter((h: MonitorHistoryItem) => {
+      if (exportType === 'active') return h.status === 'active'
+      if (exportType === 'deleted') return h.status === 'deleted' && !h.inferred
+      return !!h.inferred
+    })
+  }, [history, exportType])
+
+  useEffect(() => {
+    // reset selected when type or options change
+    if (!exportMonitorId || !exportOptions.find(o => o.monitor_id === exportMonitorId)) {
+      setExportMonitorId(exportOptions[0]?.monitor_id || '')
+    }
+  }, [exportType, history])
+
+  const downloadFullExport = () => {
+    const sel = exportOptions.find(o => o.monitor_id === exportMonitorId)
+    if (!sel) return
+    if (exportType === 'active') {
+      window.open(`${API}/monitors/${sel.monitor_id}/export_full.csv`, '_blank')
+    } else if (exportType === 'deleted' && !sel.inferred) {
+      window.open(`${API}/monitors/history/${sel.monitor_id}/export_full.csv`, '_blank')
+    } else {
+      const params = new URLSearchParams({ project_id: sel.project_id })
+      if (sel.subproject_id) params.append('subproject_id', sel.subproject_id)
+      window.open(`${API}/monitors/history/inferred_export_full.csv?${params.toString()}`, '_blank')
+    }
+  }
 
   const loadProjects = async () => {
     try {
@@ -473,6 +532,22 @@ export default function MonitorsPage() {
         >
           Exportar histórico (CSV)
         </Button>
+        {/* Export FULL (runs completas) */}
+        <span className="text-sm opacity-60">|</span>
+        <Select value={exportType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExportType(e.target.value as any)}>
+          <option value="active">Ativos</option>
+          <option value="deleted">Apagados</option>
+          <option value="inferred">Pré-snapshot</option>
+        </Select>
+        <Select value={exportMonitorId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExportMonitorId(e.target.value)} disabled={!exportOptions.length}>
+          {!exportOptions.length && <option value="">(nenhum)</option>}
+          {exportOptions.map((opt: MonitorHistoryItem) => (
+            <option key={opt.monitor_id} value={opt.monitor_id}>
+              {opt.name} {opt.deleted_at ? '(apagado)' : ''} — {opt.runs_total} runs
+            </option>
+          ))}
+        </Select>
+        <Button size="sm" variant="outline" onClick={downloadFullExport} disabled={!exportOptions.length || !exportMonitorId}>Baixar runs (FULL CSV)</Button>
         {cleanMode && !showCreate && (
           <Button size="sm" onClick={() => setShowCreate(true)}>Novo monitor</Button>
         )}

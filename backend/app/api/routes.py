@@ -13,7 +13,7 @@ import csv
 import os
 
 from app.db.session import SessionLocal
-from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, Insight
+from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, MonitorHistoryRun, Insight
 from app.schemas.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -472,6 +472,190 @@ def delete_domain(domain_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> StreamingResponse:
+    if not run_ids:
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
+            "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
+            "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
+            "prompt_id","prompt_name","prompt_version_id","prompt_text","response_text","screenshot_url",
+            "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
+        ])
+        buf.seek(0)
+        headers = {"Content-Disposition": f"attachment; filename={filename}"}
+        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
+
+    # Core run info with joins
+    rows = (
+        db.query(
+            Run.id,
+            Run.project_id,
+            Run.subproject_id,
+            Run.status,
+            Run.started_at,
+            Run.finished_at,
+            Run.cycles_total,
+            Run.zcrs,
+            Run.tokens_input,
+            Run.tokens_output,
+            Run.tokens_total,
+            Run.cost_usd,
+            Run.latency_ms,
+            Run.citations_count,
+            Run.our_citations_count,
+            Run.unique_domains_count,
+            Run.model_name,
+            Run.error_code,
+            Run.schedule_date,
+            Run.schedule_slot,
+            Run.schedule_index_today,
+            Run.schedule_total_today,
+            Run.schedule_source,
+            PromptVersion.id.label("prompt_version_id"),
+            PromptVersion.text.label("prompt_text"),
+            Prompt.id.label("prompt_id"),
+            Prompt.name.label("prompt_name"),
+            Engine.name.label("engine"),
+        )
+        .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
+        .filter(Run.id.in_(run_ids))
+        .order_by(
+            case((Run.started_at.is_(None), 1), else_=0).asc(),
+            Run.started_at.asc(),
+            Run.id.asc(),
+        )
+        .all()
+    )
+
+    # Evidence maps (response text and screenshot_url)
+    ev_text: dict[str, str] = {}
+    ev_shot: dict[str, str] = {}
+    evs = (
+        db.query(Evidence)
+        .filter(Evidence.run_id.in_(run_ids))
+        .order_by(Evidence.id.desc())
+        .all()
+    )
+    for ev in evs:
+        rid = ev.run_id
+        if rid not in ev_text:
+            try:
+                parsed = (ev.parsed_json or {}).get("parsed") if isinstance(ev.parsed_json, dict) else {}
+                text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
+                if (text_val or "").strip():
+                    ev_text[rid] = str(text_val).strip()
+            except Exception:
+                pass
+        if rid not in ev_shot and (ev.screenshot_url or "").strip():
+            ev_shot[rid] = ev.screenshot_url or ""
+
+    # Citations by run
+    cit_rows = (
+        db.query(Citation.run_id, Citation.domain, Citation.url, Citation.anchor, Citation.position, Citation.type, Citation.is_ours)
+        .filter(Citation.run_id.in_(run_ids))
+        .order_by(Citation.run_id.asc(), Citation.id.asc())
+        .all()
+    )
+    cits_by_run: dict[str, list[tuple[str | None, str | None, str | None, str | None, str | None, bool]] ] = {}
+    for rid, dom, url, anchor, position, ctype, is_ours in cit_rows:
+        cits_by_run.setdefault(rid, []).append((dom, url, anchor, position, ctype, bool(is_ours)))
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
+        "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
+        "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
+        "prompt_id","prompt_name","prompt_version_id","prompt_text","response_text","screenshot_url",
+        "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
+    ])
+    for r in rows:
+        rid = r.id
+        base = [
+            r.id,
+            r.project_id,
+            r.subproject_id,
+            getattr(r, "engine", None) or "",
+            r.model_name or "",
+            r.status or "",
+            r.started_at.isoformat() if r.started_at else "",
+            r.finished_at.isoformat() if r.finished_at else "",
+            r.cycles_total or "",
+            r.zcrs if r.zcrs is not None else "",
+            r.tokens_input if r.tokens_input is not None else "",
+            r.tokens_output if r.tokens_output is not None else "",
+            r.tokens_total if r.tokens_total is not None else "",
+            float(r.cost_usd) if r.cost_usd is not None else "",
+            r.latency_ms if r.latency_ms is not None else "",
+            r.citations_count if r.citations_count is not None else "",
+            r.our_citations_count if r.our_citations_count is not None else "",
+            r.unique_domains_count if r.unique_domains_count is not None else "",
+            r.error_code or "",
+            r.schedule_date.isoformat() if r.schedule_date else "",
+            r.schedule_slot or "",
+            r.schedule_index_today if r.schedule_index_today is not None else "",
+            r.schedule_total_today if r.schedule_total_today is not None else "",
+            r.schedule_source or "",
+            getattr(r, "prompt_id", None) or "",
+            getattr(r, "prompt_name", None) or "",
+            getattr(r, "prompt_version_id", None) or "",
+            getattr(r, "prompt_text", None) or "",
+            ev_text.get(rid, ""),
+            ev_shot.get(rid, ""),
+        ]
+        cits = cits_by_run.get(rid, [])
+        if not cits:
+            writer.writerow(base + ["", "", "", "", "", ""])  # no citations
+        else:
+            for (dom, url, anchor, pos, ctype, is_ours) in cits:
+                writer.writerow(base + [dom or "", url or "", anchor or "", pos or "", ctype or "", 1 if is_ours else 0])
+
+    buf.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
+
+
+@api_router.get("/monitors/{monitor_id}/export_full.csv")
+def export_monitor_runs_full_csv(monitor_id: str, db: Session = Depends(get_db)):
+    run_ids = [rid for (rid,) in db.query(Run.id).filter(Run.monitor_id == monitor_id).all()]
+    return _stream_runs_full_csv(db, run_ids, f"monitor_{monitor_id}_runs_full.csv")
+
+
+@api_router.get("/monitors/history/{monitor_id}/export_full.csv")
+def export_deleted_monitor_runs_full_csv(monitor_id: str, db: Session = Depends(get_db)):
+    # Lookup explicit mapping
+    rid_map = [rid for (rid,) in db.query(MonitorHistoryRun.run_id).filter(MonitorHistoryRun.history_monitor_id == monitor_id).all()]
+    if not rid_map:
+        # Fallback: infer by project/subproject if available
+        h = db.query(MonitorHistory).filter(MonitorHistory.monitor_id == monitor_id).first()
+        if not h:
+            raise HTTPException(status_code=404, detail="Monitor (histórico) não encontrado")
+        q = db.query(Run.id).filter(Run.project_id == h.project_id, Run.monitor_id.is_(None))
+        q = q.filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
+        if h.subproject_id:
+            q = q.filter(Run.subproject_id == h.subproject_id)
+        rid_map = [rid for (rid,) in q.all()]
+    return _stream_runs_full_csv(db, rid_map, f"deleted_monitor_{monitor_id}_runs_full.csv")
+
+
+@api_router.get("/monitors/history/inferred_export_full.csv")
+def export_inferred_monitor_runs_full_csv(project_id: str, subproject_id: str | None = None, db: Session = Depends(get_db)):
+    q = (
+        db.query(Run.id)
+        .filter(Run.project_id == project_id, Run.monitor_id.is_(None))
+        .filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
+    )
+    if subproject_id:
+        q = q.filter(Run.subproject_id == subproject_id)
+    ids = [rid for (rid,) in q.all()]
+    sp_suffix = subproject_id or "none"
+    return _stream_runs_full_csv(db, ids, f"inferred_pre_snapshot_{project_id}_{sp_suffix}_runs_full.csv")
+
+
 @api_router.get("/monitors/history")
 def monitors_history(project_id: str | None = None, db: Session = Depends(get_db)):
     """Lista monitores ativos (com contagem ao vivo) e monitores deletados (via MonitorHistory).
@@ -508,12 +692,14 @@ def monitors_history(project_id: str | None = None, db: Session = Depends(get_db
         out.append({
             "monitor_id": m.id,
             "project_id": m.project_id,
+            "subproject_id": m.subproject_id,
             "name": m.name,
             "status": "active",
             "runs_total": c["total"],
             "runs_completed": c["completed"],
             "runs_failed": c["failed"],
             "deleted_at": None,
+            "inferred": False,
         })
     # Deleted monitors from history
     hist_q = db.query(MonitorHistory)
@@ -523,12 +709,14 @@ def monitors_history(project_id: str | None = None, db: Session = Depends(get_db
         out.append({
             "monitor_id": h.monitor_id,
             "project_id": h.project_id,
+            "subproject_id": h.subproject_id,
             "name": h.name,
             "status": "deleted",
             "runs_total": int(h.runs_total or 0),
             "runs_completed": int(h.runs_completed or 0),
             "runs_failed": int(h.runs_failed or 0),
             "deleted_at": h.deleted_at,
+            "inferred": False,
         })
     # Backfill for orphan runs (pre-snapshot): runs with monitor_id NULL but schedule_source from monitor
     orphan_q = (
@@ -559,12 +747,14 @@ def monitors_history(project_id: str | None = None, db: Session = Depends(get_db
         out.append({
             "monitor_id": f"inferred_pre_snapshot_{pid or 'p'}_{spid or 'none'}",
             "project_id": pid,
+            "subproject_id": spid,
             "name": label,
             "status": "deleted",
             "runs_total": int(getattr(r, "total", 0) or 0),
             "runs_completed": int(getattr(r, "completed", 0) or 0),
             "runs_failed": int(getattr(r, "failed", 0) or 0),
             "deleted_at": None,
+            "inferred": True,
         })
     # Sort by status (deleted last) and name for stability
     out.sort(key=lambda x: (0 if x["status"] == "active" else 1, (x["name"] or "~").lower()))
@@ -1963,9 +2153,17 @@ def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Monitor não encontrado")
     # Snapshot: before desassociar runs, compute totals and persist into MonitorHistory
     try:
-        total = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id).scalar() or 0
+        run_rows = db.query(Run.id, Run.subproject_id).filter(Run.monitor_id == monitor_id).all()
+        total = len(run_rows)
         completed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.status == "completed").scalar() or 0
         failed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.status == "failed").scalar() or 0
+        # Predominant subproject among runs
+        sp_counts: dict[str | None, int] = {}
+        for _rid, spid in run_rows:
+            sp_counts[spid] = sp_counts.get(spid, 0) + 1
+        predominant_sp: str | None = None
+        if sp_counts:
+            predominant_sp = max(sp_counts.items(), key=lambda kv: kv[1])[0]
         # Insert or update history (idempotent by monitor_id)
         existing = (
             db.query(MonitorHistory)
@@ -1975,6 +2173,7 @@ def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
         if existing:
             existing.project_id = mon.project_id
             existing.name = mon.name
+            existing.subproject_id = predominant_sp
             existing.runs_total = int(total)
             existing.runs_completed = int(completed)
             existing.runs_failed = int(failed)
@@ -1982,6 +2181,7 @@ def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
             hist = MonitorHistory(
                 monitor_id=monitor_id,
                 project_id=mon.project_id,
+                subproject_id=predominant_sp,
                 name=mon.name,
                 runs_total=int(total),
                 runs_completed=int(completed),
@@ -1989,6 +2189,16 @@ def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
             )
             db.add(hist)
         db.commit()
+        # Snapshot run mapping for precise exports
+        try:
+            if run_rows:
+                values = []
+                for rid, _sp in run_rows:
+                    values.append(MonitorHistoryRun(history_monitor_id=monitor_id, run_id=rid))
+                db.bulk_save_objects(values)
+                db.commit()
+        except Exception:
+            db.rollback()
     except Exception:
         # Non-blocking snapshot
         try:
