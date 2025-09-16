@@ -128,7 +128,7 @@ export default function MonitorsPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await axios.get<MonitorHistoryItem[]>(`${API}/monitors/history`, { params: { project_id: projectId || undefined } })
+        const res = await axios.get<MonitorHistoryItem[]>(`${API}/monitors/history`)
         setHistory(res.data || [])
       } catch (e) {
         // noop

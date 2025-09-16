@@ -634,7 +634,12 @@ def export_deleted_monitor_runs_full_csv(monitor_id: str, db: Session = Depends(
         h = db.query(MonitorHistory).filter(MonitorHistory.monitor_id == monitor_id).first()
         if not h:
             raise HTTPException(status_code=404, detail="Monitor (histórico) não encontrado")
-        q = db.query(Run.id).filter(Run.project_id == h.project_id, Run.monitor_id.is_(None))
+        q = (
+            db.query(Run.id)
+            .outerjoin(Monitor, Monitor.id == Run.monitor_id)
+            .filter(Monitor.id.is_(None))
+            .filter(Run.project_id == h.project_id)
+        )
         q = q.filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
         if h.subproject_id:
             q = q.filter(Run.subproject_id == h.subproject_id)
@@ -646,8 +651,16 @@ def export_deleted_monitor_runs_full_csv(monitor_id: str, db: Session = Depends(
 def export_inferred_monitor_runs_full_csv(project_id: str, subproject_id: str | None = None, db: Session = Depends(get_db)):
     q = (
         db.query(Run.id)
-        .filter(Run.project_id == project_id, Run.monitor_id.is_(None))
-        .filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
+        .outerjoin(Monitor, Monitor.id == Run.monitor_id)
+        .filter(Monitor.id.is_(None))
+        .filter(Run.project_id == project_id)
+        .filter(
+            or_(
+                Run.schedule_source == "monitor",
+                Run.schedule_source == "monitor_now",
+                and_(Run.schedule_source.is_(None), Run.schedule_slot.isnot(None)),
+            )
+        )
     )
     if subproject_id:
         q = q.filter(Run.subproject_id == subproject_id)
@@ -727,8 +740,15 @@ def monitors_history(project_id: str | None = None, db: Session = Depends(get_db
             func.sum(case((Run.status == "completed", 1), else_=0)).label("completed"),
             func.sum(case((Run.status == "failed", 1), else_=0)).label("failed"),
         )
-        .filter(Run.monitor_id.is_(None))
-        .filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
+        .outerjoin(Monitor, Monitor.id == Run.monitor_id)
+        .filter(Monitor.id.is_(None))
+        .filter(
+            or_(
+                Run.schedule_source == "monitor",
+                Run.schedule_source == "monitor_now",
+                and_(Run.schedule_source.is_(None), Run.schedule_slot.isnot(None)),
+            )
+        )
     )
     if project_id:
         orphan_q = orphan_q.filter(Run.project_id == project_id)
