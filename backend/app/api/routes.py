@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text, literal_column, and_, or_, Date, select
+from sqlalchemy import func, text, literal_column, and_, or_, Date, select, case
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone, timedelta
 from croniter import croniter
@@ -1725,8 +1725,12 @@ def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
             Run.cycles_total,
             Run.cost_usd,
             Engine.name.label("engine"),
+            Prompt.id.label("prompt_id"),
+            Prompt.name.label("prompt_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
         .filter(Run.monitor_id == monitor_id)
         .order_by(
             case((Run.started_at.is_(None), 1), else_=0).asc(),
@@ -1745,6 +1749,8 @@ def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
             "cycles_total": r.cycles_total,
             "cost_usd": r.cost_usd,
             "engine": getattr(r, "engine", None),
+            "prompt_id": getattr(r, "prompt_id", None),
+            "prompt_name": getattr(r, "prompt_name", None),
         }
         for r in rows
     ]

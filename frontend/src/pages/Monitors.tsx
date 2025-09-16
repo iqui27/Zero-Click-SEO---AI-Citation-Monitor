@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -58,7 +58,7 @@ type Subproject = { id: string; name: string }
 
 type Project = { id: string; name: string }
 
-type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null }
+type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null; prompt_id?: string | null; prompt_name?: string | null }
 
 async function getMonitorRuns(monitorId: string): Promise<MonitorRun[]> {
   const res = await axios.get<MonitorRun[]>(`${API}/monitors/${monitorId}/runs`)
@@ -969,38 +969,81 @@ function MonitorRuns({ monitorId }: { monitorId: string }) {
   const [runs, setRuns] = useState<MonitorRun[]>([])
   useEffect(() => { getMonitorRuns(monitorId).then(setRuns) }, [monitorId])
   const formatDate = (d?: string) => (d ? new Date(d).toLocaleString() : '-')
+  const formatTime = (d?: string) => {
+    if (!d) return '-'
+    const dt = new Date(d)
+    return isNaN(dt.getTime()) ? '-' : dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
   const fmtCost = (v?: number | null) => (v == null ? '-' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(v))
+  const grouped = useMemo(() => {
+    const m = new Map<string, { promptId: string | null | undefined; promptName: string; items: MonitorRun[] }>()
+    for (const r of runs) {
+      const key = String(r.prompt_id || r.prompt_name || 'sem_prompt')
+      const nameRaw = (r.prompt_name || 'Sem Prompt')
+      const name = nameRaw.replace(/^Template:\s*/i, '').replace(/^Run:\s*/i, '').trim() || 'Sem Prompt'
+      if (!m.has(key)) m.set(key, { promptId: r.prompt_id, promptName: name, items: [] })
+      m.get(key)!.items.push(r)
+    }
+    const arr = Array.from(m.values())
+    for (const g of arr) {
+      g.items.sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')))
+    }
+    arr.sort((a, b) => a.promptName.localeCompare(b.promptName))
+    return arr
+  }, [runs])
+
+  const statusChip = (s: string) => (
+    s === 'completed' ? 'bg-green-100 text-green-800 border-green-300 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800' :
+    s === 'failed' ? 'bg-red-100 text-red-800 border-red-300 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800' :
+    s === 'running' ? 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-800' :
+    'bg-neutral-100 text-neutral-800 border-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700'
+  )
+
+  if (!runs.length) {
+    return <div className="text-xs opacity-70">Sem runs.</div>
+  }
+
   return (
-    <div className="overflow-auto text-xs">
-      <table className="min-w-full">
-        <thead>
-          <tr>
-            <th className="text-left p-1">Run</th>
-            <th className="text-left p-1">Engine</th>
-            <th className="text-left p-1">Status</th>
-            <th className="text-left p-1">Início</th>
-            <th className="text-left p-1">Fim</th>
-            <th className="text-left p-1">ZCRS</th>
-            <th className="text-left p-1">Ciclos</th>
-            <th className="text-left p-1">Custo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((r: MonitorRun) => (
-            <tr key={r.id} className="border-t border-neutral-800">
-              <td className="p-1"><a className="text-blue-600" href={`/runs/${r.id}`}>{r.id}</a></td>
-              <td className="p-1">{r.engine || '-'}</td>
-              <td className="p-1">{r.status}</td>
-              <td className="p-1">{formatDate(r.started_at)}</td>
-              <td className="p-1">{formatDate(r.finished_at)}</td>
-              <td className="p-1">{r.zcrs ?? '-'}</td>
-              <td className="p-1">{r.cycles_total ?? 1}</td>
-              <td className="p-1">{fmtCost(r.cost_usd)}</td>
-            </tr>
-          ))}
-          {!runs.length && <tr><td className="p-1" colSpan={8}>Sem runs.</td></tr>}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {grouped.map((g) => {
+        const total = g.items.length
+        const ok = g.items.filter(it => it.status === 'completed').length
+        const fail = g.items.filter(it => it.status === 'failed').length
+        return (
+          <div key={`${g.promptId || g.promptName}`} className="rounded-md border border-neutral-200 dark:border-neutral-800">
+            <div className="px-3 py-2 bg-white dark:bg-neutral-900 flex items-center justify-between">
+              <div className="text-sm font-medium truncate">
+                {g.promptName}
+              </div>
+              <div className="text-xs opacity-70 flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded border">total: <b>{total}</b></span>
+                <span className="px-2 py-0.5 rounded border text-green-700 dark:text-green-300 border-green-300 dark:border-green-800">ok: <b>{ok}</b></span>
+                <span className="px-2 py-0.5 rounded border text-red-700 dark:text-red-300 border-red-300 dark:border-red-800">falhas: <b>{fail}</b></span>
+              </div>
+            </div>
+            <div className="p-3 overflow-x-auto">
+              <div className="flex items-stretch gap-2 min-w-[600px]">
+                {g.items.map((r) => (
+                  <a key={r.id} href={`/runs/${r.id}`} className={`group w-[240px] flex-shrink-0 rounded-md border px-3 py-2 hover:shadow transition-all ${statusChip(String(r.status))}`} title={`${g.promptName} • ${r.engine || ''}`}>
+                    <div className="text-[11px] opacity-80 flex items-center justify-between">
+                      <span className="font-mono">{r.id}</span>
+                      <span>{formatTime(r.started_at)}</span>
+                    </div>
+                    <div className="mt-1 text-xs flex items-center justify-between opacity-90">
+                      <span>{r.engine || '-'}</span>
+                      <span>Ciclos: {r.cycles_total ?? 1}</span>
+                    </div>
+                    <div className="mt-1 text-[11px] flex items-center justify-between opacity-70">
+                      <span>ZCRS: {r.zcrs ?? '-'}</span>
+                      <span>{fmtCost(r.cost_usd)}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
