@@ -292,3 +292,21 @@ class MonitorTemplate(Base):
     __table_args__ = (
         UniqueConstraint("monitor_id", "template_id", name="uq_monitor_template"),
     )
+
+
+class MonitorHistory(Base):
+    __tablename__ = "monitor_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    monitor_id: Mapped[str] = mapped_column(VARCHAR(50), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="NO ACTION"))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    runs_total: Mapped[int] = mapped_column(Integer, default=0)
+    runs_completed: Mapped[int] = mapped_column(Integer, default=0)
+    runs_failed: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("monitor_id", name="uq_monitor_history_monitor_id"),
+        Index("ix_monitor_history_project", "project_id"),
+    )

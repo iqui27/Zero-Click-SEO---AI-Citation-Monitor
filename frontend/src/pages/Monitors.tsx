@@ -462,6 +462,17 @@ export default function MonitorsPage() {
           <input type="checkbox" checked={cleanMode} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCleanMode(e.target.checked)} />
           Modo clean
         </label>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+            window.open(`${API}/monitors/history.csv${q}`, '_blank')
+          }}
+          title="Exportar histórico de monitores (inclui monitores apagados)"
+        >
+          Exportar histórico (CSV)
+        </Button>
         {cleanMode && !showCreate && (
           <Button size="sm" onClick={() => setShowCreate(true)}>Novo monitor</Button>
         )}
@@ -663,6 +674,14 @@ export default function MonitorsPage() {
               </Button>
               <Button variant="outline" size="sm" onClick={() => clearMonitorRuns(m.id)} disabled={!!clearing[m.id]}>
                 {clearing[m.id] ? 'Limpando…' : 'Limpar runs'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(`${API}/monitors/${m.id}/export.csv`, '_blank')}
+                title="Baixar CSV com respostas e citações (apenas runs com resposta)"
+              >
+                Exportar CSV
               </Button>
               <Button variant="ghost" size="sm" onClick={() => deleteMonitor(m.id)} disabled={!!deleting[m.id]} className="text-red-600">
                 {deleting[m.id] ? 'Apagando…' : 'Apagar'}

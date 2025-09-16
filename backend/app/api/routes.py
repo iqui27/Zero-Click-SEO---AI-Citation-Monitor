@@ -13,7 +13,7 @@ import csv
 import os
 
 from app.db.session import SessionLocal
-from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, Insight
+from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, Insight
 from app.schemas.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -281,6 +281,138 @@ def list_domains(project_id: str, db: Session = Depends(get_db)):
     ]
 
 
+@api_router.get("/monitors/{monitor_id}/export.csv")
+def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
+    """Exporta CSV com runs do monitor incluindo resposta (texto) e citações.
+    Somente inclui runs que possuem resposta não vazia (parsed.text).
+    """
+    # Subconsulta: existe Evidence com parsed.text não nulo/não vazio?
+    txt = func.json_value(Evidence.parsed_json, '$.parsed.text')
+    subq = (
+        select(1)
+        .select_from(Evidence)
+        .where(Evidence.run_id == Run.id)
+        .where(txt.isnot(None))
+        .where(func.ltrim(func.rtrim(txt)) != '')
+    )
+
+    rows = (
+        db.query(
+            Run.id,
+            Run.started_at,
+            Run.finished_at,
+            Run.status,
+            Run.zcrs,
+            Run.amr_flag,
+            Run.dcr_flag,
+            Run.tokens_total,
+            Run.cost_usd,
+            Run.model_name,
+            Engine.name.label("engine"),
+        )
+        .join(Engine, Engine.id == Run.engine_id)
+        .filter(Run.monitor_id == monitor_id)
+        .filter(subq.exists())
+        .order_by(
+            case((Run.started_at.is_(None), 1), else_=0).asc(),
+            Run.started_at.asc(),
+            Run.id.asc(),
+        )
+        .all()
+    )
+
+    run_ids = [r.id for r in rows]
+
+    # Mapear evidência com texto por run (prioriza a mais recente com texto)
+    ev_map: dict[str, Evidence] = {}
+    if run_ids:
+        evs = (
+            db.query(Evidence)
+            .filter(Evidence.run_id.in_(run_ids))
+            .order_by(Evidence.id.desc())
+            .all()
+        )
+        for ev in evs:
+            if ev.run_id in ev_map:
+                continue
+            try:
+                parsed = (ev.parsed_json or {}).get("parsed") if isinstance(ev.parsed_json, dict) else {}
+                text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
+                if (text_val or "").strip():
+                    ev_map[ev.run_id] = ev
+            except Exception:
+                continue
+
+    # Coletar citações por run
+    cits_by_run: dict[str, list[tuple[str | None, str | None, bool]] ] = {}
+    if run_ids:
+        cits = (
+            db.query(Citation.run_id, Citation.domain, Citation.url, Citation.is_ours)
+            .filter(Citation.run_id.in_(run_ids))
+            .all()
+        )
+        for rid, dom, url, is_ours in cits:
+            cits_by_run.setdefault(rid, []).append((dom, url, bool(is_ours)))
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "run_id",
+        "monitor_id",
+        "engine",
+        "status",
+        "started_at",
+        "finished_at",
+        "model",
+        "tokens_total",
+        "cost_usd",
+        "zcrs",
+        "amr",
+        "dcr",
+        "response_text",
+        "citations_domains",
+        "citations_urls",
+    ])
+
+    for r in rows:
+        rid = r.id
+        # Extrair texto de resposta da evidência mais recente
+        ev = ev_map.get(rid)
+        parsed = (ev.parsed_json or {}).get("parsed") if ev and isinstance(ev.parsed_json, dict) else {}
+        text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
+        text_str = (text_val or "").strip()
+        if not text_str:
+            # Defesa extra (deveria ter sido filtrado pela subconsulta)
+            continue
+
+        # Agregar citações
+        cits = cits_by_run.get(rid, [])
+        doms = [d or "" for (d, _u, _ours) in cits if d]
+        urls = [u or "" for (_d, u, _ours) in cits if u]
+
+        writer.writerow([
+            rid,
+            str(monitor_id),
+            getattr(r, "engine", None) or "",
+            r.status or "",
+            r.started_at.isoformat() if r.started_at else "",
+            r.finished_at.isoformat() if r.finished_at else "",
+            getattr(r, "model_name", None) or "",
+            int(r.tokens_total) if getattr(r, "tokens_total", None) is not None else "",
+            float(r.cost_usd) if getattr(r, "cost_usd", None) is not None else "",
+            r.zcrs if r.zcrs is not None else "",
+            (1 if r.amr_flag else 0) if r.amr_flag is not None else "",
+            (1 if r.dcr_flag else 0) if r.dcr_flag is not None else "",
+            text_str,
+            " ".join(doms),
+            " ".join(urls),
+        ])
+
+    buf.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename=monitor_{monitor_id}_responses_citations.csv"}
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
+
+
 @api_router.get("/runs/count")
 def count_runs(
     db: Session = Depends(get_db),
@@ -338,6 +470,127 @@ def delete_domain(domain_id: str, db: Session = Depends(get_db)):
     db.delete(d)
     db.commit()
     return {"ok": True}
+
+
+@api_router.get("/monitors/history")
+def monitors_history(project_id: str | None = None, db: Session = Depends(get_db)):
+    """Lista monitores ativos (com contagem ao vivo) e monitores deletados (via MonitorHistory).
+    Campos: monitor_id, name, status (active|deleted), runs_total, runs_completed, runs_failed, deleted_at?, project_id
+    """
+    out: list[dict] = []
+    # Active monitors with live counts
+    mons_q = db.query(Monitor)
+    if project_id:
+        mons_q = mons_q.filter(Monitor.project_id == project_id)
+    mons = mons_q.all()
+    active_ids = [m.id for m in mons]
+    counts_map: dict[str, dict] = {}
+    if active_ids:
+        agg = (
+            db.query(
+                Run.monitor_id.label("mid"),
+                func.count(Run.id).label("total"),
+                func.sum(case((Run.status == "completed", 1), else_=0)).label("completed"),
+                func.sum(case((Run.status == "failed", 1), else_=0)).label("failed"),
+            )
+            .filter(Run.monitor_id.in_(active_ids))
+            .group_by(Run.monitor_id)
+            .all()
+        )
+        for row in agg:
+            counts_map[row.mid] = {
+                "total": int(row.total or 0),
+                "completed": int(row.completed or 0),
+                "failed": int(row.failed or 0),
+            }
+    for m in mons:
+        c = counts_map.get(m.id, {"total": 0, "completed": 0, "failed": 0})
+        out.append({
+            "monitor_id": m.id,
+            "project_id": m.project_id,
+            "name": m.name,
+            "status": "active",
+            "runs_total": c["total"],
+            "runs_completed": c["completed"],
+            "runs_failed": c["failed"],
+            "deleted_at": None,
+        })
+    # Deleted monitors from history
+    hist_q = db.query(MonitorHistory)
+    if project_id:
+        hist_q = hist_q.filter(MonitorHistory.project_id == project_id)
+    for h in hist_q.order_by(MonitorHistory.deleted_at.desc()).all():
+        out.append({
+            "monitor_id": h.monitor_id,
+            "project_id": h.project_id,
+            "name": h.name,
+            "status": "deleted",
+            "runs_total": int(h.runs_total or 0),
+            "runs_completed": int(h.runs_completed or 0),
+            "runs_failed": int(h.runs_failed or 0),
+            "deleted_at": h.deleted_at,
+        })
+    # Backfill for orphan runs (pre-snapshot): runs with monitor_id NULL but schedule_source from monitor
+    orphan_q = (
+        db.query(
+            Run.project_id.label("pid"),
+            Run.subproject_id.label("spid"),
+            func.count(Run.id).label("total"),
+            func.sum(case((Run.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((Run.status == "failed", 1), else_=0)).label("failed"),
+        )
+        .filter(Run.monitor_id.is_(None))
+        .filter(or_(Run.schedule_source == "monitor", Run.schedule_source == "monitor_now"))
+    )
+    if project_id:
+        orphan_q = orphan_q.filter(Run.project_id == project_id)
+    orphan_rows = orphan_q.group_by(Run.project_id, Run.subproject_id).all()
+    # Map subproject_id -> name
+    sp_names: dict[str | None, str] = {}
+    sp_ids = [r.spid for r in orphan_rows if r.spid]
+    if sp_ids:
+        for sp in db.query(SubProject).filter(SubProject.id.in_(sp_ids)).all():
+            sp_names[sp.id] = sp.name
+    for r in orphan_rows:
+        spid = getattr(r, "spid", None)
+        pid = getattr(r, "pid", None)
+        name = sp_names.get(spid) if spid else None
+        label = f"Pré-snapshot (Tema: {name})" if name else "Pré-snapshot (Tema: —)"
+        out.append({
+            "monitor_id": f"inferred_pre_snapshot_{pid or 'p'}_{spid or 'none'}",
+            "project_id": pid,
+            "name": label,
+            "status": "deleted",
+            "runs_total": int(getattr(r, "total", 0) or 0),
+            "runs_completed": int(getattr(r, "completed", 0) or 0),
+            "runs_failed": int(getattr(r, "failed", 0) or 0),
+            "deleted_at": None,
+        })
+    # Sort by status (deleted last) and name for stability
+    out.sort(key=lambda x: (0 if x["status"] == "active" else 1, (x["name"] or "~").lower()))
+    return out
+
+
+@api_router.get("/monitors/history.csv")
+def monitors_history_csv(project_id: str | None = None, db: Session = Depends(get_db)):
+    items = monitors_history(project_id=project_id, db=db)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["monitor_id", "project_id", "name", "status", "runs_total", "runs_completed", "runs_failed", "deleted_at"])
+    for it in items:
+        writer.writerow([
+            it.get("monitor_id", ""),
+            it.get("project_id", ""),
+            it.get("name", ""),
+            it.get("status", ""),
+            it.get("runs_total", 0),
+            it.get("runs_completed", 0),
+            it.get("runs_failed", 0),
+            (it.get("deleted_at").isoformat() if it.get("deleted_at") else ""),
+        ])
+    buf.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=monitors_history.csv"}
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
 @api_router.post("/projects/{project_id}/prompts", response_model=PromptOut)
@@ -1708,6 +1961,40 @@ def delete_monitor(monitor_id: str, db: Session = Depends(get_db)):
     mon = db.get(Monitor, monitor_id)
     if not mon:
         raise HTTPException(status_code=404, detail="Monitor não encontrado")
+    # Snapshot: before desassociar runs, compute totals and persist into MonitorHistory
+    try:
+        total = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id).scalar() or 0
+        completed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.status == "completed").scalar() or 0
+        failed = db.query(func.count(Run.id)).filter(Run.monitor_id == monitor_id, Run.status == "failed").scalar() or 0
+        # Insert or update history (idempotent by monitor_id)
+        existing = (
+            db.query(MonitorHistory)
+            .filter(MonitorHistory.monitor_id == monitor_id)
+            .first()
+        )
+        if existing:
+            existing.project_id = mon.project_id
+            existing.name = mon.name
+            existing.runs_total = int(total)
+            existing.runs_completed = int(completed)
+            existing.runs_failed = int(failed)
+        else:
+            hist = MonitorHistory(
+                monitor_id=monitor_id,
+                project_id=mon.project_id,
+                name=mon.name,
+                runs_total=int(total),
+                runs_completed=int(completed),
+                runs_failed=int(failed),
+            )
+            db.add(hist)
+        db.commit()
+    except Exception:
+        # Non-blocking snapshot
+        try:
+            db.rollback()
+        except Exception:
+            pass
     # Desassociar runs para evitar bloqueio de FK
     try:
         db.query(Run).filter(Run.monitor_id == monitor_id).update({Run.monitor_id: None}, synchronize_session=False)
