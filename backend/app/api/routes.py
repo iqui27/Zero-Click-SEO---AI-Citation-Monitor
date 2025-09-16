@@ -642,6 +642,7 @@ def list_runs(
             func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
             PromptTemplate.category.label("template_category"),
             func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
+            Monitor.name.label("monitor_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
@@ -660,6 +661,7 @@ def list_runs(
             ),
         )
         .outerjoin(SubProject, SubProject.id == Run.subproject_id)
+        .outerjoin(Monitor, Monitor.id == Run.monitor_id)
     )
     if project_id:
         q = q.filter(Run.project_id == project_id)
@@ -735,6 +737,7 @@ def list_runs(
             schedule_index_today=getattr(r, "schedule_index_today", None),
             schedule_total_today=getattr(r, "schedule_total_today", None),
             schedule_source=getattr(r, "schedule_source", None),
+            monitor_name=getattr(r, "monitor_name", None),
         )
         for r in rows
     ]
@@ -1609,6 +1612,8 @@ def run_monitor_now(monitor_id: str, db: Session = Depends(get_db)):
                 try:
                     if str(e.get("name") or "").lower() == "gemini" and "max_output_tokens" not in cfg_json:
                         cfg_json["max_output_tokens"] = 9000
+                    if str(e.get("name") or "").lower() == "gemini" and cfg_json.get("use_search") is None:
+                        cfg_json["use_search"] = True
                 except Exception:
                     pass
                 engine = Engine(
@@ -1622,33 +1627,35 @@ def run_monitor_now(monitor_id: str, db: Session = Depends(get_db)):
                 db.commit()
                 db.refresh(engine)
             else:
-                # If exists but requested config differs, create an ephemeral engine just for this run
-                req_cfg = (e.get("config_json") or None)
-                cur_cfg = (engine.config_json or None)
-                cfg_differs = False
+                # If exists, MERGE requested config over current one to preserve credentials (e.g., api_key)
+                req_cfg = dict(e.get("config_json") or {})
+                cur_cfg = dict(engine.config_json or {})
+                merged_cfg = dict(cur_cfg)
                 try:
-                    cfg_differs = (req_cfg is not None and req_cfg != cur_cfg)
+                    merged_cfg.update(req_cfg)
                 except Exception:
-                    cfg_differs = False
-                if cfg_differs:
-                    tmp_cfg = dict(req_cfg)
-                    try:
-                        tmp_cfg.setdefault("_ephemeral", True)
-                        tmp_cfg.pop("_main", None)
-                    except Exception:
-                        pass
-                    # Default Gemini tokens if missing
-                    try:
-                        if str(e.get("name") or "").lower() == "gemini" and "max_output_tokens" not in tmp_cfg:
-                            tmp_cfg["max_output_tokens"] = 9000
-                    except Exception:
-                        pass
+                    pass
+                # Ephemeral mark and clean flags
+                try:
+                    merged_cfg.setdefault("_ephemeral", True)
+                    merged_cfg.pop("_main", None)
+                except Exception:
+                    pass
+                # Defaults for Gemini
+                try:
+                    if str(e.get("name") or "").lower() == "gemini":
+                        merged_cfg.setdefault("use_search", True)
+                        merged_cfg.setdefault("max_output_tokens", 9000)
+                except Exception:
+                    pass
+                # Only create a temp engine if merged differs from current
+                if merged_cfg != cur_cfg:
                     engine = Engine(
                         project_id=mon.project_id,
                         name=e.get("name"),
                         region=e.get("region"),
                         device=e.get("device"),
-                        config_json=tmp_cfg,
+                        config_json=merged_cfg,
                     )
                     db.add(engine)
                     db.commit()
@@ -1727,6 +1734,9 @@ def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
             Engine.name.label("engine"),
             Prompt.id.label("prompt_id"),
             Prompt.name.label("prompt_name"),
+            Run.schedule_date,
+            Run.schedule_slot,
+            Run.schedule_source,
         )
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
@@ -1751,6 +1761,9 @@ def list_runs_by_monitor(monitor_id: str, db: Session = Depends(get_db)):
             "engine": getattr(r, "engine", None),
             "prompt_id": getattr(r, "prompt_id", None),
             "prompt_name": getattr(r, "prompt_name", None),
+            "schedule_date": getattr(r, "schedule_date", None),
+            "schedule_slot": getattr(r, "schedule_slot", None),
+            "schedule_source": getattr(r, "schedule_source", None),
         }
         for r in rows
     ]

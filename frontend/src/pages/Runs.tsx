@@ -23,12 +23,13 @@ type RunItem = {
   tokens_total?: number
   cost_usd?: number
   template_name?: string
-  cycles_total?: number
-  cycle_delay_seconds?: number
   template_category?: string
   subproject_name?: string
+  cycles_total?: number
+  cycle_delay_seconds?: number
   // monitor/schedule
   monitor_id?: string
+  monitor_name?: string
   schedule_date?: string
   schedule_slot?: string
   schedule_index_today?: number
@@ -51,6 +52,7 @@ function VirtualizedRunsListView({ items, onDelete }: { items: RunItem[]; onDele
           <span className="px-2 py-0.5 rounded-full text-xs border border-neutral-300 dark:border-neutral-700">{r.status}</span>
         </td>
         <td className="px-3 py-2">{r.engine}</td>
+        <td className="px-3 py-2 truncate max-w-[18ch]" title={r.monitor_name || ''}>{r.monitor_name || '-'}</td>
         <td className="px-3 py-2 truncate max-w-[22ch]" title={r.template_name || ''}>{r.template_name || '-'}</td>
         <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.started_at)}</td>
         <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.finished_at)}</td>
@@ -72,6 +74,7 @@ function VirtualizedRunsListView({ items, onDelete }: { items: RunItem[]; onDele
           <tr className="text-left">
             <th className="px-3 py-2">Status</th>
             <th className="px-3 py-2">Engine</th>
+            <th className="px-3 py-2">Monitor</th>
             <th className="px-3 py-2">Template</th>
             <th className="px-3 py-2">Início</th>
             <th className="px-3 py-2">Fim</th>
@@ -693,6 +696,10 @@ function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void |
                   </div>
                 )}
                 <div className="mt-2 flex items-center gap-3 text-xs text-gray-600 dark:text-gray-300">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800" title={r.monitor_name || ''}>
+                    <span className="opacity-70">Monitor:</span>
+                    <span className="max-w-[18ch] truncate">{r.monitor_name || '-'}</span>
+                  </span>
                   <span>ZCRS: {r.zcrs?.toFixed(1) ?? '-'}</span>
                   <span>Ciclos: {typeof r.cycles_total === 'number' ? r.cycles_total : '-'}</span>
                   <span>Tokens: {typeof r.tokens_total === 'number' ? formatNumberCompact(r.tokens_total) : '-'}</span>

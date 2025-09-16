@@ -366,43 +366,47 @@ class MonitorScheduler:
                             db.commit()
                             db.refresh(engine)
                         else:
-                            # If exists but config differs, create an ephemeral engine for this run
-                            req_cfg = (engine_config.get('config_json') or None)
-                            cur_cfg = (engine.config_json or None)
+                            # If exists but config differs, create an ephemeral engine for this run using MERGED config
+                            req_cfg = (engine_config.get('config_json') or {})
+                            cur_cfg = (engine.config_json or {})
+                            # Merge preserving credentials stored in cur_cfg; req_cfg overrides model / tuning
+                            merged_cfg = dict(cur_cfg)
                             try:
-                                cfg_differs = (req_cfg is not None and req_cfg != cur_cfg)
+                                merged_cfg.update(req_cfg)
                             except Exception:
-                                cfg_differs = False
+                                pass
+                            # Mark as ephemeral and clean flags
+                            try:
+                                merged_cfg.setdefault('_ephemeral', True)
+                                merged_cfg.pop('_main', None)
+                            except Exception:
+                                pass
+                            # Apply defensive defaults again over the merged cfg
+                            try:
+                                name_lower = str(engine_config.get('name') or '').lower()
+                            except Exception:
+                                name_lower = ''
+                            try:
+                                if name_lower == 'gemini':
+                                    merged_cfg.setdefault('use_search', True)
+                                    merged_cfg.setdefault('force_search', True)
+                                    merged_cfg.setdefault('max_output_tokens', 9000)
+                            except Exception:
+                                pass
+                            try:
+                                if name_lower == 'openai':
+                                    merged_cfg.setdefault('web_search', True)
+                            except Exception:
+                                pass
+                            # Only create ephemeral if something actually differs; otherwise reuse existing engine
+                            cfg_differs = (merged_cfg != cur_cfg)
                             if cfg_differs:
-                                tmp_cfg = dict(req_cfg)
-                                try:
-                                    tmp_cfg.setdefault('_ephemeral', True)
-                                    tmp_cfg.pop('_main', None)
-                                except Exception:
-                                    pass
-                                # Defensive defaults for per-run ephemeral config
-                                try:
-                                    name_lower = str(engine_config.get('name') or '').lower()
-                                except Exception:
-                                    name_lower = ''
-                                try:
-                                    if name_lower == 'gemini':
-                                        tmp_cfg.setdefault('use_search', True)
-                                        tmp_cfg.setdefault('force_search', True)
-                                        tmp_cfg.setdefault('max_output_tokens', 9000)
-                                except Exception:
-                                    pass
-                                try:
-                                    if name_lower == 'openai':
-                                        tmp_cfg.setdefault('web_search', True)
-                                except Exception:
-                                    pass
                                 engine = Engine(
                                     project_id=monitor.project_id,
                                     name=engine_config.get('name'),
                                     region=engine_config.get('region'),
                                     device=engine_config.get('device'),
-                                    config_json=tmp_cfg,
+                                    config_json=merged_cfg,
                                 )
                                 db.add(engine)
                                 db.commit()

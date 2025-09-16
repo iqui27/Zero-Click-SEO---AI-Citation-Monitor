@@ -113,6 +113,7 @@ class RunListItem(BaseModel):
     cycle_delay_seconds: Optional[int] = None
     # monitor/schedule
     monitor_id: Optional[str] = None
+    monitor_name: Optional[str] = None
     schedule_date: Optional[datetime] = None
     schedule_slot: Optional[str] = None
     schedule_index_today: Optional[int] = None

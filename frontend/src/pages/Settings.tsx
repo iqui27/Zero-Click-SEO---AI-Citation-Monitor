@@ -595,12 +595,14 @@ function GeminiConfigEditor({ initial, onSave }: { initial: any; onSave: (cfg: a
   const [dynEnabled, setDynEnabled] = useState<boolean>(initial?.dynamic_retrieval ? true : true)
   const [dynMode, setDynMode] = useState<string>(initial?.dynamic_retrieval?.mode || 'MODE_DYNAMIC')
   const [dynThr, setDynThr] = useState<number>(Number(initial?.dynamic_retrieval?.dynamic_threshold ?? 0.7))
+  const [apiKey, setApiKey] = useState<string>(initial?.api_key || '')
 
   const cfg = useMemo(() => {
     const c: any = { model, use_search: useSearch, max_output_tokens: maxOutputTokens, search_context_size: searchContextSize }
     if (dynEnabled) c.dynamic_retrieval = { mode: dynMode, dynamic_threshold: dynThr }
+    if (apiKey && apiKey.trim()) c.api_key = apiKey.trim()
     return c
-  }, [model, useSearch, maxOutputTokens, searchContextSize, dynEnabled, dynMode, dynThr])
+  }, [model, useSearch, maxOutputTokens, searchContextSize, dynEnabled, dynMode, dynThr, apiKey])
 
   return (
     <div className="grid gap-3">
@@ -623,6 +625,10 @@ function GeminiConfigEditor({ initial, onSave }: { initial: any; onSave: (cfg: a
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-2"><input type="checkbox" checked={useSearch} onChange={(e)=>setUseSearch(e.target.checked)} /> Usar web search</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={dynEnabled} onChange={(e)=>setDynEnabled(e.target.checked)} /> Ajuste dinâmico (retrieval)</label>
+      </div>
+      <div>
+        <label className="text-xs opacity-70">API key (opcional, sobrescreve .env)</label>
+        <Input placeholder="AIza..." value={apiKey} onChange={(e)=>setApiKey(e.target.value)} />
       </div>
       {dynEnabled && (
         <div className="grid sm:grid-cols-2 gap-3">

@@ -28,9 +28,10 @@ class GeminiAdapter:
     name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        # Prefer new Google GenAI SDK client (ai.google.dev). The API key can be passed or read from env.
+        # Prefer new Google GenAI SDK client (ai.google.dev). API key can come from arg or env.
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         self.default_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        # Note: we will (re)build a client in fetch() if a per-run key is provided in config
         self.client: Optional[genai.Client] = genai.Client(api_key=self.api_key) if self.api_key else None
 
     def _resolve_model(self, cfg: dict | None) -> str:
@@ -79,12 +80,17 @@ class GeminiAdapter:
             return types.GenerateContentConfig()
 
     async def fetch(self, input: FetchInput) -> RawEvidence:
-        if not self.client:
-            return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
-
-        model_name = self._resolve_model(input.get("config"))
-        base_prompt = input["query"]
+        # Allow per-run key via config.api_key; fallback to adapter/env key
         cfg = input.get("config") or {}
+        cfg_api_key = cfg.get("api_key") or cfg.get("GOOGLE_API_KEY") or cfg.get("GEMINI_API_KEY")
+        eff_key = cfg_api_key or self.api_key
+        if not eff_key:
+            return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
+        # Build a client with the effective key (do not mutate self.client permanently)
+        client = genai.Client(api_key=eff_key)
+
+        model_name = self._resolve_model(cfg)
+        base_prompt = input["query"]
 
         # Strategies order can be influenced by config.force_search
         use_search: bool = cfg.get("use_search", True)
@@ -156,7 +162,7 @@ class GeminiAdapter:
                 config = _config_for_strategy(strategy)
 
                 def _gen_content(params: Dict[str, Any]):
-                    return self.client.models.generate_content(**params)
+                    return client.models.generate_content(**params)
                 resp = await asyncio.to_thread(
                     _gen_content,
                     {
@@ -193,7 +199,7 @@ class GeminiAdapter:
                 if not has_text:
                     try:
                         def _gen_content2(params: Dict[str, Any]):
-                            return self.client.models.generate_content(**params)
+                            return client.models.generate_content(**params)
                         resp2 = await asyncio.to_thread(
                             _gen_content2,
                             {

@@ -32,6 +32,7 @@ export type RunListItem = {
   cycle_delay_seconds?: number
   // monitor/schedule
   monitor_id?: string
+  monitor_name?: string
   schedule_date?: string
   schedule_slot?: string
   schedule_index_today?: number

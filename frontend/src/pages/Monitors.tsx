@@ -58,7 +58,7 @@ type Subproject = { id: string; name: string }
 
 type Project = { id: string; name: string }
 
-type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null; prompt_id?: string | null; prompt_name?: string | null }
+type MonitorRun = { id: string; status: string; started_at?: string; finished_at?: string; zcrs?: number | null; engine?: string | null; cycles_total?: number | null; cost_usd?: number | null; prompt_id?: string | null; prompt_name?: string | null; schedule_date?: string | null; schedule_slot?: string | null; schedule_source?: 'monitor'|'monitor_now'|'manual'|string }
 
 async function getMonitorRuns(monitorId: string): Promise<MonitorRun[]> {
   const res = await axios.get<MonitorRun[]>(`${API}/monitors/${monitorId}/runs`)
@@ -803,7 +803,7 @@ export default function MonitorsPage() {
             </div>
             <div className="grid gap-1">
               <div className="text-sm opacity-70">Histórico</div>
-              <MonitorRuns monitorId={m.id} />
+              <MonitorRuns monitorId={m.id} scheduleInfo={m.schedule_info || undefined} />
             </div>
             <div className="flex items-center gap-2">
               <Select value={m.schedule_cron || ''} onChange={async (e: React.ChangeEvent<HTMLSelectElement>)=>{ await axios.patch(`${API}/monitors/${m.id}`, { schedule_cron: e.target.value || null }); await refresh() }}>
@@ -965,7 +965,7 @@ function MonitorTemplates(
   )
 }
 
-function MonitorRuns({ monitorId }: { monitorId: string }) {
+function MonitorRuns({ monitorId, scheduleInfo }: { monitorId: string; scheduleInfo?: { tz?: string; tz_label?: string; next_run_br?: string | null; next_runs_br?: string[]; daily_slots_br?: string[] } }) {
   const [runs, setRuns] = useState<MonitorRun[]>([])
   useEffect(() => { getMonitorRuns(monitorId).then(setRuns) }, [monitorId])
   const formatDate = (d?: string) => (d ? new Date(d).toLocaleString() : '-')
@@ -992,19 +992,29 @@ function MonitorRuns({ monitorId }: { monitorId: string }) {
     return arr
   }, [runs])
 
-  const statusChip = (s: string) => (
-    s === 'completed' ? 'bg-green-100 text-green-800 border-green-300 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800' :
-    s === 'failed' ? 'bg-red-100 text-red-800 border-red-300 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800' :
-    s === 'running' ? 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-800' :
-    'bg-neutral-100 text-neutral-800 border-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700'
-  )
+  const statusChip = (s: string, src?: string) => {
+    if (s === 'completed') return 'bg-green-100 text-green-800 border-green-300 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800'
+    if (s === 'failed') return 'bg-red-100 text-red-800 border-red-300 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800'
+    if (s === 'running') return 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-800'
+    // queued / pending — tint by source for clarity
+    if (s === 'queued' && src === 'monitor_now') return 'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800'
+    if (s === 'queued' && src === 'monitor') return 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-900/20 dark:text-sky-300 dark:border-sky-800'
+    if (s === 'queued') return 'bg-neutral-100 text-neutral-800 border-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700'
+    return 'bg-neutral-100 text-neutral-800 border-neutral-300 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700'
+  }
 
   if (!runs.length) {
     return <div className="text-xs opacity-70">Sem runs.</div>
   }
 
+  const nextRunLabel = (scheduleInfo?.next_run_br || (scheduleInfo?.next_runs_br || [])[0]) || ''
   return (
     <div className="space-y-3">
+      {nextRunLabel && (
+        <div className="flex items-center gap-2 text-xs opacity-80">
+          <span className="px-2 py-0.5 rounded-full border bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800">Próxima: {nextRunLabel}</span>
+        </div>
+      )}
       {grouped.map((g) => {
         const total = g.items.length
         const ok = g.items.filter(it => it.status === 'completed').length
@@ -1024,10 +1034,16 @@ function MonitorRuns({ monitorId }: { monitorId: string }) {
             <div className="p-3 overflow-x-auto">
               <div className="flex items-stretch gap-2 min-w-[600px]">
                 {g.items.map((r) => (
-                  <a key={r.id} href={`/runs/${r.id}`} className={`group w-[240px] flex-shrink-0 rounded-md border px-3 py-2 hover:shadow transition-all ${statusChip(String(r.status))}`} title={`${g.promptName} • ${r.engine || ''}`}>
+                  <a key={r.id} href={`/runs/${r.id}`} className={`group w-[260px] flex-shrink-0 rounded-md border px-3 py-2 hover:shadow transition-all ${statusChip(String(r.status), String(r.schedule_source || ''))}`} title={`${g.promptName} • ${r.engine || ''}`}>
                     <div className="text-[11px] opacity-80 flex items-center justify-between">
                       <span className="font-mono">{r.id}</span>
-                      <span>{formatTime(r.started_at)}</span>
+                      <span>
+                        {r.status === 'queued' && r.schedule_slot ? (
+                          <span title="Agendado" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-sky-300 bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-300 dark:border-sky-800">{r.schedule_slot}</span>
+                        ) : (
+                          formatTime(r.started_at)
+                        )}
+                      </span>
                     </div>
                     <div className="mt-1 text-xs flex items-center justify-between opacity-90">
                       <span>{r.engine || '-'}</span>
