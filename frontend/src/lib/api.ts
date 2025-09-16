@@ -128,6 +128,7 @@ export type ListRunsParams = Partial<{
   page_size: number
   order_by: string
   order_dir: 'asc'|'desc'
+  has_text: boolean
 }>
 
 export const listRuns = (params: ListRunsParams) => http.get<RunListItem[]>('/runs', { params }).then(r => r.data)
@@ -136,6 +137,7 @@ export const getRun = (id: string) => http.get<RunDetail>(`/runs/${id}`).then(r 
 export const getRunReport = (id: string) => http.get<Report>(`/runs/${id}/report`).then(r => r.data)
 export const getRunEvidences = (id: string) => http.get<Evidence[]>(`/runs/${id}/evidences`).then(r => r.data)
 export const getRunEvents = (id: string) => http.get<EventItem[]>(`/runs/${id}/events`).then(r => r.data)
+export const countRuns = (params: ListRunsParams) => http.get<{ count: number }>(`/runs/count`, { params }).then(r => r.data)
 
 // ---------- Project & Subproject management ----------
 export const updateProject = (

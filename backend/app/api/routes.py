@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text, literal_column, and_, or_, Date
+from sqlalchemy import func, text, literal_column, and_, or_, Date, select
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone, timedelta
 from croniter import croniter
@@ -279,6 +279,55 @@ def list_domains(project_id: str, db: Session = Depends(get_db)):
         }
         for d in domains
     ]
+
+
+@api_router.get("/runs/count")
+def count_runs(
+    db: Session = Depends(get_db),
+    project_id: str | None = None,
+    subproject_id: str | None = None,
+    engine: str | None = None,
+    status: str | None = None,
+    schedule_source: str | None = None,
+    monitor_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    has_text: bool | None = None,
+):
+    q = db.query(func.count(Run.id))
+    q = q.select_from(Run)
+    # Join with Engine only if filtering by engine name to avoid duplicates
+    if engine:
+        q = q.join(Engine, Engine.id == Run.engine_id)
+        q = q.filter(Engine.name == engine)
+
+    if project_id:
+        q = q.filter(Run.project_id == project_id)
+    if subproject_id:
+        q = q.filter(Run.subproject_id == subproject_id)
+    if status:
+        q = q.filter(Run.status == status)
+    if schedule_source:
+        q = q.filter(Run.schedule_source == schedule_source)
+    if monitor_id:
+        q = q.filter(Run.monitor_id == monitor_id)
+    if date_from:
+        q = q.filter(Run.started_at >= text(":df")).params(df=date_from)
+    if date_to:
+        q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
+    if has_text:
+        txt = func.json_value(Evidence.parsed_json, '$.text')
+        subq = (
+            select(1)
+            .select_from(Evidence)
+            .where(Evidence.run_id == Run.id)
+            .where(txt.isnot(None))
+            .where(func.ltrim(func.rtrim(txt)) != '')
+        )
+        q = q.filter(subq.exists())
+
+    total = q.scalar() or 0
+    return {"count": int(total)}
 
 
 @api_router.delete("/domains/{domain_id}")
@@ -568,6 +617,7 @@ def list_runs(
     page_size: int = 100,
     order_by: str | None = None,
     order_dir: str | None = None,
+    has_text: bool | None = None,
 ):
     q = (
         db.query(
@@ -627,6 +677,17 @@ def list_runs(
         q = q.filter(Run.started_at >= text(":df")).params(df=date_from)
     if date_to:
         q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
+    # Optional: only runs that have any evidence with parsed_json.text not empty
+    if has_text:
+        txt = func.json_value(Evidence.parsed_json, '$.text')
+        subq = (
+            select(1)
+            .select_from(Evidence)
+            .where(Evidence.run_id == Run.id)
+            .where(txt.isnot(None))
+            .where(func.ltrim(func.rtrim(txt)) != '')
+        )
+        q = q.filter(subq.exists())
     # paginação
     page = max(1, int(page or 1))
     page_size = max(10, min(int(page_size or 100), 200))

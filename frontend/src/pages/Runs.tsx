@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams, useLocation, Link } from 'react-router-dom'
+import { FixedSizeList as VList, ListChildComponentProps } from 'react-window'
 import { Trash2, Plus, Search, Filter, X, RefreshCw, Clock } from 'lucide-react'
-import { listRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun, getMonitors } from '../lib/api'
+import { listRuns, countRuns, getProjects, getSubprojects, getTemplates, createProject, createPrompt, getPromptVersions, createRun, deleteRun, getMonitors } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { formatNumberCompact } from '../lib/utils'
 import { Input } from '../components/ui/input'
@@ -33,6 +34,70 @@ type RunItem = {
   schedule_index_today?: number
   schedule_total_today?: number
   schedule_source?: string
+}
+
+function VirtualizedRunsListView({ items, onDelete }: { items: RunItem[]; onDelete: (id: string) => void | Promise<void> }) {
+  const formatDate = (d?: string) => {
+    if (!d) return '-'
+    const hasTZ = /Z|[+\-]\d{2}:?\d{2}$/.test(d)
+    const dt = new Date(hasTZ ? d : d + 'Z')
+    return isNaN(dt.getTime()) ? d : dt.toLocaleString()
+  }
+  const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const r = items[index]
+    return (
+      <tr style={style as any} className="border-t border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50/70 dark:hover:bg-neutral-800/50">
+        <td className="px-3 py-2">
+          <span className="px-2 py-0.5 rounded-full text-xs border border-neutral-300 dark:border-neutral-700">{r.status}</span>
+        </td>
+        <td className="px-3 py-2">{r.engine}</td>
+        <td className="px-3 py-2 truncate max-w-[22ch]" title={r.template_name || ''}>{r.template_name || '-'}</td>
+        <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.started_at)}</td>
+        <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.finished_at)}</td>
+        <td className="px-3 py-2">{typeof r.tokens_total === 'number' ? r.tokens_total : '-'}</td>
+        <td className="px-3 py-2">{typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</td>
+        <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
+        <td className="px-3 py-2">
+          <Link to={`/runs/${r.id}`} className="text-blue-600 dark:text-blue-400 hover:underline mr-3">abrir</Link>
+          <button className="text-red-600 dark:text-red-400 hover:underline" onClick={() => onDelete(r.id)}>excluir</button>
+        </td>
+      </tr>
+    )
+  }
+  const height = Math.min(720, Math.max(320, (typeof window !== 'undefined' ? window.innerHeight : 600) - 300))
+  return (
+    <div className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 bg-neutral-50 dark:bg-neutral-900">
+          <tr className="text-left">
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">Engine</th>
+            <th className="px-3 py-2">Template</th>
+            <th className="px-3 py-2">Início</th>
+            <th className="px-3 py-2">Fim</th>
+            <th className="px-3 py-2">Tokens</th>
+            <th className="px-3 py-2">Custo</th>
+            <th className="px-3 py-2">ID</th>
+            <th className="px-3 py-2">Ações</th>
+          </tr>
+        </thead>
+      </table>
+      <div className="overflow-auto" style={{ height }}>
+        <table className="w-full text-sm">
+          <tbody>
+            <VList
+              height={height}
+              itemCount={items.length}
+              itemSize={48}
+              width={'100%'}
+            >
+              {({ index, style }: ListChildComponentProps) => <Row index={index} style={style} />}
+            </VList>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
 }
 
 type Project = { id: string; name: string }
@@ -72,6 +137,7 @@ export default function Runs() {
   const [engineFilter, setEngineFilter] = useState<string>('')
   const [sourceFilter, setSourceFilter] = useState<string>('')
   const [monitorFilter, setMonitorFilter] = useState<string>('')
+  const [statusFilter, setStatusFilter] = useState<string>('')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<string>(() => localStorage.getItem('project_id') || '')
   const [subprojects, setSubprojects] = useState<Subproject[]>([])
@@ -80,14 +146,33 @@ export default function Runs() {
   const [loading, setLoading] = useState<boolean>(false)
   // Map template name -> { category, subproject_id }
   const [templateCatIndex, setTemplateCatIndex] = useState<Record<string, { category: string; subproject_id?: string }>>({})
+  // Extended controls
+  const [viewMode, setViewMode] = useState<'cards'|'list'>(() => (localStorage.getItem('runs_view') as 'cards'|'list') || 'cards')
+  const [onlyWithText, setOnlyWithText] = useState<boolean>(false)
+  const [page, setPage] = useState<number>(1)
+  const [pageSize, setPageSize] = useState<number>(100)
+  const [dateFrom, setDateFrom] = useState<string>('')
+  const [dateTo, setDateTo] = useState<string>('')
+  const [totalCount, setTotalCount] = useState<number>(0)
+  const totalPages = useMemo(() => Math.max(1, Math.ceil((totalCount || 0) / (pageSize || 1))), [totalCount, pageSize])
+  const [gotoPage, setGotoPage] = useState<string>('')
 
-  const fetchRuns = async (opts?: { showLoading?: boolean }) => {
-    const params: any = {}
+  const buildParams = useCallback(() => {
+    const params: any = { page, page_size: pageSize }
     if (projectId) params.project_id = projectId
     if (subprojectId) params.subproject_id = subprojectId
     if (engineFilter) params.engine = engineFilter
     if (sourceFilter) params.schedule_source = sourceFilter
     if (monitorFilter) params.monitor_id = monitorFilter
+    if (statusFilter) params.status = statusFilter
+    if (onlyWithText) params.has_text = true
+    if (dateFrom) params.date_from = `${dateFrom}T00:00:00`
+    if (dateTo) params.date_to = `${dateTo}T23:59:59`
+    return params
+  }, [page, pageSize, projectId, subprojectId, engineFilter, sourceFilter, monitorFilter, statusFilter, onlyWithText, dateFrom, dateTo])
+
+  const fetchRuns = async (opts?: { showLoading?: boolean }) => {
+    const params = buildParams()
     const showLoading = opts?.showLoading ?? runs.length === 0
     if (showLoading) setLoading(true)
     try {
@@ -97,6 +182,17 @@ export default function Runs() {
       if (showLoading) setLoading(false)
     }
   }
+
+  const refreshCount = useCallback(async () => {
+    const params = buildParams()
+    // count endpoint ignores page & page_size
+    delete params.page
+    delete params.page_size
+    try {
+      const r = await countRuns(params)
+      setTotalCount(r.count || 0)
+    } catch {}
+  }, [buildParams])
 
   useEffect(() => {
     getProjects().then((r) => {
@@ -114,9 +210,11 @@ export default function Runs() {
     if (openNew) setShowModal(true)
   }, [location.search])
 
-  useEffect(() => { fetchRuns({ showLoading: true }) }, [engineFilter, subprojectId])
-  useEffect(() => { fetchRuns({ showLoading: true }) }, [sourceFilter, monitorFilter])
-  useEffect(() => { const t = setInterval(() => fetchRuns({ showLoading: false }), 5000); return () => clearInterval(t) }, [engineFilter, subprojectId, sourceFilter, monitorFilter])
+  useEffect(() => { fetchRuns({ showLoading: true }); refreshCount() }, [engineFilter, subprojectId])
+  useEffect(() => { fetchRuns({ showLoading: true }); refreshCount() }, [sourceFilter, monitorFilter, statusFilter])
+  useEffect(() => { fetchRuns({ showLoading: true }); refreshCount() }, [onlyWithText, dateFrom, dateTo])
+  useEffect(() => { fetchRuns({ showLoading: true }) }, [page, pageSize])
+  useEffect(() => { const t = setInterval(() => fetchRuns({ showLoading: false }), 5000); return () => clearInterval(t) }, [engineFilter, subprojectId, sourceFilter, monitorFilter, statusFilter, onlyWithText, dateFrom, dateTo, page, pageSize])
   useEffect(() => { if (projectId) { fetchRuns({ showLoading: true }) } }, [projectId])
 
   // Build template name -> category index for current project
@@ -216,8 +314,59 @@ export default function Runs() {
         monitors={monitors}
         monitorFilter={monitorFilter}
         setMonitorFilter={setMonitorFilter}
+        // extended
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        viewMode={viewMode}
+        setViewMode={(v) => { setViewMode(v); localStorage.setItem('runs_view', v) }}
+        onlyWithText={onlyWithText}
+        setOnlyWithText={setOnlyWithText}
+        dateFrom={dateFrom}
+        setDateFrom={(v) => { setDateFrom(v); setPage(1) }}
+        dateTo={dateTo}
+        setDateTo={(v) => { setDateTo(v); setPage(1) }}
         onRefresh={fetchRuns}
       />
+
+      {/* Pagination controls */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="opacity-70">Página:</span>
+        <div className="inline-flex border rounded-md overflow-hidden">
+          <button className="px-2 py-1 disabled:opacity-50" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Anterior</button>
+          <span className="px-3 py-1 border-l border-r">{page}</span>
+          <button className="px-2 py-1" onClick={() => setPage(p => p + 1)}>Próxima</button>
+        </div>
+        <span className="opacity-70 ml-2">Itens por página:</span>
+        <Select value={String(pageSize)} onChange={(e: any) => { setPageSize(parseInt(e.target.value || '100', 10)); setPage(1) }}>
+          {[50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+        </Select>
+        <span className="opacity-70 ml-2">Total: {totalCount}</span>
+        <span className="opacity-70 ml-2">Páginas: {totalPages}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="opacity-70">Ir para:</span>
+          <input
+            type="number"
+            className="w-20 border rounded-md px-2 py-1 bg-white dark:bg-neutral-900"
+            min={1}
+            max={totalPages}
+            value={gotoPage}
+            onChange={(e) => setGotoPage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const n = Math.max(1, Math.min(totalPages, parseInt(gotoPage || '1', 10)))
+                setPage(n)
+                setGotoPage('')
+              }
+            }}
+            onBlur={() => {
+              if (!gotoPage) return
+              const n = Math.max(1, Math.min(totalPages, parseInt(gotoPage || '1', 10)))
+              setPage(n)
+              setGotoPage('')
+            }}
+          />
+        </div>
+      </div>
       
       <div className="mt-6">
         {loading && runs.length === 0 ? (
@@ -226,6 +375,8 @@ export default function Runs() {
               <Skeleton key={i} className="h-32 rounded-lg" />
             ))}
           </div>
+        ) : viewMode === 'list' ? (
+          <VirtualizedRunsListView items={sortedRuns} onDelete={handleDeleteRun} />
         ) : !subprojectId ? (
           grouped.map(([theme, items]) => {
             // group items by category; prefer backend template_category, fallback to client-side mapping
@@ -311,6 +462,54 @@ export default function Runs() {
         )}
       </div>
       {showModal && <NewRunModal onClose={() => { setShowModal(false); fetchRuns(); navigate('/runs', { replace: true }) }} />}
+    </div>
+  )
+}
+
+function RunsListView({ items, onDelete }: { items: RunItem[]; onDelete: (id: string) => void | Promise<void> }) {
+  const formatDate = (d?: string) => {
+    if (!d) return '-'
+    const hasTZ = /Z|[+\-]\d{2}:?\d{2}$/.test(d)
+    const dt = new Date(hasTZ ? d : d + 'Z')
+    return isNaN(dt.getTime()) ? d : dt.toLocaleString()
+  }
+  return (
+    <div className="w-full overflow-auto rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 bg-neutral-50 dark:bg-neutral-900">
+          <tr className="text-left">
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">Engine</th>
+            <th className="px-3 py-2">Template</th>
+            <th className="px-3 py-2">Início</th>
+            <th className="px-3 py-2">Fim</th>
+            <th className="px-3 py-2">Tokens</th>
+            <th className="px-3 py-2">Custo</th>
+            <th className="px-3 py-2">ID</th>
+            <th className="px-3 py-2">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(r => (
+            <tr key={r.id} className="border-t border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50/70 dark:hover:bg-neutral-800/50">
+              <td className="px-3 py-2">
+                <span className="px-2 py-0.5 rounded-full text-xs border border-neutral-300 dark:border-neutral-700">{r.status}</span>
+              </td>
+              <td className="px-3 py-2">{r.engine}</td>
+              <td className="px-3 py-2 truncate max-w-[22ch]" title={r.template_name || ''}>{r.template_name || '-'}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.started_at)}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.finished_at)}</td>
+              <td className="px-3 py-2">{typeof r.tokens_total === 'number' ? r.tokens_total : '-'}</td>
+              <td className="px-3 py-2">{typeof r.cost_usd === 'number' ? `$${r.cost_usd.toFixed(4)}` : '-'}</td>
+              <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
+              <td className="px-3 py-2">
+                <Link to={`/runs/${r.id}`} className="text-blue-600 dark:text-blue-400 hover:underline mr-3">abrir</Link>
+                <button className="text-red-600 dark:text-red-400 hover:underline" onClick={() => onDelete(r.id)}>excluir</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
