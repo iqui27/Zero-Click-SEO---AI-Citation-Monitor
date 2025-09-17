@@ -299,6 +299,9 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
     rows = (
         db.query(
             Run.id,
+            Run.project_id,
+            Run.subproject_id,
+            SubProject.name.label("subproject_name"),
             Run.started_at,
             Run.finished_at,
             Run.status,
@@ -309,8 +312,15 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             Run.cost_usd,
             Run.model_name,
             Engine.name.label("engine"),
+            PromptVersion.id.label("prompt_version_id"),
+            PromptVersion.text.label("prompt_text"),
+            Prompt.id.label("prompt_id"),
+            Prompt.name.label("prompt_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
+        .outerjoin(SubProject, SubProject.id == Run.subproject_id)
         .filter(Run.monitor_id == monitor_id)
         .filter(subq.exists())
         .order_by(
@@ -359,6 +369,9 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
     writer.writerow([
         "run_id",
         "monitor_id",
+        "project_id",
+        "subproject_id",
+        "tema",
         "engine",
         "status",
         "started_at",
@@ -369,10 +382,40 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         "zcrs",
         "amr",
         "dcr",
+        "prompt_id",
+        "prompt_name",
+        "prompt_version_id",
+        "prompt_text",
+        "categoria",
         "response_text",
         "citations_domains",
         "citations_urls",
     ])
+
+    # Preparar mapa de categoria por (project_id, template_name) inferindo do prompt_name (remove prefixo 'Run: ')
+    def _norm_name(n: str | None) -> str | None:
+        if not n:
+            return None
+        s = n.strip()
+        if s.lower().startswith("run: "):
+            s = s[5:].strip()
+        return s
+
+    proj_to_names: dict[str, set[str]] = {}
+    for r in rows:
+        pn = getattr(r, "prompt_name", None)
+        nn = _norm_name(pn)
+        if nn:
+            proj_to_names.setdefault(r.project_id, set()).add(nn)
+    cat_map: dict[tuple[str, str], str] = {}
+    for pid, names in proj_to_names.items():
+        if not names:
+            continue
+        for tpl in db.query(PromptTemplate).filter(
+            PromptTemplate.project_id == pid,
+            PromptTemplate.name.in_(list(names))
+        ).all():
+            cat_map[(tpl.project_id, tpl.name)] = tpl.category
 
     for r in rows:
         rid = r.id
@@ -390,9 +433,15 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         doms = [d or "" for (d, _u, _ours) in cits if d]
         urls = [u or "" for (_d, u, _ours) in cits if u]
 
+        pn = getattr(r, "prompt_name", None)
+        nn = _norm_name(pn)
+        category = cat_map.get((r.project_id, nn or ""), "") if nn else ""
         writer.writerow([
             rid,
             str(monitor_id),
+            r.project_id,
+            r.subproject_id or "",
+            getattr(r, "subproject_name", None) or "",
             getattr(r, "engine", None) or "",
             r.status or "",
             r.started_at.isoformat() if r.started_at else "",
@@ -403,6 +452,11 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             r.zcrs if r.zcrs is not None else "",
             (1 if r.amr_flag else 0) if r.amr_flag is not None else "",
             (1 if r.dcr_flag else 0) if r.dcr_flag is not None else "",
+            getattr(r, "prompt_id", None) or "",
+            pn or "",
+            getattr(r, "prompt_version_id", None) or "",
+            getattr(r, "prompt_text", None) or "",
+            category,
             text_str,
             " ".join(doms),
             " ".join(urls),
@@ -493,6 +547,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             Run.id,
             Run.project_id,
             Run.subproject_id,
+            SubProject.name.label("subproject_name"),
             Run.status,
             Run.started_at,
             Run.finished_at,
@@ -522,6 +577,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
         .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
+        .outerjoin(SubProject, SubProject.id == Run.subproject_id)
         .filter(Run.id.in_(run_ids))
         .order_by(
             case((Run.started_at.is_(None), 1), else_=0).asc(),
@@ -570,9 +626,32 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
         "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
         "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-        "prompt_id","prompt_name","prompt_version_id","prompt_text","response_text","screenshot_url",
+        "prompt_id","prompt_name","prompt_version_id","prompt_text","tema","categoria","response_text","screenshot_url",
         "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
     ])
+    # Build category map from PromptTemplate by normalizing Prompt.name (strip 'Run: ')
+    def _norm_name(n: str | None) -> str | None:
+        if not n:
+            return None
+        s = n.strip()
+        if s.lower().startswith("run: "):
+            s = s[5:].strip()
+        return s
+    proj_to_names: dict[str, set[str]] = {}
+    for r in rows:
+        pn = getattr(r, "prompt_name", None)
+        nn = _norm_name(pn)
+        if nn:
+            proj_to_names.setdefault(r.project_id, set()).add(nn)
+    cat_map: dict[tuple[str, str], str] = {}
+    for pid, names in proj_to_names.items():
+        if not names:
+            continue
+        for tpl in db.query(PromptTemplate).filter(
+            PromptTemplate.project_id == pid,
+            PromptTemplate.name.in_(list(names))
+        ).all():
+            cat_map[(tpl.project_id, tpl.name)] = tpl.category
     for r in rows:
         rid = r.id
         base = [
@@ -604,6 +683,8 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             getattr(r, "prompt_name", None) or "",
             getattr(r, "prompt_version_id", None) or "",
             getattr(r, "prompt_text", None) or "",
+            getattr(r, "subproject_name", None) or "",
+            (cat_map.get((r.project_id, _norm_name(getattr(r, "prompt_name", None)) or ""), "") if getattr(r, "prompt_name", None) else ""),
             ev_text.get(rid, ""),
             ev_shot.get(rid, ""),
         ]
