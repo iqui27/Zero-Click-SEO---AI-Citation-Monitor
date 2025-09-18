@@ -8,6 +8,7 @@ import asyncio
 
 from google import genai
 from google.genai import types
+from app.core.config import settings
 
 from app.services.adapters.base import EngineAdapter, FetchInput, RawEvidence, ParsedAnswer, Citation
 from app.services.normalization import resolve_known_redirects
@@ -28,8 +29,14 @@ class GeminiAdapter:
     name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        # Prefer new Google GenAI SDK client (ai.google.dev). API key can come from arg or env.
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        # Prefer new Google GenAI SDK client (ai.google.dev). API key can come from arg, env, or app settings (.env).
+        self.api_key = (
+            api_key
+            or os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or settings.google_api_key
+            or settings.gemini_api_key
+        )
         self.default_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         # Note: we will (re)build a client in fetch() if a per-run key is provided in config
         self.client: Optional[genai.Client] = genai.Client(api_key=self.api_key) if self.api_key else None
@@ -83,7 +90,14 @@ class GeminiAdapter:
         # Allow per-run key via config.api_key; fallback to adapter/env key
         cfg = input.get("config") or {}
         cfg_api_key = cfg.get("api_key") or cfg.get("GOOGLE_API_KEY") or cfg.get("GEMINI_API_KEY")
-        eff_key = cfg_api_key or self.api_key
+        eff_key = (
+            cfg_api_key
+            or self.api_key
+            or os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or settings.google_api_key
+            or settings.gemini_api_key
+        )
         if not eff_key:
             return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
         # Build a client with the effective key (do not mutate self.client permanently)

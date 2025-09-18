@@ -13,6 +13,7 @@ import csv
 import os
 
 from app.db.session import SessionLocal
+from app.core.config import settings
 from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, MonitorHistoryRun, Insight
 from app.schemas.schemas import (
     ProjectCreate,
@@ -1084,6 +1085,20 @@ def create_engine(project_id: str, payload: EngineCreate, db: Session = Depends(
     try:
         if isinstance(cfg, dict):
             cfg.setdefault("_main", True)
+    except Exception:
+        pass
+    # If creating a Gemini engine and api_key is absent, pull from env/settings to avoid worker restarts
+    try:
+        nm = (payload.name or "").strip().lower()
+        if nm in ("gemini", "google_gemini") and isinstance(cfg, dict) and not cfg.get("api_key"):
+            gk = (
+                os.getenv("GOOGLE_API_KEY")
+                or os.getenv("GEMINI_API_KEY")
+                or getattr(settings, "google_api_key", None)
+                or getattr(settings, "gemini_api_key", None)
+            )
+            if gk:
+                cfg["api_key"] = gk
     except Exception:
         pass
     e = Engine(
@@ -3066,7 +3081,7 @@ def setup_status() -> dict:
 
 
 @api_router.post("/setup/save-keys")
-def save_keys(payload: dict = Body(...)) -> dict:
+def save_keys(payload: dict = Body(...), db: Session = Depends(get_db)) -> dict:
     """Persiste chaves em .env e atualiza o ambiente do processo para efeito imediato."""
     # Map de campos -> variáveis aceitas
     key_map: dict[str, list[str]] = {
@@ -3138,6 +3153,26 @@ def save_keys(payload: dict = Body(...)) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Falha ao salvar .env: {str(e)[:200]}")
 
+    # If Gemini key provided, persist it into all Gemini engines missing api_key
+    try:
+        gkey = payload.get("gemini_key")
+        if gkey:
+            engines = db.query(Engine).filter(Engine.name.in_(["gemini", "google_gemini"])).all()
+            updated = 0
+            for eng in engines:
+                cfgj = dict(eng.config_json or {})
+                if not cfgj.get("api_key"):
+                    cfgj["api_key"] = gkey
+                    eng.config_json = cfgj
+                    updated += 1
+            if updated:
+                db.commit()
+    except Exception:
+        # do not fail the request if engine update fails
+        try:
+            db.rollback()
+        except Exception:
+            pass
     return {"ok": True, "saved": saved_vars}
 
 
@@ -3157,14 +3192,21 @@ def test_connections(payload: dict = Body(...)) -> dict:
         results["openai"] = {"ok": ok}
     except Exception as e:
         results["openai"] = {"ok": False, "error": str(e)[:200]}
-    # Gemini
+    # Gemini (use google-genai SDK, same adaptador dos monitores)
     try:
-        import google.generativeai as genai  # type: ignore
-        key = payload.get("gemini_key") or os.getenv("GOOGLE_API_KEY")
+        from google import genai as ggenai  # type: ignore
+        key = (
+            payload.get("gemini_key")
+            or os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or getattr(settings, "google_api_key", None)
+            or getattr(settings, "gemini_api_key", None)
+        )
         ok = False
         if key:
-            genai.configure(api_key=key)
-            _ = genai.list_models()
+            client = ggenai.Client(api_key=key)
+            # Call a lightweight endpoint
+            _ = client.models.list()
             ok = True
         results["gemini"] = {"ok": ok}
     except Exception as e:
