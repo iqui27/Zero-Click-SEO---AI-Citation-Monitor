@@ -29,6 +29,7 @@ const ENGINE_PRESETS: EnginePreset[] = [
   { name: 'openai', region: 'BR', device: 'desktop', config_json: { model: 'o5-mini' }, label: 'OpenAI o5-mini (Desktop)' },
   { name: 'openai', region: 'BR', device: 'mobile', config_json: { model: 'o5-mini' }, label: 'OpenAI o5-mini (Mobile)' },
   { name: 'perplexity', region: 'BR', device: 'desktop', config_json: { model: 'sonar-pro' }, label: 'Perplexity Sonar (Desktop)' },
+  { name: 'google_serp', region: 'BR', device: 'desktop', config_json: { use_serpapi: true, serpapi_ai_overview: true, serpapi_no_cache: false }, label: 'Google SERP (AI Overview via SerpAPI)' },
 ]
 
 type Monitor = {
