@@ -98,18 +98,33 @@ jobs:
         sleep 45
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
 
+    - name: Create keys payload (runner)
+      run: |
+        cat > keys.json <<JSON
+        {
+          "openai_key": "${{ secrets.OPENAI_API_KEY }}",
+          "gemini_key": "${{ secrets.GEMINI_API_KEY != '' && secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}",
+          "perplexity_key": "${{ secrets.PERPLEXITY_API_KEY }}",
+          "serpapi_key": "${{ secrets.SERPAPI_KEY }}"
+        }
+        JSON
+
+    - name: Copy keys payload to server
+      run: |
+        scp -i ~/.ssh/oracle_key -o StrictHostKeyChecking=no keys.json $ORACLE_USER@$ORACLE_HOST:/tmp/keys.json
+
     - name: Persist API keys into engines (save-keys)
       run: |
         # Grava chaves via endpoint interno e injeta api_key nas engines Gemini sem api_key
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost/api/setup/save-keys \
           -H "Content-Type: application/json" \
-          -d '{"openai_key":"'"${{ secrets.OPENAI_API_KEY }}"'", "gemini_key":"'"${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}"'", "perplexity_key":"'"${{ secrets.PERPLEXITY_API_KEY }}"'", "serpapi_key":"'"${{ secrets.SERPAPI_KEY }}"'"}' || true'
+          --data @/tmp/keys.json || true'
 
     - name: Test connections (Gemini/OpenAI/Perplexity/SerpAPI)
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost/api/setup/test-connections \
           -H "Content-Type: application/json" \
-          -d '{"openai_key":"'"${{ secrets.OPENAI_API_KEY }}"'", "gemini_key":"'"${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}"'", "perplexity_key":"'"${{ secrets.PERPLEXITY_API_KEY }}"'", "serpapi_key":"'"${{ secrets.SERPAPI_KEY }}"'"}' || true'
+          --data @/tmp/keys.json || true'
 
         
     - name: Debug container status and run migrations
