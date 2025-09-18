@@ -18,14 +18,17 @@ class PerplexityAdapter:
         self.base_url = "https://api.perplexity.ai"
 
     async def fetch(self, input: FetchInput) -> RawEvidence:
-        if not self.api_key:
+        cfg = (input.get("config", {}) or {})
+        # Allow per-run api_key override
+        eff_key = cfg.get("api_key") or self.api_key or os.getenv("PERPLEXITY_API_KEY")
+        if not eff_key:
             return {"raw_url": None, "raw": {"error": "missing_api_key", "request": input}}
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {eff_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
-        cfg = (input.get("config", {}) or {})
         model = cfg.get("model", "sonar-pro")
         user_query = input["query"]
         system = "Responda concisamente e liste as fontes com URLs completas ao final."
@@ -51,7 +54,6 @@ class PerplexityAdapter:
         except Exception:
             pass
         # Perplexity-specific search/citation parameters
-        # garantir web search e citações por padrão
         payload.setdefault("search_mode", cfg.get("search_mode") or "web")  # "web" | "academic"
         payload.setdefault("return_citations", True)
         if cfg.get("search_recency_filter") is not None:
@@ -62,28 +64,103 @@ class PerplexityAdapter:
             payload["return_images"] = bool(cfg.get("return_images"))
         if cfg.get("return_related_questions") is not None:
             payload["return_related_questions"] = bool(cfg.get("return_related_questions"))
+
         url = f"{self.base_url}/chat/completions"
+
+        def _is_transient_status(code: int) -> bool:
+            return code >= 500 or code in (408, 429)
+
+        attempts = 0
+        max_attempts = 3
+        last_err: Dict[str, Any] | None = None
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            data = resp.json()
-            # Fallback: alguns modelos podem não retornar 'choices' ou conteúdo textual; tentar 'sonar-pro'
-            try:
-                choices = data.get("choices") or []
-                content_empty = True
-                if choices:
-                    msg = (choices[0] or {}).get("message") or {}
-                    c = msg.get("content")
-                    content_empty = (not c) or (isinstance(c, str) and not c.strip()) or (isinstance(c, list) and not any(bool(x) for x in c))
-                if (not choices or content_empty) and str(model).lower() != "sonar-pro":
-                    payload2 = dict(payload)
-                    payload2["model"] = "sonar-pro"
-                    resp2 = await client.post(url, headers=headers, json=payload2)
-                    data2 = resp2.json()
-                    # Preserve original and attach fallback for depuração
-                    return {"raw_url": None, "raw": {"primary": data, "fallback": data2, "model": payload.get("model"), "model_fallback": "sonar-pro"}}
-            except Exception:
-                pass
-            return {"raw_url": None, "raw": data}
+            while attempts < max_attempts:
+                attempts += 1
+                try:
+                    resp = await client.post(url, headers=headers, json=payload)
+                except httpx.TimeoutException as e:
+                    last_err = {"error": "timeout", "message": str(e)}
+                    if attempts < max_attempts:
+                        try:
+                            # simple backoff: 0.4s, 0.8s
+                            import asyncio as _a
+                            await _a.sleep(0.4 * attempts)
+                        except Exception:
+                            pass
+                        continue
+                    break
+                except httpx.HTTPError as e:
+                    last_err = {"error": "http_error", "message": str(e)}
+                    break
+
+                # Non-2xx: return structured error; retry on transient
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    body_preview = None
+                    try:
+                        txt = resp.text
+                        body_preview = txt[:500] if txt else None
+                    except Exception:
+                        body_preview = None
+                    err_obj = {
+                        "error": "bad_status",
+                        "status": resp.status_code,
+                        "body": body_preview,
+                    }
+                    last_err = err_obj
+                    if _is_transient_status(resp.status_code) and attempts < max_attempts:
+                        try:
+                            import asyncio as _a
+                            await _a.sleep(0.4 * attempts)
+                        except Exception:
+                            pass
+                        continue
+                    break
+
+                # Try JSON parse safely
+                try:
+                    data = resp.json()
+                except Exception as e:
+                    # Not JSON (HTML/empty). Return structured error with preview
+                    body_preview = None
+                    try:
+                        txt = resp.text
+                        body_preview = txt[:500] if txt else None
+                    except Exception:
+                        body_preview = None
+                    last_err = {"error": "invalid_json", "message": str(e), "status": resp.status_code, "body": body_preview}
+                    # Retry only if transient status
+                    if _is_transient_status(resp.status_code) and attempts < max_attempts:
+                        try:
+                            import asyncio as _a
+                            await _a.sleep(0.4 * attempts)
+                        except Exception:
+                            pass
+                        continue
+                    break
+
+                # Fallback: alguns modelos podem não retornar 'choices' ou conteúdo textual; tentar 'sonar-pro'
+                try:
+                    choices = data.get("choices") or []
+                    content_empty = True
+                    if choices:
+                        msg = (choices[0] or {}).get("message") or {}
+                        c = msg.get("content")
+                        content_empty = (not c) or (isinstance(c, str) and not c.strip()) or (isinstance(c, list) and not any(bool(x) for x in c))
+                    if (not choices or content_empty) and str(model).lower() != "sonar-pro":
+                        payload2 = dict(payload)
+                        payload2["model"] = "sonar-pro"
+                        resp2 = await client.post(url, headers=headers, json=payload2)
+                        try:
+                            data2 = resp2.json()
+                        except Exception as e2:
+                            data2 = {"error": "invalid_json", "message": str(e2), "status": resp2.status_code, "body": (resp2.text[:500] if hasattr(resp2, 'text') else None)}
+                        return {"raw_url": None, "raw": {"primary": data, "fallback": data2, "model": payload.get("model"), "model_fallback": "sonar-pro"}}
+                except Exception:
+                    pass
+                return {"raw_url": None, "raw": data}
+
+        # If we exit loop with error
+        return {"raw_url": url, "raw": last_err or {"error": "unknown"}}
 
     async def parse(self, raw: RawEvidence) -> ParsedAnswer:
         data: Dict[str, Any] = raw.get("raw") or {}

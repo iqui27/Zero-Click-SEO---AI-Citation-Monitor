@@ -365,6 +365,25 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         for rid, dom, url, is_ours in cits:
             cits_by_run.setdefault(rid, []).append((dom, url, bool(is_ours)))
 
+    # Mapear AI Overview por run (último link explícito; para google_serp usar o próprio run_id)
+    ai_map: dict[str, str] = {}
+    if run_ids:
+        ev_ai = (
+            db.query(RunEvent.run_id, RunEvent.message, RunEvent.created_at)
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.version == "ai_overview_link")
+            .order_by(RunEvent.run_id.asc(), RunEvent.created_at.desc())
+            .all()
+        )
+        for rid, msg, _ in ev_ai:
+            if rid not in ai_map and (msg or "").strip():
+                ai_map[rid] = (msg or "").strip()
+        for r in rows:
+            try:
+                if (getattr(r, "engine", "") or "").lower() == "google_serp" and r.id not in ai_map:
+                    ai_map[r.id] = r.id
+            except Exception:
+                continue
+
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -387,6 +406,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         "prompt_name",
         "prompt_version_id",
         "prompt_text",
+        "ai_overview_run_id",
         "categoria",
         "response_text",
         "citations_domains",
@@ -457,6 +477,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             pn or "",
             getattr(r, "prompt_version_id", None) or "",
             getattr(r, "prompt_text", None) or "",
+            ai_map.get(rid, ""),
             category,
             text_str,
             " ".join(doms),
@@ -535,7 +556,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
             "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
             "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-            "prompt_id","prompt_name","prompt_version_id","prompt_text","response_text","screenshot_url",
+            "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","response_text","screenshot_url",
             "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
         ])
         buf.seek(0)
@@ -621,13 +642,26 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
     for rid, dom, url, anchor, position, ctype, is_ours in cit_rows:
         cits_by_run.setdefault(rid, []).append((dom, url, anchor, position, ctype, bool(is_ours)))
 
+    # AI Overview mapping (explicit link or self if google_serp)
+    ai_map: dict[str, str] = {}
+    if run_ids:
+        ev_ai = (
+            db.query(RunEvent.run_id, RunEvent.message, RunEvent.created_at)
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.version == "ai_overview_link")
+            .order_by(RunEvent.run_id.asc(), RunEvent.created_at.desc())
+            .all()
+        )
+        for rid, msg, _ in ev_ai:
+            if rid not in ai_map and (msg or "").strip():
+                ai_map[rid] = (msg or "").strip()
+
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
         "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
         "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-        "prompt_id","prompt_name","prompt_version_id","prompt_text","tema","categoria","response_text","screenshot_url",
+        "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","response_text","screenshot_url",
         "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
     ])
     # Build category map from PromptTemplate by normalizing Prompt.name (strip 'Run: ')
@@ -655,6 +689,14 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             cat_map[(tpl.project_id, tpl.name)] = tpl.category
     for r in rows:
         rid = r.id
+        # default ai_overview: explicit link; for google_serp runs, fallback to own run_id
+        ai_overview_id = ai_map.get(rid, "")
+        try:
+            if not ai_overview_id and (getattr(r, "engine", "") or "").lower() == "google_serp":
+                ai_overview_id = rid
+        except Exception:
+            ai_overview_id = ai_overview_id or ""
+
         base = [
             r.id,
             r.project_id,
@@ -684,6 +726,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             getattr(r, "prompt_name", None) or "",
             getattr(r, "prompt_version_id", None) or "",
             getattr(r, "prompt_text", None) or "",
+            ai_overview_id,
             getattr(r, "subproject_name", None) or "",
             (cat_map.get((r.project_id, _norm_name(getattr(r, "prompt_name", None)) or ""), "") if getattr(r, "prompt_name", None) else ""),
             ev_text.get(rid, ""),
@@ -1481,6 +1524,19 @@ def export_runs_csv(
         q = q.order_by(nulls_last.asc(), sort_col.desc(), Run.id.desc())
 
     rows = q.all()
+    # Map AI Overview links for these runs
+    run_ids = [r.id for r in rows]
+    ai_map: dict[str, str] = {}
+    if run_ids:
+        ev_ai = (
+            db.query(RunEvent.run_id, RunEvent.message, RunEvent.created_at)
+            .filter(RunEvent.run_id.in_(run_ids), RunEvent.version == "ai_overview_link")
+            .order_by(RunEvent.run_id.asc(), RunEvent.created_at.desc())
+            .all()
+        )
+        for rid, msg, _ in ev_ai:
+            if rid not in ai_map and (msg or "").strip():
+                ai_map[rid] = (msg or "").strip()
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -1490,6 +1546,7 @@ def export_runs_csv(
         "started_at",
         "finished_at",
         "model_name",
+        "ai_overview_run_id",
         "tokens_input",
         "tokens_output",
         "tokens_total",
@@ -1497,6 +1554,13 @@ def export_runs_csv(
         "cost_usd",
     ])
     for r in rows:
+        # Determine AI Overview run id: explicit link, else own id for google_serp
+        ai_overview_id = ai_map.get(r.id, "")
+        try:
+            if not ai_overview_id and (r.engine or "").lower() == "google_serp":
+                ai_overview_id = r.id
+        except Exception:
+            ai_overview_id = ai_overview_id or ""
         writer.writerow([
             r.id,
             r.engine,
@@ -1504,6 +1568,7 @@ def export_runs_csv(
             r.started_at.isoformat() if r.started_at else "",
             r.finished_at.isoformat() if r.finished_at else "",
             r.model_name or "",
+            ai_overview_id,
             r.tokens_input if r.tokens_input is not None else "",
             r.tokens_output if r.tokens_output is not None else "",
             r.tokens_total if r.tokens_total is not None else "",
