@@ -161,127 +161,174 @@ class GeminiAdapter:
             # none
             return types.GenerateContentConfig()
 
-        # Build strategy order
+        def _supports_gsr(m: str) -> bool:
+            # Google Search Retrieval is not supported on Gemini 2.5 family per observed errors
+            return not str(m).startswith("gemini-2.5-")
+
+        # Build strategy order, skipping GSR for unsupported models
         if not use_search:
-            strategies = ["none"]
+            base_strategies = ["none"]
         else:
-            strategies = ["google_search_retrieval", "google_search", "none"] if force_search else ["google_search", "google_search_retrieval", "none"]
+            if force_search:
+                base_strategies = ["google_search_retrieval", "google_search", "none"]
+            else:
+                base_strategies = ["google_search", "google_search_retrieval", "none"]
 
-        # Try strategies; if web search yields no grounding, attempt the alternate tool before returning
-        errors: List[str] = []
-        last_success: Dict[str, Any] | None = None
-        tried: set[str] = set()
-        for strategy in strategies:
-            try:
-                config = _config_for_strategy(strategy)
+        def _strategies_for_model(m: str) -> list[str]:
+            if _supports_gsr(m):
+                return base_strategies
+            # remove google_search_retrieval if not supported
+            return [s for s in base_strategies if s != "google_search_retrieval"]
 
-                def _gen_content(params: Dict[str, Any]):
-                    return client.models.generate_content(**params)
-                resp = await asyncio.to_thread(
-                    _gen_content,
-                    {
-                        "model": model_name,
-                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                        "config": config,
-                    },
-                )
-                # Try to extract a full structured dict (candidates + grounding)
-                data: Dict[str, Any] = {}
-                try:
-                    if hasattr(resp, "model_dump"):
-                        data = resp.model_dump()  # type: ignore[attr-defined]
-                    elif hasattr(resp, "to_dict"):
-                        data = resp.to_dict()  # type: ignore[attr-defined]
-                    elif hasattr(resp, "dict"):
-                        data = resp.dict()  # type: ignore[attr-defined]
-                    else:
-                        import json
-                        to_json = getattr(resp, "model_dump_json", None) or getattr(resp, "to_json", None)
-                        if callable(to_json):
-                            data = json.loads(to_json())
-                except Exception:
-                    data = {}
-                if not isinstance(data, dict) or not data:
-                    data = {"text": getattr(resp, "text", ""), "raw": str(resp)}
-                # Se não extrairmos texto de imediato, tentar um minimal fallback pedindo saída textual
-                try:
-                    cand = (data.get("candidates") or [{}])[0]
-                    parts = cand.get("content", {}).get("parts", [])
-                    has_text = any((p.get("text") or "").strip() for p in parts)
-                except Exception:
-                    has_text = bool(data.get("text"))
-                if not has_text:
+        # Helpers for retry classification
+        def _is_transient(msg: str) -> bool:
+            lower = msg.lower()
+            return any(t in lower for t in (
+                "internal server error",
+                "unavailable",
+                "deadline exceeded",
+                "timeout",
+                "temporarily",
+                "bad gateway",
+                "gateway timeout",
+                "503",
+                "502",
+                "500",
+            ))
+
+        # Prepare model candidates (fallbacks if overloaded)
+        alt_models: list[str] = []
+        try:
+            mn = str(model_name or "")
+            if mn.startswith("gemini-2.5-pro"):
+                alt_models = ["gemini-2.5-flash", "gemini-1.5-pro"]
+            elif mn.startswith("gemini-2.5-flash"):
+                alt_models = ["gemini-1.5-pro"]
+            elif mn.startswith("gemini-1.5-pro"):
+                alt_models = ["gemini-1.5-flash"]
+        except Exception:
+            alt_models = []
+        model_candidates = [model_name] + [m for m in alt_models if m and m != model_name]
+
+        attempted_models: list[str] = []
+        all_errors: List[str] = []
+        for cur_model in model_candidates:
+            attempted_models.append(cur_model)
+            strategies = _strategies_for_model(cur_model)
+            # Try strategies; if web search yields no grounding, attempt the alternate tool before returning
+            errors: List[str] = []
+            last_success: Dict[str, Any] | None = None
+            tried: set[str] = set()
+            for strategy in strategies:
+                # transient retry loop per strategy
+                max_attempts = 3
+                attempt = 0
+                while attempt < max_attempts:
                     try:
-                        def _gen_content2(params: Dict[str, Any]):
+                        config = _config_for_strategy(strategy)
+
+                        def _gen_content(params: Dict[str, Any]):
                             return client.models.generate_content(**params)
-                        resp2 = await asyncio.to_thread(
-                            _gen_content2,
+                        resp = await asyncio.to_thread(
+                            _gen_content,
                             {
-                                "model": model_name,
-                                "contents": [{"role": "user", "parts": [{"text": "Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final."}]}],
+                                "model": cur_model,
+                                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                                 "config": config,
                             },
                         )
-                        # Best-effort to dict
+                        # Try to extract a full structured dict (candidates + grounding)
+                        data: Dict[str, Any] = {}
                         try:
-                            if hasattr(resp2, "model_dump"):
-                                d2 = resp2.model_dump()  # type: ignore[attr-defined]
-                            elif hasattr(resp2, "to_dict"):
-                                d2 = resp2.to_dict()  # type: ignore[attr-defined]
-                            elif hasattr(resp2, "dict"):
-                                d2 = resp2.dict()  # type: ignore[attr-defined]
+                            if hasattr(resp, "model_dump"):
+                                data = resp.model_dump()  # type: ignore[attr-defined]
+                            elif hasattr(resp, "to_dict"):
+                                data = resp.to_dict()  # type: ignore[attr-defined]
+                            elif hasattr(resp, "dict"):
+                                data = resp.dict()  # type: ignore[attr-defined]
                             else:
                                 import json
-                                to_json2 = getattr(resp2, "model_dump_json", None) or getattr(resp2, "to_json", None)
-                                d2 = json.loads(to_json2()) if callable(to_json2) else {"text": getattr(resp2, "text", "")}
+                                to_json = getattr(resp, "model_dump_json", None) or getattr(resp, "to_json", None)
+                                if callable(to_json):
+                                    data = json.loads(to_json())
                         except Exception:
-                            d2 = {"text": getattr(resp2, "text", "")}
-                        # anexar ao payload para o parse ter alternativas
-                        data["fallback"] = d2
-                    except Exception:
-                        pass
-                # If search was enabled but no grounding detected, attempt alternate strategy if available
-                if use_search and strategy != "none" and not _has_grounding(data):
-                    last_success = data
-                    tried.add(strategy)
-                    # If we haven't tried the other search tool yet, continue loop to try it
-                    if ("google_search_retrieval" in strategies and "google_search_retrieval" not in tried) or ("google_search" in strategies and "google_search" not in tried):
-                        continue
-                return {"raw_url": None, "raw": data}
-            except Exception as e:
-                msg = str(e)
-                errors.append(f"{strategy}: {msg}")
-                # Continue for tool/field issues OR transient/server errors (5xx/timeouts)
-                lower = msg.lower()
-                transient_markers = (
-                    "internal server error",
-                    "unavailable",
-                    "deadline exceeded",
-                    "timeout",
-                    "temporarily",
-                    "bad gateway",
-                    "gateway timeout",
-                    "503",
-                    "502",
-                    "500",
-                )
-                recoverable_markers = (
-                    "Unknown field",
-                    "INVALID_ARGUMENT",
-                    "not recognized",
-                    "unrecognized",
-                    "extra inputs are not permitted",
-                    "extra_forbidden",
-                )
-                if any(t in msg for t in recoverable_markers) or any(
-                    t in lower for t in transient_markers
-                ):
-                    continue
-                return {"raw_url": None, "raw": {"error": "fetch_failed", "message": msg, "request": input}}
-        # If we had a successful non-grounded response, return it; otherwise surface errors
-        if last_success is not None:
-            return {"raw_url": None, "raw": last_success}
-        return {"raw_url": None, "raw": {"error": "no_tool_worked", "message": "; ".join(errors), "request": input}}
+                            data = {}
+                        if not isinstance(data, dict) or not data:
+                            data = {"text": getattr(resp, "text", ""), "raw": str(resp)}
+                        # Se não extrairmos texto de imediato, tentar um minimal fallback pedindo saída textual
+                        try:
+                            cand = (data.get("candidates") or [{}])[0]
+                            parts = cand.get("content", {}).get("parts", [])
+                            has_text = any((p.get("text") or "").strip() for p in parts)
+                        except Exception:
+                            has_text = bool(data.get("text"))
+                        if not has_text:
+                            try:
+                                def _gen_content2(params: Dict[str, Any]):
+                                    return client.models.generate_content(**params)
+                                resp2 = await asyncio.to_thread(
+                                    _gen_content2,
+                                    {
+                                        "model": cur_model,
+                                        "contents": [{"role": "user", "parts": [{"text": "Forneça a resposta final agora em texto corrido com 3–5 fontes (URLs completas http) no final."}]}],
+                                        "config": config,
+                                    },
+                                )
+                                # Best-effort to dict
+                                try:
+                                    if hasattr(resp2, "model_dump"):
+                                        d2 = resp2.model_dump()  # type: ignore[attr-defined]
+                                    elif hasattr(resp2, "to_dict"):
+                                        d2 = resp2.to_dict()  # type: ignore[attr-defined]
+                                    elif hasattr(resp2, "dict"):
+                                        d2 = resp2.dict()  # type: ignore[attr-defined]
+                                    else:
+                                        import json
+                                        to_json2 = getattr(resp2, "model_dump_json", None) or getattr(resp2, "to_json", None)
+                                        d2 = json.loads(to_json2()) if callable(to_json2) else {"text": getattr(resp2, "text", "")}
+                                except Exception:
+                                    d2 = {"text": getattr(resp2, "text", "")}
+                                # anexar ao payload para o parse ter alternativas
+                                data["fallback"] = d2
+                            except Exception:
+                                pass
+                        # If search was enabled but no grounding detected, attempt alternate tool if available
+                        if use_search and strategy != "none" and not _has_grounding(data):
+                            last_success = data
+                            tried.add(strategy)
+                            # If we haven't tried the other search tool yet, continue loop to try it
+                            st_left = set(strategies) - tried
+                            if ("google_search_retrieval" in st_left) or ("google_search" in st_left):
+                                break  # move to next strategy
+                        return {"raw_url": None, "raw": data}
+                    except Exception as e:
+                        msg = str(e)
+                        # If transient, retry a few times with backoff
+                        attempt += 1
+                        if attempt < max_attempts and _is_transient(msg):
+                            try:
+                                await asyncio.sleep(0.6 * (2 ** (attempt - 1)))
+                            except Exception:
+                                pass
+                            continue
+                        # record error and move on to next strategy
+                        errors.append(f"{strategy}: {msg}")
+                        break
+            # If we had a successful non-grounded response, return it; otherwise surface errors
+            if last_success is not None:
+                # annotate with attempted models for debugging
+                try:
+                    last_success.setdefault("_attempted_models", attempted_models)
+                except Exception:
+                    pass
+                return {"raw_url": None, "raw": last_success}
+            all_errors.extend([f"{cur_model} -> {e}" for e in errors])
+            # If current model produced transient overloads across strategies, try next model candidate
+            # Otherwise, continue and finally report
+            continue
+
+        # Nothing worked across models
+        return {"raw_url": None, "raw": {"error": "no_tool_worked", "message": "; ".join(all_errors), "request": input}}
 
     async def parse(self, raw: RawEvidence) -> ParsedAnswer:
         data: Dict[str, Any] = raw.get("raw") or {}

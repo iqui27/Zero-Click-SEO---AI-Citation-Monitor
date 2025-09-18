@@ -96,12 +96,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             elif name_lower in ("gemini", "google_gemini"):
                 if cfg_eff.get("use_search") is None:
                     cfg_eff["use_search"] = True
-                # For monitor-triggered runs, enforce default force_search unless explicitly disabled
-                try:
-                    if (run.schedule_source or "").startswith("monitor") and cfg_eff.get("force_search") is None:
-                        cfg_eff["force_search"] = True
-                except Exception:
-                    pass
+                # Default: enable force_search unless explicitly set by user/config
+                if cfg_eff.get("force_search") is None:
+                    cfg_eff["force_search"] = True
                 try:
                     mot = cfg_eff.get("max_output_tokens")
                     mot_i = int(mot) if mot is not None else None
@@ -133,6 +130,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 # valores efetivos (sem null) após merge de defaults
                 "web_search": cfg.get("web_search"),
                 "use_search": cfg.get("use_search"),
+                "force_search": cfg.get("force_search"),
                 "search_context_size": cfg.get("search_context_size"),
                 "reasoning_effort": cfg.get("reasoning_effort"),
                 "max_output_tokens": cfg.get("max_output_tokens"),
