@@ -78,15 +78,48 @@ class GoogleSerpAdapter:
         query = input["query"]
         language = input.get("language") or "pt-BR"
         region = input.get("region") or "BR"
+        device = input.get("device") or "desktop"
         config = (input.get("config") or {})
         use_serpapi = config.get("use_serpapi")
         prefer_ai_overview = config.get("serpapi_ai_overview", True)
+        use_ai_mode = config.get("serpapi_ai_mode")
         no_cache = config.get("serpapi_no_cache")
         serp_key = os.getenv("SERPAPI_KEY")
 
         if use_serpapi and serp_key:
             try:
                 base_url = "https://serpapi.com/search.json"
+
+                # Shortcut: Google AI Mode (engine=google_ai_mode)
+                if use_ai_mode:
+                    params_ai_mode = {
+                        "engine": "google_ai_mode",
+                        "q": query,
+                        "api_key": serp_key,
+                    }
+                    # device: desktop | mobile | tablet
+                    if str(device or "").lower() in ("desktop", "mobile", "tablet"):
+                        params_ai_mode["device"] = str(device).lower()
+                    if no_cache is not None:
+                        params_ai_mode["no_cache"] = "true" if bool(no_cache) else "false"
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp_ai_mode = await client.get(base_url, params=params_ai_mode)
+                        data_mode = resp_ai_mode.json()
+                    # Be generous: try common keys, else pass the whole payload
+                    ai_payload = (
+                        (data_mode or {}).get("ai_mode")
+                        or (data_mode or {}).get("ai_overview")
+                        or (data_mode or {})
+                    )
+                    return {
+                        "raw_url": base_url,
+                        "raw": {
+                            # Reuse the same key the parser expects
+                            "serpapi_ai": ai_payload,
+                            "serpapi_search": data_mode,
+                            "source": "serpapi_ai_mode",
+                        },
+                    }
                 # 1) Busca normal no Google para obter organic e (se disponível) AI Overview embed ou page_token
                 params_google = {
                     "engine": "google",
@@ -166,8 +199,8 @@ class GoogleSerpAdapter:
         links = []
         text_content = ""
 
-        # 1) AI Overview (embedded ou extra request)
-        if src in ("serpapi_ai", "serpapi_ai_embedded"):
+        # 1) AI Overview / AI Mode (embedded, extra request, or AI Mode)
+        if src in ("serpapi_ai", "serpapi_ai_embedded", "serpapi_ai_mode"):
             ai = (raw.get("raw") or {}).get("serpapi_ai") or {}
             text_blocks = ai.get("text_blocks") or []
             references = ai.get("references") or []
@@ -279,7 +312,7 @@ class GoogleSerpAdapter:
     async def extract_citations(self, parsed: ParsedAnswer) -> List[Citation]:
         citations: List[Citation] = []
         source = (parsed.get("meta") or {}).get("source")
-        ctype = "ai_reference" if source in ("serpapi_ai", "serpapi_ai_embedded") else "link"
+        ctype = "ai_reference" if source in ("serpapi_ai", "serpapi_ai_embedded", "serpapi_ai_mode") else "link"
         for link in parsed.get("links", [])[:50]:
             url = link.get("url")
             if not url:

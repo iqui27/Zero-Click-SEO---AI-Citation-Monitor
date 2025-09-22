@@ -42,6 +42,7 @@ export default function SandboxPage() {
   const [serpUseApi, setSerpUseApi] = useState<boolean>(true)
   const [serpPreferAIO, setSerpPreferAIO] = useState<boolean>(true)
   const [serpNoCache, setSerpNoCache] = useState<boolean>(false)
+  const [serpAiMode, setSerpAiMode] = useState<boolean>(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<SandboxResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -160,6 +161,7 @@ export default function SandboxPage() {
         config = {
           use_serpapi: serpUseApi,
           serpapi_ai_overview: serpPreferAIO,
+          serpapi_ai_mode: serpAiMode,
           serpapi_no_cache: serpNoCache,
         }
       }
@@ -378,6 +380,12 @@ export default function SandboxPage() {
                 <div className="flex items-center gap-2">
                   <input id="nc" type="checkbox" checked={serpNoCache} onChange={e => setSerpNoCache(e.target.checked)} />
                   <Label htmlFor="nc">SerpApi no_cache</Label>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="flex items-center gap-2">
+                  <input id="aimode" type="checkbox" checked={serpAiMode} onChange={e => setSerpAiMode(e.target.checked)} />
+                  <Label htmlFor="aimode">Google AI Mode (engine=google_ai_mode)</Label>
                 </div>
               </div>
               <div className="text-xs opacity-70">Com AI Overview, as citações vêm de references[]. Sem AI Overview, usamos organic_results como fallback.</div>

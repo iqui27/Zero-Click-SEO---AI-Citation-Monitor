@@ -130,6 +130,7 @@ const ENGINE_OPTIONS = [
   { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
   { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro' } },
   { label: 'Google SERP (AI Overview via SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true, serpapi_ai_overview: true, serpapi_no_cache: false } },
+  { label: 'Google AI Mode (SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true, serpapi_ai_mode: true, serpapi_no_cache: false } },
 ]
 
 export default function Runs() {
@@ -761,6 +762,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
   const [serpUseSerpapi, setSerpUseSerpapi] = useState<boolean>(true)
   const [serpAiOverview, setSerpAiOverview] = useState<boolean>(true)
   const [serpNoCache, setSerpNoCache] = useState<boolean>(false)
+  const [serpAiMode, setSerpAiMode] = useState<boolean>(false)
 
   useEffect(() => {
     getProjects().then((r) => {
@@ -838,6 +840,7 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
             ...cfg,
             use_serpapi: serpUseSerpapi,
             serpapi_ai_overview: serpAiOverview,
+            serpapi_ai_mode: serpAiMode,
             serpapi_no_cache: serpNoCache,
           }
         }
@@ -1067,6 +1070,9 @@ function NewRunModal({ onClose }: { onClose: () => void }) {
               </label>
               <label className="text-sm flex items-center gap-2">
                 <input type="checkbox" checked={serpAiOverview} onChange={(e) => setSerpAiOverview(e.target.checked)} /> Preferir AI Overview
+              </label>
+              <label className="text-sm flex items-center gap-2">
+                <input type="checkbox" checked={serpAiMode} onChange={(e) => setSerpAiMode(e.target.checked)} /> Google AI Mode (engine=google_ai_mode)
               </label>
               <label className="text-sm flex items-center gap-2">
                 <input type="checkbox" checked={serpNoCache} onChange={(e) => setSerpNoCache(e.target.checked)} /> Ignorar cache (no_cache)
