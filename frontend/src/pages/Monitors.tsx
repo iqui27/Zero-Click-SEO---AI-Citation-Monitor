@@ -492,9 +492,9 @@ export default function MonitorsPage() {
   })
 
   return (
-    <div className="space-y-3">
-      <h1 className="text-2xl font-semibold">Monitores</h1>
-      <div className="rounded-md border bg-neutral-50 dark:bg-neutral-900 p-3">
+    <div className="space-y-6">
+      <h1 className="text-3xl font-semibold tracking-tight">Monitores</h1>
+      <div className="rounded-xl border bg-neutral-50/60 dark:bg-neutral-900/60 p-4 shadow-sm backdrop-blur-sm transition-colors">
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
           Automatize a execução dos seus templates de SEO. Selecione um projeto, defina o agendamento (ou use um preset) e escolha as engines de IA. Você pode executar manualmente a qualquer momento e acompanhar o histórico de runs abaixo.
         </p>
@@ -556,7 +556,7 @@ export default function MonitorsPage() {
       </div>
 
       {(!cleanMode || showCreate) && (
-      <div className="border rounded-md p-4 space-y-4">
+      <div className="border rounded-xl p-4 space-y-4 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
         <div className="text-lg font-medium">Criar Monitor</div>
         
         <div className="space-y-2">
@@ -572,7 +572,7 @@ export default function MonitorsPage() {
           </Select>
         </div>
 
-        <section className="border rounded-md p-4 space-y-3">
+        <section className="border rounded-lg p-4 space-y-3">
           <div>
             <div className="text-sm font-medium">Agendamento</div>
             <div className="text-xs opacity-70">Escolha um preset recomendado, informe uma expressão CRON, ou use o modo avançado por horários.</div>
@@ -648,7 +648,7 @@ export default function MonitorsPage() {
               {timeInputs.slice(0, timesPerDay).map((t, idx) => (
                 <div key={idx} className="flex items-center gap-2">
                   <label className="text-xs w-24">Horário {idx+1}</label>
-                  <input type="time" value={t} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTimeInputs(prev => prev.map((x, i) => i === idx ? e.target.value : x))} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+                  <Input type="time" value={t} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTimeInputs(prev => prev.map((x, i) => i === idx ? e.target.value : x))} className="h-8 text-xs" />
                 </div>
               ))}
             </div>
@@ -662,7 +662,7 @@ export default function MonitorsPage() {
                 <option value="custom">Data final…</option>
               </Select>
               {durationType === 'custom' && (
-                <input type="date" value={customUntil} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomUntil(e.target.value)} className="h-8 rounded-md border bg-transparent px-2 text-xs" />
+                <Input type="date" value={customUntil} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomUntil(e.target.value)} className="h-8 text-xs" />
               )}
             </div>
             <div className="text-xs opacity-70">Expressão salva: <span className="font-mono">{buildScheduleFromTimes(timeInputs, durationType, customUntil) || '—'}</span></div>
@@ -670,7 +670,7 @@ export default function MonitorsPage() {
           )}
         </section>
 
-        <section className="border rounded-md p-4 space-y-3">
+        <section className="border rounded-lg p-4 space-y-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">Engines de IA</div>
@@ -727,7 +727,7 @@ export default function MonitorsPage() {
 
       <div className="grid gap-3">
         {itemsToRender.map((m: Monitor) => (
-          <div key={m.id} className="border rounded-md p-3 space-y-2">
+          <div key={m.id} className="border rounded-xl p-4 space-y-2 bg-neutral-50/60 dark:bg-neutral-900/60 transition-colors shadow-sm hover:shadow-md fade-in-up">
             <div className="flex items-center gap-2">
               <strong className="flex-1">{m.name}</strong>
               <span className={`text-xs px-2 py-0.5 rounded-full ${busy[m.id] ? 'bg-yellow-100 text-yellow-800' : (m.active ? 'bg-green-100 text-green-800' : 'bg-neutral-200 text-neutral-700')}`}>

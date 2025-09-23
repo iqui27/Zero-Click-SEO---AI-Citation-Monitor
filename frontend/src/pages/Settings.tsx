@@ -229,15 +229,15 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <Toaster richColors position="top-right" />
-      <h1 className="text-2xl font-semibold">Configurações</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">Configurações</h1>
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Coluna 1: Integrações (API Keys) */}
         <section className="space-y-2 lg:col-span-2">
           <h2 className="text-lg font-medium">Integrações (API Keys)</h2>
-          <div className="border rounded-md p-3 grid gap-3">
+          <div className="border rounded-xl p-3 grid gap-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
             <div className="text-sm opacity-70">Preencha apenas o que for usar. Você pode testar antes de salvar.</div>
             <div className="grid gap-2 md:grid-cols-2">
               <KeyField label="OpenAI" placeholder="sk-..." value={keys.openai} onChange={(v)=>setKeys(k=>({ ...k, openai: v }))} present={!!keysStatus?.keys?.openai} tested={testResults?.openai} />
@@ -258,7 +258,7 @@ export default function SettingsPage() {
         {/* Coluna 2: Projeto/Diagnóstico */}
         <aside className="space-y-2">
           <h3 className="text-lg font-medium">Projeto</h3>
-          <div className="border rounded-md p-3 grid gap-2">
+          <div className="border rounded-xl p-3 grid gap-2 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
             <div className="text-sm opacity-70">Projeto ativo</div>
             <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setProjectId(e.target.value); localStorage.setItem('project_id', e.target.value); }}>
               {projects.map(p => (
@@ -274,7 +274,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Domínios alvo</h2>
-        <div className="border rounded-md p-3 grid gap-2">
+        <div className="border rounded-xl p-3 grid gap-2 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-2 md:grid-cols-2">
             <Input placeholder="domínio (ex.: exemplo.com.br)" value={newDomain} onChange={e=>setNewDomain(e.target.value)} />
             <Input placeholder="regex (opcional)" value={pattern} onChange={e=>setPattern(e.target.value)} />
@@ -295,7 +295,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Engines — OpenAI</h2>
-        <div className="border rounded-md p-3 grid gap-3 text-sm">
+        <div className="border rounded-xl p-3 grid gap-3 text-sm bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="text-sm">Criar engine padrão para <code>gpt-5-mini</code> com web search.</div>
           <div className="flex justify-end">
             <Button onClick={createOpenAIEngineMini}>Criar GPT‑5 mini</Button>
@@ -306,7 +306,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Engines — Gemini</h2>
-        <div className="border rounded-md p-3 grid gap-3 text-sm">
+        <div className="border rounded-xl p-3 grid gap-3 text-sm bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs opacity-70">Modelo</label>
@@ -373,7 +373,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Engines — Google SERP</h2>
-        <div className="border rounded-md p-3 grid gap-3 text-sm">
+        <div className="border rounded-xl p-3 grid gap-3 text-sm bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid sm:grid-cols-3 gap-2">
             <label className="flex items-center gap-2"><input type="checkbox" checked={newSerp.use_serpapi} onChange={(e)=>setNewSerp(s=>({ ...s, use_serpapi: e.target.checked }))} /> Usar SerpApi</label>
             <label className="flex items-center gap-2"><input type="checkbox" checked={newSerp.serpapi_ai_overview} onChange={(e)=>setNewSerp(s=>({ ...s, serpapi_ai_overview: e.target.checked }))} /> Preferir AI Overview</label>
@@ -400,7 +400,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Sistema & Performance</h2>
-        <div className="border rounded-md p-3 grid gap-3">
+        <div className="border rounded-xl p-3 grid gap-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className="text-xs opacity-70">Timeout padrão por ciclo (segundos)</label>
@@ -462,7 +462,7 @@ export default function SettingsPage() {
       {systemStatus && (
         <section className="space-y-2">
           <h2 className="text-lg font-medium">Status do Sistema</h2>
-          <div className="border rounded-md p-3">
+          <div className="border rounded-xl p-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
             <div className="grid gap-3 md:grid-cols-3">
               <div className="text-center">
                 <div className="text-2xl font-bold text-green-600">{systemStatus.uptime || '0h'}</div>
@@ -491,7 +491,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Manutenção</h2>
-        <div className="border rounded-md p-3 grid gap-3">
+        <div className="border rounded-xl p-3 grid gap-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-2 md:grid-cols-3">
             <Button variant="outline" onClick={()=>toast.info('Limpeza iniciada (mock)')}>
               🧹 Limpar runs antigas
@@ -511,7 +511,7 @@ export default function SettingsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Informações do Sistema</h2>
-        <div className="border rounded-md p-3">
+        <div className="border rounded-xl p-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-2 text-sm font-mono">
             <div>Versão: <span className="text-blue-600">v1.0.0</span></div>
             <div>Build: <span className="text-gray-600">{new Date().toISOString().slice(0, 10)}</span></div>

@@ -378,10 +378,10 @@ export default function RunDetail() {
   } catch {}
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold">Run {id}</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Run {id}</h1>
         {(detail?.cycles_total || 1) > 1 && (
           <div className="ml-4 flex items-center gap-2 text-sm">
             <span className="opacity-70">Ciclo:</span>
@@ -603,7 +603,7 @@ export default function RunDetail() {
 
 function Card({ title, value }: { title: string; value: React.ReactNode }) {
   return (
-    <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">
+    <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
       <div className="text-xs text-neutral-500">{title}</div>
       <div className="text-2xl font-bold">{value}</div>
     </div>

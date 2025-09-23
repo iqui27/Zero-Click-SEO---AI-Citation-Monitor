@@ -198,7 +198,7 @@ export default function SubprojectDetail() {
     <div className="space-y-5 md:space-y-6">
       {/* Cabeçalho e ações */}
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold">{subprojectName || `Tema ${id}`}</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">{subprojectName || `Tema ${id}`}</h1>
         {projectName && (
           <span className="text-xs px-2 py-1 rounded-full border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300">Projeto: {projectName}</span>
         )}
@@ -345,10 +345,10 @@ export default function SubprojectDetail() {
       )}
 
       {tab === 'runs' && (
-        <div className="border rounded-md shadow-sm bg-white dark:bg-neutral-900">
+        <div className="border rounded-xl shadow-sm bg-neutral-50/60 dark:bg-neutral-900/60">
           {/* Barra de contexto */}
           <div className="px-2 pt-2">
-            <div className="text-xs px-2 py-1 border rounded-md flex flex-wrap items-center gap-2">
+            <div className="text-xs px-3 py-2 border rounded-xl flex flex-wrap items-center gap-2 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
               {projectName && <span>Projeto: <span className="font-medium">{projectName}</span></span>}
               {subprojectName && <span>Tema: <span className="font-medium">{subprojectName}</span></span>}
               <button
@@ -481,7 +481,7 @@ export default function SubprojectDetail() {
       )}
 
       {tab === 'compare' && (
-        <div className="border rounded-md shadow-sm bg-white dark:bg-neutral-900">
+        <div className="border rounded-xl shadow-sm bg-neutral-50/60 dark:bg-neutral-900/60">
           <div className="p-2 flex items-center gap-2">
             <div className="text-sm opacity-70">Comparar respostas de runs do tema</div>
             <div className="ml-auto flex items-center gap-2">
@@ -561,7 +561,7 @@ export default function SubprojectDetail() {
 
 function Card({ title, value }: { title: string; value: React.ReactNode }) {
   return (
-    <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">
+    <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
       <div className="text-xs text-neutral-500">{title}</div>
       <div className="text-2xl font-bold">{value}</div>
     </div>
@@ -597,7 +597,7 @@ function InsightsPanel({ subprojectId }: { subprojectId: string }) {
   }
 
   return (
-    <div className="border rounded-md">
+    <div className="border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
       <div className="p-2 flex items-center gap-2">
         <div className="text-sm opacity-70">Gerar insights do tema</div>
         <div className="ml-auto">

@@ -93,10 +93,10 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-2">
-        <h1 className="text-2xl font-semibold">Templates</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Templates</h1>
         <Button className="ml-auto" onClick={() => setMode(Mode.Create)}><Plus className="h-4 w-4 mr-1" /> Novo Template</Button>
       </div>
 
@@ -116,7 +116,7 @@ export default function TemplatesPage() {
 
       {mode === Mode.Create && (
         <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-lg p-4 w-[min(780px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800">
+          <div className="bg-white dark:bg-neutral-900 rounded-xl p-4 w-[min(780px,100%)] space-y-3 border border-neutral-200 dark:border-neutral-800 shadow-lg">
             <h2 className="text-lg font-semibold">Novo Template</h2>
             <div className="grid gap-2">
               <div className="grid gap-1">
@@ -149,7 +149,7 @@ export default function TemplatesPage() {
                 </div>
               </div>
               <Input placeholder="Nome" value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              <textarea placeholder="Texto do prompt" value={form.text || ''} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={8} className="border rounded-md px-2 py-2 bg-transparent"></textarea>
+              <textarea placeholder="Texto do prompt" value={form.text || ''} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={8} className="border border-neutral-300 dark:border-neutral-700 rounded-md px-2 py-2 bg-white dark:bg-neutral-900 placeholder:text-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:focus-visible:ring-neutral-600 transition-colors"></textarea>
               <div className="flex gap-2 justify-end">
                 <Button variant="ghost" onClick={() => { setMode(Mode.View); setForm({}) }}>Cancelar</Button>
                 <Button onClick={save} disabled={loading}>{loading ? 'Salvando…' : 'Salvar'}</Button>
@@ -161,7 +161,7 @@ export default function TemplatesPage() {
 
       <div className="grid gap-2">
         {items.map(t => (
-          <div key={t.id} className="border rounded-md p-3">
+          <div key={t.id} className="border rounded-xl p-4 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
             <div className="flex items-center gap-2">
               <span className="text-xs opacity-70">{t.category}</span>
               <strong className="flex-1">{t.name}</strong>

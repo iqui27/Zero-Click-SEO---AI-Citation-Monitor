@@ -3,7 +3,12 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  /* Force built-in form controls (select, date, time, etc.) to render in light when not in .dark */
+  color-scheme: light;
+}
+.dark {
+  /* And in dark when .dark class is present on <html> (tailwind darkMode: 'class') */
+  color-scheme: dark;
 }
 
 body {

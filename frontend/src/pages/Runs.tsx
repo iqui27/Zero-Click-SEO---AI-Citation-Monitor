@@ -282,9 +282,9 @@ export default function Runs() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       <Toaster richColors position="top-right" />
-      <div className="text-xs px-3 py-2 border rounded-md flex flex-wrap items-center gap-2 bg-white dark:bg-neutral-900">
+      <div className="text-xs px-3 py-2 border rounded-xl flex flex-wrap items-center gap-2 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
         {projectName && (
           <span>
             Projeto: <span className="font-medium">{projectName}</span>
@@ -301,7 +301,7 @@ export default function Runs() {
         )}
       </div>
       <div className="flex items-center gap-2">
-        <h1 className="text-2xl font-semibold">Runs</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Runs</h1>
         <Button variant="outline" size="sm" onClick={() => { fetchRuns({ showLoading: false }).then(()=>toast.success('Atualizado')) }} className="ml-2"><RefreshCw className="h-4 w-4" /></Button>
         <Button className="ml-auto" onClick={() => setShowModal(true)}><Plus className="h-4 w-4 mr-1" /> Nova Run</Button>
       </div>
@@ -348,9 +348,9 @@ export default function Runs() {
         <span className="opacity-70 ml-2">Páginas: {totalPages}</span>
         <div className="ml-auto flex items-center gap-2">
           <span className="opacity-70">Ir para:</span>
-          <input
+          <Input
             type="number"
-            className="w-20 border rounded-md px-2 py-1 bg-white dark:bg-neutral-900"
+            className="w-20 h-8 text-sm"
             min={1}
             max={totalPages}
             value={gotoPage}

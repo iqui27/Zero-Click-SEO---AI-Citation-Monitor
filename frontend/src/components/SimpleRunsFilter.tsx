@@ -3,6 +3,7 @@
 import React from "react"
 import { Select } from "./ui/select"
 import { Button } from "./ui/button"
+import { Input } from "./ui/input"
 
 export type Subproject = { id: string; name: string }
 
@@ -41,7 +42,7 @@ export default function SimpleRunsFilter(props: SimpleRunsFilterProps) {
   }
 
   return (
-    <div className="border rounded-md p-3 bg-white dark:bg-neutral-900">
+    <div className="border rounded-xl p-3 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
       <div className="grid gap-3 sm:grid-cols-8 items-end">
         <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
           <span>Tema</span>
@@ -119,20 +120,20 @@ export default function SimpleRunsFilter(props: SimpleRunsFilterProps) {
         </label>
         <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
           <span>De</span>
-          <input
+          <Input
             type="date"
             value={props.dateFrom || ''}
             onChange={(e) => props.setDateFrom && props.setDateFrom(e.target.value)}
-            className="border rounded-md px-2 py-1 bg-white dark:bg-neutral-900"
+            className="h-8"
           />
         </label>
         <label className="grid gap-1 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
           <span>Até</span>
-          <input
+          <Input
             type="date"
             value={props.dateTo || ''}
             onChange={(e) => props.setDateTo && props.setDateTo(e.target.value)}
-            className="border rounded-md px-2 py-1 bg-white dark:bg-neutral-900"
+            className="h-8"
           />
         </label>
       </div>

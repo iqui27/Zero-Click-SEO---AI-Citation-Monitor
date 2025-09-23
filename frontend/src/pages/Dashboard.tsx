@@ -3,6 +3,7 @@ import { formatNumberCompact } from '../lib/utils'
 import axios from 'axios'
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts'
 import { Button } from '../components/ui/button'
+import { Select } from '../components/ui/select'
 import { Skeleton } from '../components/ui/skeleton'
 
 import { OverviewAnalytics, SeriesPoint, TopDomain, PerfByEngine, CostsResponse } from '../types/analytics'
@@ -48,10 +49,10 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <ActiveContextBar />
       <div className="flex items-center gap-2">
-        <h1 className="text-2xl font-semibold">Analytics</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Analytics</h1>
         <Button variant="secondary" className="ml-auto" onClick={() => window.location.href = '/runs'}>Nova Run</Button>
       </div>
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -188,29 +189,20 @@ function ActiveContextBar() {
   const themeName = themes.find(t => t.id === themeId)?.name || themeId
 
   return (
-    <div className="text-xs px-2 py-2 border rounded-md flex flex-wrap items-center gap-2 bg-white dark:bg-neutral-900">
+    <div className="text-xs px-2 py-2 border rounded-xl flex flex-wrap items-center gap-2 bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
       <div className="flex items-center gap-2">
         <span className="opacity-70">Projeto:</span>
-        <select
-          className="px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent"
-          value={projectId}
-          onChange={(e) => onChangeProject(e.target.value)}
-        >
+        <Select value={projectId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChangeProject(e.target.value)}>
           <option value="">— selecionar —</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        </Select>
       </div>
       <div className="flex items-center gap-2">
         <span className="opacity-70">Tema:</span>
-        <select
-          className="px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent"
-          value={themeId}
-          onChange={(e) => onChangeTheme(e.target.value)}
-          disabled={!projectId}
-        >
+        <Select value={themeId} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChangeTheme(e.target.value)} disabled={!projectId}>
           <option value="">— todos —</option>
           {themes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
+        </Select>
       </div>
       <span className="ml-auto" />
       {projectId && <span className="px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700">{projectName}</span>}

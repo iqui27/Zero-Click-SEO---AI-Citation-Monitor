@@ -177,34 +177,34 @@ export default function SandboxPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Sandbox de Engines</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-3 p-3 border rounded-md">
+    <div className="space-y-6">
+      <h1 className="text-3xl font-semibold tracking-tight">Sandbox de Engines</h1>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-4 p-4 border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-2">
             <Label>Engine</Label>
-            <select className="border rounded-md px-2 py-1" value={engine} onChange={e => setEngine(e.target.value as any)}>
+            <Select value={engine} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEngine(e.target.value as any)}>
               <option value="openai">OpenAI</option>
               <option value="gemini">Gemini</option>
               <option value="perplexity">Perplexity</option>
               <option value="google_serp">Google SERP</option>
               <option value="sandbox">Sandbox (fixture)</option>
-            </select>
+            </Select>
           </div>
           <div className="grid gap-2">
             <Label>Modelo</Label>
             {engine === 'openai' || engine === 'gemini' || engine === 'perplexity' ? (
-              <select className="border rounded-md px-2 py-1" value={model} onChange={e => setModel(e.target.value)}>
+              <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
                 {modelListFor(engine).map(m => (<option key={m} value={m}>{m}</option>))}
-              </select>
+              </Select>
             ) : (
               <Input value={model} onChange={e => setModel(e.target.value)} placeholder="(não aplicável)" />
             )}
             {engine === 'openai' && (
               <div className="flex items-center gap-3 text-xs">
-                <button type="button" className="px-2 py-1 border rounded-md" onClick={loadOpenAIModels} disabled={listBusy}>
+                <Button type="button" size="sm" variant="outline" onClick={loadOpenAIModels} disabled={listBusy}>
                   {listBusy ? 'Listando…' : 'Listar modelos (OpenAI)'}
-                </button>
+                </Button>
                 {openaiModels.length > 0 && <span>{openaiModels.length} modelos encontrados</span>}
                 {listErr && <span className="text-red-600">{listErr}</span>}
               </div>
@@ -212,7 +212,7 @@ export default function SandboxPage() {
           </div>
           <div className="grid gap-2">
             <Label>Prompt</Label>
-            <textarea className="border rounded-md p-2 min-h-[120px]" value={prompt} onChange={e => setPrompt(e.target.value)} />
+            <textarea className="border border-neutral-300 dark:border-neutral-700 rounded-md p-2 min-h-[120px] bg-white dark:bg-neutral-900 placeholder:text-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:focus-visible:ring-neutral-600 transition-colors" value={prompt} onChange={e => setPrompt(e.target.value)} />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="grid gap-2">
@@ -248,29 +248,29 @@ export default function SandboxPage() {
                 </div>
                 <div className="grid gap-1">
                   <Label>Tool choice</Label>
-                  <select className="border rounded-md px-2 py-1" value={toolChoice} onChange={e => setToolChoice(e.target.value as any)}>
+                  <Select value={toolChoice} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setToolChoice(e.target.value as any)}>
                     <option value="auto">auto</option>
                     <option value="force_tool">force web_search_preview</option>
                     <option value="disabled">disabled</option>
-                  </select>
+                  </Select>
                 </div>
                 <div className="grid gap-1">
                   <Label>Reasoning effort</Label>
-                  <select className="border rounded-md px-2 py-1" value={reasoningEffort} onChange={e => setReasoningEffort(e.target.value as any)}>
+                  <Select value={reasoningEffort} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReasoningEffort(e.target.value as any)}>
                     <option value="low">low</option>
                     <option value="medium">medium</option>
                     <option value="high">high</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div className="grid gap-1">
                   <Label>Search context size</Label>
-                  <select className="border rounded-md px-2 py-1" value={searchContextSize} onChange={e => setSearchContextSize(e.target.value as any)}>
+                  <Select value={searchContextSize} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSearchContextSize(e.target.value as any)}>
                     <option value="low">low</option>
                     <option value="medium">medium</option>
                     <option value="high">high</option>
-                  </select>
+                  </Select>
                 </div>
                 <div className="grid gap-1">
                   <Label>Max output tokens</Label>
@@ -338,10 +338,10 @@ export default function SandboxPage() {
               <div className="grid grid-cols-3 gap-2">
                 <div className="grid gap-1">
                   <Label>Search mode</Label>
-                  <select className="border rounded-md px-2 py-1" value={pplxMode} onChange={e => setPplxMode(e.target.value as any)}>
+                  <Select value={pplxMode} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPplxMode(e.target.value as any)}>
                     <option value="web">web</option>
                     <option value="academic">academic</option>
-                  </select>
+                  </Select>
                 </div>
                 <div className="grid gap-1">
                   <Label>Recency filter</Label>
@@ -355,11 +355,11 @@ export default function SandboxPage() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="grid gap-1">
                   <Label>Allowlist domains (comma ou quebra de linha)</Label>
-                  <textarea className="border rounded-md p-2 min-h-[90px]" value={pplxAllowDomains} onChange={e => setPplxAllowDomains(e.target.value)} />
+                  <textarea className="border border-neutral-300 dark:border-neutral-700 rounded-md p-2 min-h-[90px] bg-white dark:bg-neutral-900 placeholder:text-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:focus-visible:ring-neutral-600 transition-colors" value={pplxAllowDomains} onChange={e => setPplxAllowDomains(e.target.value)} />
                 </div>
                 <div className="grid gap-1">
                   <Label>Denylist domains (comma ou quebra de linha)</Label>
-                  <textarea className="border rounded-md p-2 min-h-[90px]" value={pplxDenyDomains} onChange={e => setPplxDenyDomains(e.target.value)} />
+                  <textarea className="border border-neutral-300 dark:border-neutral-700 rounded-md p-2 min-h-[90px] bg-white dark:bg-neutral-900 placeholder:text-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:focus-visible:ring-neutral-600 transition-colors" value={pplxDenyDomains} onChange={e => setPplxDenyDomains(e.target.value)} />
                 </div>
               </div>
               <div className="text-xs opacity-70">Perplexity já realiza web-search e retorna citations/search_results quando disponíveis.</div>
@@ -397,7 +397,7 @@ export default function SandboxPage() {
           </div>
           <Button onClick={run} disabled={busy}>{busy ? 'Executando...' : 'Executar teste'}</Button>
         </div>
-        <div className="space-y-3 p-3 border rounded-md">
+        <div className="space-y-4 p-4 border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors md:sticky md:top-16 h-fit">
           <h2 className="font-semibold">Resultado</h2>
           {error && <div className="text-sm text-red-600 whitespace-pre-wrap">{error}</div>}
           {result && (
@@ -410,9 +410,9 @@ export default function SandboxPage() {
                   {result.truncated && (
                     <div className="text-xs flex items-center gap-3">
                       <span className="opacity-70">Preview truncado</span>
-                      <button type="button" className="px-2 py-1 border rounded-md" onClick={() => setShowFull(v => !v)}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setShowFull(v => !v)}>
                         {showFull ? 'Mostrar preview' : 'Mostrar texto completo'}
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </div>
