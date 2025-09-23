@@ -43,6 +43,22 @@ async def on_startup() -> None:
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS error_code VARCHAR(255)",
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS config_hash VARCHAR(255)",
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS cycle_delay_seconds INTEGER",
+                    # Classificação Zero-Click da Resposta
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS response_type VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS sufficiency_level VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS actionability_type VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS trust_source VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS brand_positioning VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS classification_confidence DOUBLE PRECISION",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS classified_at TIMESTAMP",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS classification_version VARCHAR(50)",
+                    # Métricas Avançadas Zero-Click
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS user_intent VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS satisfaction_score DOUBLE PRECISION",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS competitive_mentions INTEGER",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS financial_value_score DOUBLE PRECISION",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS content_gap_detected BOOLEAN",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS conversion_potential VARCHAR(50)",
                     # insights.run_id para relacionar insight com run
                     "ALTER TABLE insights ADD COLUMN IF NOT EXISTS run_id VARCHAR(255)",
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.constraint_column_usage WHERE table_name='insights' AND column_name='run_id') THEN BEGIN EXCEPTION WHEN others THEN END; END IF; END $$;",
@@ -94,6 +110,22 @@ async def on_startup() -> None:
                 ("error_code", "VARCHAR(255)"),
                 ("config_hash", "VARCHAR(255)"),
                 ("cycle_delay_seconds", "INT"),
+                # Classificação Zero-Click da Resposta
+                ("response_type", "VARCHAR(50)"),
+                ("sufficiency_level", "VARCHAR(50)"),
+                ("actionability_type", "VARCHAR(50)"),
+                ("trust_source", "VARCHAR(50)"),
+                ("brand_positioning", "VARCHAR(50)"),
+                ("classification_confidence", "FLOAT"),
+                ("classified_at", "DATETIME"),
+                ("classification_version", "VARCHAR(50)"),
+                # Métricas Avançadas Zero-Click
+                ("user_intent", "VARCHAR(50)"),
+                ("satisfaction_score", "FLOAT"),
+                ("competitive_mentions", "INT"),
+                ("financial_value_score", "FLOAT"),
+                ("content_gap_detected", "BIT"),
+                ("conversion_potential", "VARCHAR(50)"),
             ]
 
             # Adicionar cada coluna se não existir

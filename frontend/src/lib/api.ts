@@ -38,6 +38,13 @@ export type RunListItem = {
   schedule_index_today?: number
   schedule_total_today?: number
   schedule_source?: string
+  // Classificação Zero-Click
+  response_type?: string
+  sufficiency_level?: string
+  actionability_type?: string
+  trust_source?: string
+  brand_positioning?: string
+  classification_confidence?: number
 }
 
 export type EngineConfig = {
@@ -77,6 +84,15 @@ export type RunDetail = {
   // monitor/schedule
   monitor_id?: string
   schedule_date?: string
+  // Classificação Zero-Click
+  response_type?: string
+  sufficiency_level?: string
+  actionability_type?: string
+  trust_source?: string
+  brand_positioning?: string
+  classification_confidence?: number
+  classified_at?: string
+  classification_version?: string
   schedule_slot?: string
   schedule_index_today?: number
   schedule_total_today?: number
@@ -210,3 +226,171 @@ export type OpenAIModelsResponse = {
 
 export const listOpenAIModels = (params: { org?: string; project?: string }) =>
   http.get<OpenAIModelsResponse>('/sandbox/openai/models', { params }).then(r => r.data)
+
+// ---------- Classification (Zero-Click) ----------
+export type ClassificationResult = {
+  response_type: string
+  sufficiency_level: string
+  actionability_type: string
+  trust_source: string
+  brand_positioning: string
+  confidence: number
+  reasoning: Record<string, string>
+}
+
+export type ClassificationResponse = {
+  run_id: string
+  classification: ClassificationResult
+  classified_at: string
+  version: string
+}
+
+export type ClassificationStats = {
+  project_id: string
+  overview: {
+    total_runs: number
+    classified_runs: number
+    unclassified_runs: number
+    classification_coverage: number
+    avg_confidence: number
+  }
+  response_types: Record<string, number>
+  brand_positioning: Record<string, number>
+  sufficiency_levels: Record<string, number>
+}
+
+export type BatchClassificationResult = {
+  project_id: string
+  total_processed: number
+  successful: number
+  failed: number
+  force_update: boolean
+  limit: number
+  processed_at: string
+}
+
+export const classifyRun = (runId: string) =>
+  http.post<ClassificationResponse>(`/runs/${runId}/classify`).then(r => r.data)
+
+export const batchClassifyProject = (projectId: string, forceUpdate = false, limit = 1000) =>
+  http.post<BatchClassificationResult>(`/projects/${projectId}/classify/batch`, null, {
+    params: { force_update: forceUpdate, limit }
+  }).then(r => r.data)
+
+export const getClassificationStats = (projectId: string) =>
+  http.get<ClassificationStats>(`/projects/${projectId}/classification/stats`).then(r => r.data)
+
+export const getUnprocessedRuns = (projectId?: string, limit = 100) =>
+  http.get<{ unclassified_runs: string[]; count: number; project_id?: string; limit: number }>(`/classification/unprocessed`, {
+    params: { project_id: projectId, limit }
+  }).then(r => r.data)
+
+// ---------- Gemini-Powered Classification ----------
+export type GeminiClassificationResponse = {
+  run_id: string
+  classification: ClassificationResult
+  advanced_metrics: {
+    user_intent: string
+    satisfaction_score: number
+    competitive_mentions: number
+    financial_value_score: number
+    content_gap_detected: boolean
+    conversion_potential: string
+  }
+  ai_insights: {
+    strategic_insights: string[]
+    optimization_suggestions: string[]
+    reasoning: Record<string, string>
+  }
+  classified_at: string
+  version: string
+}
+
+export type GeminiBatchResult = {
+  project_id: string
+  processing_summary: {
+    total_processed: number
+    successful: number
+    failed: number
+    success_rate: number
+    limit: number
+  }
+  aggregated_insights: {
+    strategic_insights: string[]
+    optimization_suggestions: string[]
+  }
+  processed_at: string
+  version: string
+}
+
+export type GeminiInsights = {
+  analysis_period: string
+  summary: {
+    total_runs_analyzed: number
+    high_value_opportunities: number
+    content_gaps_detected: number
+    high_satisfaction_responses: number
+    gap_percentage: number
+  }
+  intent_distribution: Record<string, number>
+  brand_positioning: Record<string, number>
+  priority_opportunities: Array<{
+    run_id: string
+    prompt_preview?: string
+    competitive_mentions: number
+    financial_value: number
+    user_intent: string
+    date: string
+  }>
+  strategic_insights: string[]
+  recommendations: string[]
+}
+
+export type GeminiStatus = {
+  project_id: string
+  classification_status: {
+    total_completed_runs: number
+    gemini_classified: number
+    basic_classified: number
+    unclassified: number
+    gemini_coverage: number
+    gemini_avg_confidence: number
+  }
+  recommendations: {
+    should_upgrade_to_gemini: boolean
+    needs_initial_classification: boolean
+    upgrade_candidates: number
+    new_classification_needed: number
+  }
+}
+
+export const classifyRunWithGemini = (runId: string) =>
+  http.post<GeminiClassificationResponse>(`/runs/${runId}/classify/gemini`).then(r => r.data)
+
+export const batchClassifyWithGemini = (projectId: string, limit = 500) =>
+  http.post<GeminiBatchResult>(`/projects/${projectId}/classify/gemini/batch`, null, {
+    params: { limit }
+  }).then(r => r.data)
+
+export const getGeminiInsights = (projectId: string, days = 7) =>
+  http.get<GeminiInsights>(`/projects/${projectId}/insights/gemini`, {
+    params: { days }
+  }).then(r => r.data)
+
+export const getGeminiStatus = (projectId: string) =>
+  http.get<GeminiStatus>(`/projects/${projectId}/classification/gemini-status`).then(r => r.data)
+
+export const migrateToGemini = (projectId?: string, limit = 200) =>
+  http.post<{
+    migration_summary: {
+      candidates_found: number
+      processed: number
+      successful_migrations: number
+      migration_rate: number
+    }
+    project_id?: string
+    limit: number
+    completed_at: string
+  }>(`/classification/migrate-to-gemini`, null, {
+    params: { project_id: projectId, limit }
+  }).then(r => r.data)
