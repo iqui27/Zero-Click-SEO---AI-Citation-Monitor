@@ -8,7 +8,11 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.models.models import Run, Domain, Evidence, Citation
-from app.services.response_classifier import classify_run_response, ClassificationResult
+from app.services.response_classifier import (
+    CLASSIFIER_VERSION,
+    classify_run_response,
+    ClassificationResult,
+)
 from app.db.session import SessionLocal
 
 
@@ -227,7 +231,9 @@ class ClassificationIntegrator:
         run.brand_positioning = result.brand_positioning.value
         run.classification_confidence = result.confidence
         run.classified_at = datetime.utcnow()
-        run.classification_version = "1.0"
+        run.classification_version = CLASSIFIER_VERSION
+        run.question_type = result.question_type.value
+        run.funnel_stage = result.funnel_stage.value
 
         # Calcular e aplicar métricas avançadas
         try:

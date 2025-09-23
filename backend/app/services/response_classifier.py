@@ -4,10 +4,11 @@ Implementa o sistema de classificação baseado no documento de conceitos fornec
 """
 
 import re
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
+
+CLASSIFIER_VERSION = "1.1"
 
 class ResponseType(str, Enum):
     """Tipo de Resposta (Classificação Primária)"""
@@ -40,6 +41,21 @@ class BrandPositioning(str, Enum):
     COMPETIDOR = "competidor"      # Marca listada entre várias opções
     AUSENTE = "ausente"           # Marca não mencionada
 
+
+class QuestionType(str, Enum):
+    """Classificação do tipo de pergunta"""
+    MARCA = "marca"
+    PRODUTO = "produto"
+    INFORMACAO = "informacao"
+    COMPARACAO = "comparacao"
+
+
+class FunnelStage(str, Enum):
+    """Classificação do estágio do funil"""
+    RECONHECIMENTO = "reconhecimento"
+    CONSIDERACAO = "consideracao"
+    CONVERSAO = "conversao"
+
 @dataclass
 class ClassificationResult:
     """Resultado da classificação de uma resposta"""
@@ -48,6 +64,8 @@ class ClassificationResult:
     actionability_type: ActionabilityType
     trust_source: TrustSource
     brand_positioning: BrandPositioning
+    question_type: QuestionType
+    funnel_stage: FunnelStage
     confidence: float  # 0.0-1.0
     reasoning: Dict[str, str]  # Justificativas para cada classificação
 
@@ -64,7 +82,7 @@ class ResponseClassifier:
         """
         self.target_domains = target_domains or []
         self.brand_keywords = brand_keywords or []
-        self.version = "1.0"
+        self.version = CLASSIFIER_VERSION
 
         # Padrões de detecção
         self._setup_patterns()
@@ -161,6 +179,13 @@ class ResponseClassifier:
         actionability_type = self._classify_actionability(normalized_text)
         trust_source = self._classify_trust_source(normalized_text, citations)
         brand_positioning = self._classify_brand_positioning(normalized_text, citations)
+        question_type = self._classify_question_type(normalized_text, prompt_text)
+        funnel_stage = self._classify_funnel_stage(
+            normalized_text,
+            prompt_text,
+            actionability_type,
+            question_type,
+        )
 
         # Calcular confiança geral (média ponderada)
         confidence = self._calculate_confidence(
@@ -170,8 +195,15 @@ class ResponseClassifier:
 
         # Gerar justificativas
         reasoning = self._generate_reasoning(
-            normalized_text, citations, response_type, sufficiency_level,
-            actionability_type, trust_source, brand_positioning
+            normalized_text,
+            citations,
+            response_type,
+            sufficiency_level,
+            actionability_type,
+            trust_source,
+            brand_positioning,
+            question_type,
+            funnel_stage,
         )
 
         return ClassificationResult(
@@ -180,6 +212,8 @@ class ResponseClassifier:
             actionability_type=actionability_type,
             trust_source=trust_source,
             brand_positioning=brand_positioning,
+            question_type=question_type,
+            funnel_stage=funnel_stage,
             confidence=confidence,
             reasoning=reasoning
         )
@@ -227,6 +261,75 @@ class ResponseClassifier:
                 return best_type
 
         return ResponseType.DIRETA
+
+    def _classify_question_type(self, text: str, prompt_text: Optional[str]) -> QuestionType:
+        """Determina o tipo da pergunta (marca, produto, informação, comparação)."""
+        combined = f"{prompt_text or ''} {text}".lower()
+
+        comparison_triggers = [
+            " vs ", "versus", "comparar", "comparação", "comparacao", "diferença", "diferenca",
+            "qual melhor", "melhor que", "vantagem", "desvantagem", "comparativo", "comparativa"
+        ]
+        product_keywords = [
+            "cartao", "cartão", "emprestimo", "empréstimo", "financiamento", "investimento",
+            "conta", "poupanca", "poupança", "credito", "crédito", "debito", "débito",
+            "seguro", "consorcio", "consórcio", "pix", "boleto", "fatura", "limite",
+            "agencia", "agência", "tarifa", "taxa", "juros", "renegociacao", "renegociação",
+            "aplicacao", "aplicação", "cdb", "lci", "lca", "fgts", "fgv", "investir", "finame"
+        ]
+
+        brand_keywords = [kw.lower() for kw in (self.brand_keywords or [])]
+        brand_keywords.extend([
+            "banco do brasil", "bb", "ourocard", "bb digital", "app bb", "bb seguridade"
+        ])
+
+        if any(trigger in combined for trigger in comparison_triggers):
+            return QuestionType.COMPARACAO
+
+        if any(keyword in combined for keyword in product_keywords):
+            return QuestionType.PRODUTO
+
+        if any(keyword in combined for keyword in brand_keywords):
+            return QuestionType.MARCA
+
+        return QuestionType.INFORMACAO
+
+    def _classify_funnel_stage(
+        self,
+        text: str,
+        prompt_text: Optional[str],
+        actionability_type: ActionabilityType,
+        question_type: QuestionType,
+    ) -> FunnelStage:
+        """Atribui estágio de funil com base no texto e intenção."""
+        combined = f"{prompt_text or ''} {text}".lower()
+
+        conversion_triggers = [
+            "como abrir", "como fazer", "como solicitar", "como contratar", "como pedir",
+            "abra sua", "abra uma", "solicite", "contrate", "cadastre-se", "cadastre se",
+            "acessar conta", "acessar o app", "fazer login", "segunda via", "pagar boleto",
+            "pagar conta", "renegociar", "parcelar", "simular", "simulação", "simulacao"
+        ]
+
+        consideration_triggers = [
+            "vale a pena", "qual melhor", "vs", "versus", "comparar", "comparação", "comparacao",
+            "diferença", "diferenca", "vantagem", "desvantagem", "opção", "opcoes", "alternativa",
+            "taxa", "tarifa", "juros"
+        ]
+
+        if (
+            actionability_type == ActionabilityType.TRANSACIONAL
+            or any(trigger in combined for trigger in conversion_triggers)
+        ):
+            return FunnelStage.CONVERSAO
+
+        if (
+            question_type == QuestionType.COMPARACAO
+            or any(trigger in combined for trigger in consideration_triggers)
+        ):
+            return FunnelStage.CONSIDERACAO
+
+        return FunnelStage.RECONHECIMENTO
 
     def _classify_sufficiency(self, text: str, citations: List[Dict]) -> SufficiencyLevel:
         """Classifica o nível de autossuficiência"""
@@ -361,10 +464,18 @@ class ResponseClassifier:
         final_confidence = min(base_confidence + text_length_factor + classification_clarity, 1.0)
         return round(final_confidence, 2)
 
-    def _generate_reasoning(self, text: str, citations: List[Dict],
-                          response_type: ResponseType, sufficiency_level: SufficiencyLevel,
-                          actionability_type: ActionabilityType, trust_source: TrustSource,
-                          brand_positioning: BrandPositioning) -> Dict[str, str]:
+    def _generate_reasoning(
+        self,
+        text: str,
+        citations: List[Dict],
+        response_type: ResponseType,
+        sufficiency_level: SufficiencyLevel,
+        actionability_type: ActionabilityType,
+        trust_source: TrustSource,
+        brand_positioning: BrandPositioning,
+        question_type: QuestionType,
+        funnel_stage: FunnelStage,
+    ) -> Dict[str, str]:
         """Gera justificativas para cada classificação"""
         reasoning = {}
 
@@ -407,6 +518,21 @@ class ResponseClassifier:
             BrandPositioning.AUSENTE: "Marca não mencionada na resposta"
         }
         reasoning["brand_positioning"] = positioning_reasons.get(brand_positioning, "Classificação automática")
+
+        question_reasons = {
+            QuestionType.MARCA: "Consulta focada na marca ou instituição",
+            QuestionType.PRODUTO: "Consulta menciona produtos/serviços financeiros específicos",
+            QuestionType.INFORMACAO: "Consulta busca informação geral ou contexto",
+            QuestionType.COMPARACAO: "Consulta compara opções ou pede diferenças",
+        }
+        reasoning["question_type"] = question_reasons.get(question_type, "Classificação automática")
+
+        funnel_reasons = {
+            FunnelStage.RECONHECIMENTO: "Intenção de descoberta/educação sem ação imediata",
+            FunnelStage.CONSIDERACAO: "Usuário avalia alternativas ou compara ofertas",
+            FunnelStage.CONVERSAO: "Consulta indica intenção de ação/transação imediata",
+        }
+        reasoning["funnel_stage"] = funnel_reasons.get(funnel_stage, "Classificação automática")
 
         return reasoning
 

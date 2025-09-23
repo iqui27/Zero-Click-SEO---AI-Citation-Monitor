@@ -18,8 +18,14 @@ except ImportError:
 
 from app.core.config import settings
 from app.services.response_classifier import (
-    ResponseType, SufficiencyLevel, ActionabilityType,
-    TrustSource, BrandPositioning, ClassificationResult
+    ResponseType,
+    SufficiencyLevel,
+    ActionabilityType,
+    TrustSource,
+    BrandPositioning,
+    QuestionType,
+    FunnelStage,
+    ClassificationResult,
 )
 from app.services.advanced_metrics import (
     UserIntent, ConversionPotential, AdvancedMetrics
@@ -34,6 +40,8 @@ class GeminiAnalysisResult:
     actionability_type: ActionabilityType
     trust_source: TrustSource
     brand_positioning: BrandPositioning
+    question_type: QuestionType
+    funnel_stage: FunnelStage
 
     # Métricas avançadas
     user_intent: UserIntent
@@ -166,7 +174,9 @@ Analise todos os aspectos e retorne um JSON com a seguinte estrutura EXATA:
     "sufficiency_level": "total|parcial|insuficiente",
     "actionability_type": "transacional|informativa",
     "trust_source": "citada|generica",
-    "brand_positioning": "protagonista|competidor|ausente"
+    "brand_positioning": "protagonista|competidor|ausente",
+    "question_type": "marca|produto|informacao|comparacao",
+    "funnel_stage": "reconhecimento|consideracao|conversao"
   }},
   "advanced_metrics": {{
     "user_intent": "informational|transactional|navigational|commercial",
@@ -181,6 +191,8 @@ Analise todos os aspectos e retorne um JSON com a seguinte estrutura EXATA:
     "reasoning": {{
       "response_type": "Explicação da classificação do tipo",
       "brand_positioning": "Análise do posicionamento da marca",
+      "question_type": "Justificativa do tipo de pergunta",
+      "funnel_stage": "Motivo do estágio de funil atribuído",
       "user_intent": "Justificativa da intenção identificada",
       "satisfaction_score": "Razão do score de satisfação",
       "content_gap": "Análise de gaps de conteúdo"
@@ -211,6 +223,17 @@ Analise todos os aspectos e retorne um JSON com a seguinte estrutura EXATA:
 - protagonista: BB é a solução principal mencionada
 - competidor: BB aparece junto com outros bancos
 - ausente: BB não é mencionado mas deveria estar
+
+**QUESTION_TYPE:**
+- marca: Usuário busca informações sobre a marca/instituição
+- produto: Usuário cita produtos/serviços específicos
+- informacao: Usuário procura contexto ou explicação geral
+- comparacao: Usuário compara opções, pergunta diferenças ou alternativas
+
+**FUNNEL_STAGE:**
+- reconhecimento: Topo de funil, intenção de aprendizado/descoberta
+- consideracao: Meio de funil, comparação e avaliação de alternativas
+- conversao: Fundo de funil, intenção de ação direta ou contratação
 
 **USER_INTENT:**
 - informational: Busca entender conceitos
@@ -248,6 +271,8 @@ Seja preciso, objetivo e foque em insights acionáveis para otimização SEO.
         actionability_type = ActionabilityType(classification.get("actionability_type", "informativa"))
         trust_source = TrustSource(classification.get("trust_source", "generica"))
         brand_positioning = BrandPositioning(classification.get("brand_positioning", "ausente"))
+        question_type = QuestionType(classification.get("question_type", "informacao"))
+        funnel_stage = FunnelStage(classification.get("funnel_stage", "reconhecimento"))
 
         # Parse métricas avançadas
         user_intent = UserIntent(advanced.get("user_intent", "informational"))
@@ -269,6 +294,8 @@ Seja preciso, objetivo e foque em insights acionáveis para otimização SEO.
             actionability_type=actionability_type,
             trust_source=trust_source,
             brand_positioning=brand_positioning,
+            question_type=question_type,
+            funnel_stage=funnel_stage,
             user_intent=user_intent,
             satisfaction_score=satisfaction_score,
             competitive_mentions=competitive_mentions,
@@ -299,6 +326,8 @@ Seja preciso, objetivo e foque em insights acionáveis para otimização SEO.
             actionability_type=basic_result.actionability_type,
             trust_source=basic_result.trust_source,
             brand_positioning=basic_result.brand_positioning,
+            question_type=basic_result.question_type,
+            funnel_stage=basic_result.funnel_stage,
             user_intent=advanced_result.user_intent,
             satisfaction_score=advanced_result.satisfaction_score,
             competitive_mentions=advanced_result.competitive_mentions,

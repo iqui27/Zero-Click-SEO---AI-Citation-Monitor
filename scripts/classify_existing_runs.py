@@ -135,14 +135,20 @@ def main():
 
                 response_types = {}
                 brand_positions = {}
+                question_types = {}
+                funnel_stages = {}
 
                 for result in results.values():
                     if result:
                         rt = result.response_type.value
                         bp = result.brand_positioning.value
+                        qt = result.question_type.value
+                        fs = result.funnel_stage.value
 
                         response_types[rt] = response_types.get(rt, 0) + 1
                         brand_positions[bp] = brand_positions.get(bp, 0) + 1
+                        question_types[qt] = question_types.get(qt, 0) + 1
+                        funnel_stages[fs] = funnel_stages.get(fs, 0) + 1
 
                 print("Tipos de Resposta:")
                 for rt, count in sorted(response_types.items()):
@@ -151,6 +157,14 @@ def main():
                 print("\nPosicionamento da Marca:")
                 for bp, count in sorted(brand_positions.items()):
                     print(f"  {bp}: {count}")
+
+                print("\nTipos de Pergunta:")
+                for qt, count in sorted(question_types.items()):
+                    print(f"  {qt}: {count}")
+
+                print("\nEstágios de Funil:")
+                for fs, count in sorted(funnel_stages.items()):
+                    print(f"  {fs}: {count}")
 
     except Exception as e:
         print(f"Erro durante o processamento: {e}")

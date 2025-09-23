@@ -309,6 +309,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             Run.zcrs,
             Run.amr_flag,
             Run.dcr_flag,
+            Run.question_type,
+            Run.funnel_stage,
             Run.tokens_total,
             Run.cost_usd,
             Run.model_name,
@@ -408,6 +410,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         "prompt_text",
         "ai_overview_run_id",
         "categoria",
+        "tipo_pergunta",
+        "funil",
         "response_text",
         "citations_domains",
         "citations_urls",
@@ -480,6 +484,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             getattr(r, "prompt_text", None) or "",
             ai_map.get(rid, ""),
             category,
+            getattr(r, "question_type", None) or "",
+            getattr(r, "funnel_stage", None) or "",
             text_str,
             " ".join(doms),
             " ".join(urls),
@@ -557,7 +563,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
             "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
             "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-            "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","response_text","screenshot_url",
+            "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","tipo_pergunta","funil","response_text","screenshot_url",
             "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
         ])
         buf.seek(0)
@@ -584,6 +590,8 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             Run.citations_count,
             Run.our_citations_count,
             Run.unique_domains_count,
+            Run.question_type,
+            Run.funnel_stage,
             Run.model_name,
             Run.error_code,
             Run.schedule_date,
@@ -665,7 +673,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
         "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
         "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-        "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","response_text","screenshot_url",
+        "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","tipo_pergunta","funil","response_text","screenshot_url",
         "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
     ])
     # Build category map from PromptTemplate by normalizing Prompt.name (strip 'Run: ')
@@ -701,6 +709,9 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
         except Exception:
             ai_overview_id = ai_overview_id or ""
 
+        prompt_name = getattr(r, "prompt_name", None)
+        category = cat_map.get((r.project_id, _norm_name(prompt_name) or ""), "") if prompt_name else ""
+
         base = [
             r.id,
             r.project_id,
@@ -727,12 +738,14 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             r.schedule_total_today if r.schedule_total_today is not None else "",
             r.schedule_source or "",
             getattr(r, "prompt_id", None) or "",
-            getattr(r, "prompt_name", None) or "",
+            prompt_name or "",
             getattr(r, "prompt_version_id", None) or "",
             getattr(r, "prompt_text", None) or "",
             ai_overview_id,
             getattr(r, "subproject_name", None) or "",
-            (cat_map.get((r.project_id, _norm_name(getattr(r, "prompt_name", None)) or ""), "") if getattr(r, "prompt_name", None) else ""),
+            category,
+            getattr(r, "question_type", None) or "",
+            getattr(r, "funnel_stage", None) or "",
             ev_text.get(rid, ""),
             ev_shot.get(rid, ""),
         ]
@@ -1580,6 +1593,8 @@ def export_runs_csv(
         "tokens_total",
         "latency_ms",
         "cost_usd",
+        "tipo_pergunta",
+        "funil",
         "citations_domains",
         "citations_urls",
         "citations_is_ours",
@@ -1605,6 +1620,8 @@ def export_runs_csv(
             r.tokens_total if r.tokens_total is not None else "",
             r.latency_ms if r.latency_ms is not None else "",
             f"{float(r.cost_usd):.6f}" if r.cost_usd is not None else "",
+            r.question_type or "",
+            r.funnel_stage or "",
             " ".join(run_to_domains.get(r.id, [])),
             " ".join(run_to_urls.get(r.id, [])),
             " ".join(run_to_ours.get(r.id, [])),
@@ -2614,7 +2631,18 @@ def update_monitor(monitor_id: str, payload: dict, db: Session = Depends(get_db)
 @api_router.get("/analytics/subprojects/{subproject_id}/export.csv")
 def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
     rows = (
-        db.query(Run.id, Run.started_at, Run.finished_at, Run.status, Run.zcrs, Run.amr_flag, Run.dcr_flag, Engine.name)
+        db.query(
+            Run.id,
+            Run.started_at,
+            Run.finished_at,
+            Run.status,
+            Run.zcrs,
+            Run.amr_flag,
+            Run.dcr_flag,
+            Run.question_type,
+            Run.funnel_stage,
+            Engine.name,
+        )
         .join(Engine, Engine.id == Run.engine_id)
         .filter(Run.subproject_id == subproject_id)
         .order_by(Run.started_at.asc().nullsfirst())
@@ -2635,8 +2663,21 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["run_id", "started_at", "finished_at", "status", "engine", "zcrs", "amr", "dcr", "citations", "citations_is_ours"])
-    for rid, started, finished, status, zcrs, amr, dcr, eng in rows:
+    writer.writerow([
+        "run_id",
+        "started_at",
+        "finished_at",
+        "status",
+        "engine",
+        "zcrs",
+        "amr",
+        "dcr",
+        "tipo_pergunta",
+        "funil",
+        "citations",
+        "citations_is_ours",
+    ])
+    for rid, started, finished, status, zcrs, amr, dcr, question_type, funnel_stage, eng in rows:
         writer.writerow([
             rid,
             started.isoformat() if started else "",
@@ -2646,6 +2687,8 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
             zcrs if zcrs is not None else "",
             1 if amr else 0 if amr is not None else "",
             1 if dcr else 0 if dcr is not None else "",
+            question_type or "",
+            funnel_stage or "",
             " ".join(run_to_urls.get(rid, [])),
             " ".join(run_to_ours.get(rid, [])),
         ])
@@ -3638,6 +3681,24 @@ def get_classification_stats(project_id: str, db: Session = Depends(get_db)):
         Run.sufficiency_level.isnot(None)
     ).group_by(Run.sufficiency_level).all()
 
+    # Distribuição por tipo de pergunta
+    question_type_stats = db.query(
+        Run.question_type,
+        func.count(Run.id).label('count')
+    ).filter(
+        Run.project_id == project_id,
+        Run.question_type.isnot(None)
+    ).group_by(Run.question_type).all()
+
+    # Distribuição por estágio de funil
+    funnel_stats = db.query(
+        Run.funnel_stage,
+        func.count(Run.id).label('count')
+    ).filter(
+        Run.project_id == project_id,
+        Run.funnel_stage.isnot(None)
+    ).group_by(Run.funnel_stage).all()
+
     # Confiança média das classificações
     avg_confidence = db.query(
         func.avg(Run.classification_confidence)
@@ -3663,6 +3724,12 @@ def get_classification_stats(project_id: str, db: Session = Depends(get_db)):
         },
         "sufficiency_levels": {
             row.sufficiency_level: row.count for row in sufficiency_stats
+        },
+        "question_types": {
+            row.question_type: row.count for row in question_type_stats
+        },
+        "funnel_stages": {
+            row.funnel_stage: row.count for row in funnel_stats
         }
     }
 

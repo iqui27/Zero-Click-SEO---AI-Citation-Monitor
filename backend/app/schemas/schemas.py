@@ -98,6 +98,8 @@ class RunOut(BaseModel):
     actionability_type: Optional[str] = None
     trust_source: Optional[str] = None
     brand_positioning: Optional[str] = None
+    question_type: Optional[str] = None
+    funnel_stage: Optional[str] = None
     classification_confidence: Optional[float] = None
     classified_at: Optional[datetime] = None
     classification_version: Optional[str] = None
@@ -134,6 +136,8 @@ class RunListItem(BaseModel):
     actionability_type: Optional[str] = None
     trust_source: Optional[str] = None
     brand_positioning: Optional[str] = None
+    question_type: Optional[str] = None
+    funnel_stage: Optional[str] = None
     classification_confidence: Optional[float] = None
     # Métricas Avançadas Zero-Click
     user_intent: Optional[str] = None
@@ -177,6 +181,8 @@ class RunDetailOut(BaseModel):
     actionability_type: Optional[str] = None
     trust_source: Optional[str] = None
     brand_positioning: Optional[str] = None
+    question_type: Optional[str] = None
+    funnel_stage: Optional[str] = None
     classification_confidence: Optional[float] = None
     classified_at: Optional[datetime] = None
     classification_version: Optional[str] = None

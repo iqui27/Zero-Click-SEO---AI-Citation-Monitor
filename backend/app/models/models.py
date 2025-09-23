@@ -163,6 +163,8 @@ class Run(Base):
     actionability_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # transacional|informativa
     trust_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # citada|generica
     brand_positioning: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # protagonista|competidor|ausente
+    question_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # marca|produto|informacao|comparacao
+    funnel_stage: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # reconhecimento|consideracao|conversao
     classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0-1.0
     classified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     classification_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # versão do sistema de classificação

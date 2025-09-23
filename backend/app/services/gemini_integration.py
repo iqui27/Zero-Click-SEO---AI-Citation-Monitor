@@ -264,6 +264,8 @@ class GeminiClassificationIntegrator:
         run.actionability_type = result.actionability_type.value
         run.trust_source = result.trust_source.value
         run.brand_positioning = result.brand_positioning.value
+        run.question_type = result.question_type.value
+        run.funnel_stage = result.funnel_stage.value
         run.classification_confidence = result.confidence
         run.classified_at = datetime.utcnow()
         run.classification_version = "2.0-gemini"

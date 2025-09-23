@@ -34,6 +34,17 @@ O Sistema de Classificação Zero-Click SEO é uma solução completa para anál
 - **competidor**: BB aparece junto com outros bancos
 - **ausente**: BB não é mencionado mas deveria estar
 
+#### Tipo de Pergunta (QuestionType)
+- **marca**: Consulta focada na instituição ou na reputação da marca
+- **produto**: Busca detalhes sobre produtos ou serviços específicos (cartões, empréstimos, etc.)
+- **informacao**: Perguntas educativas ou conceituais sem foco transacional
+- **comparacao**: Consultas que comparam opções ou solicitam diferenças entre soluções
+
+#### Estágio do Funil (FunnelStage)
+- **reconhecimento**: Topo de funil, usuário está descobrindo ou aprendendo
+- **consideracao**: Meio de funil, avaliando alternativas ou comparando ofertas
+- **conversao**: Fundo de funil, com intenção clara de ação ou contratação
+
 ### 2. Métricas Avançadas
 
 #### Intenção do Usuário (UserIntent)
@@ -74,10 +85,12 @@ O sistema integra o Google Gemini 2.5 Pro para análises mais sofisticadas e ins
 # Campos adicionados ao modelo Run
 response_type = Column(String(50))
 sufficiency_level = Column(String(50))
-actionability_type = Column(String(50))
-trust_source = Column(String(50))
-brand_positioning = Column(String(50))
-classification_confidence = Column(Float)
+    actionability_type = Column(String(50))
+    trust_source = Column(String(50))
+    brand_positioning = Column(String(50))
+    question_type = Column(String(50))
+    funnel_stage = Column(String(50))
+    classification_confidence = Column(Float)
 classified_at = Column(DateTime)
 classification_version = Column(String(20))
 
