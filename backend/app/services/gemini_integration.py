@@ -12,6 +12,7 @@ from app.models.models import Run, Domain, Evidence, Citation
 from app.services.gemini_classifier import (
     GeminiZeroClickAnalyzer, GeminiAnalysisResult, analyze_with_gemini_classifier
 )
+from app.services.question_funnel_whitelist import RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE
 from app.db.session import SessionLocal
 
 
@@ -264,8 +265,9 @@ class GeminiClassificationIntegrator:
         run.actionability_type = result.actionability_type.value
         run.trust_source = result.trust_source.value
         run.brand_positioning = result.brand_positioning.value
-        run.question_type = result.question_type.value
-        run.funnel_stage = result.funnel_stage.value
+        if run.id in RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE:
+            run.question_type = result.question_type.value
+            run.funnel_stage = result.funnel_stage.value
         run.classification_confidence = result.confidence
         run.classified_at = datetime.utcnow()
         run.classification_version = "2.0-gemini"

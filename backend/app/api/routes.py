@@ -57,6 +57,12 @@ from pathlib import Path
 
 api_router = APIRouter()
 
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 
 # Dependency
 
@@ -492,7 +498,10 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         ])
 
     buf.seek(0)
-    headers = {"Content-Disposition": f"attachment; filename=monitor_{monitor_id}_responses_citations.csv"}
+    headers = {
+        **NO_CACHE_HEADERS,
+        "Content-Disposition": f"attachment; filename=monitor_{monitor_id}_responses_citations.csv",
+    }
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
@@ -567,7 +576,10 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
         ])
         buf.seek(0)
-        headers = {"Content-Disposition": f"attachment; filename={filename}"}
+        headers = {
+            **NO_CACHE_HEADERS,
+            "Content-Disposition": f"attachment; filename={filename}",
+        }
         return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
     # Core run info with joins
@@ -758,7 +770,10 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
                 writer.writerow(base + [dom or "", url or "", anchor or "", pos or "", ctype or "", 1 if is_ours else 0, "true" if any_ours else "false"]) 
 
     buf.seek(0)
-    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    headers = {
+        **NO_CACHE_HEADERS,
+        "Content-Disposition": f"attachment; filename={filename}",
+    }
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
@@ -942,7 +957,10 @@ def monitors_history_csv(project_id: str | None = None, db: Session = Depends(ge
             (it.get("deleted_at").isoformat() if it.get("deleted_at") else ""),
         ])
     buf.seek(0)
-    headers = {"Content-Disposition": "attachment; filename=monitors_history.csv"}
+    headers = {
+        **NO_CACHE_HEADERS,
+        "Content-Disposition": "attachment; filename=monitors_history.csv",
+    }
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
@@ -1627,7 +1645,10 @@ def export_runs_csv(
             " ".join(run_to_ours.get(r.id, [])),
         ])
     buf.seek(0)
-    headers = {"Content-Disposition": "attachment; filename=runs_export.csv"}
+    headers = {
+        **NO_CACHE_HEADERS,
+        "Content-Disposition": "attachment; filename=runs_export.csv",
+    }
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
@@ -2693,7 +2714,10 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
             " ".join(run_to_ours.get(rid, [])),
         ])
     buf.seek(0)
-    headers = {"Content-Disposition": f"attachment; filename=subproject_{subproject_id}.csv"}
+    headers = {
+        **NO_CACHE_HEADERS,
+        "Content-Disposition": f"attachment; filename=subproject_{subproject_id}.csv",
+    }
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 

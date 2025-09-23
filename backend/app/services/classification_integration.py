@@ -13,6 +13,7 @@ from app.services.response_classifier import (
     classify_run_response,
     ClassificationResult,
 )
+from app.services.question_funnel_whitelist import RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE
 from app.db.session import SessionLocal
 
 
@@ -79,7 +80,7 @@ class ClassificationIntegrator:
             print(f"[CLASSIFICATION] Erro ao classificar run {run_id}: {e}")
             return None
 
-    def classify_multiple_runs(self, run_ids: List[str], batch_size: int = 50) -> Dict[str, Optional[ClassificationResult]]:
+    def classify_multiple_runs(self, run_ids: List[str], batch_size: int = 50, skip_batches: int = 0) -> Dict[str, Optional[ClassificationResult]]:
         """
         Classifica múltiplas runs em lote
 
@@ -93,8 +94,14 @@ class ClassificationIntegrator:
         results = {}
 
         for i in range(0, len(run_ids), batch_size):
+            batch_index = i // batch_size
             batch = run_ids[i:i + batch_size]
-            print(f"[CLASSIFICATION] Processando lote {i//batch_size + 1}: {len(batch)} runs")
+
+            if skip_batches and batch_index < skip_batches:
+                print(f"[CLASSIFICATION] Pulando lote {batch_index + 1} (solicitado pelo parâmetro skip_batches)")
+                continue
+
+            print(f"[CLASSIFICATION] Processando lote {batch_index + 1}: {len(batch)} runs")
 
             for run_id in batch:
                 results[run_id] = self.classify_and_update_run(run_id)
@@ -102,9 +109,9 @@ class ClassificationIntegrator:
             # Commit em lotes
             try:
                 self.db.commit()
-                print(f"[CLASSIFICATION] Lote {i//batch_size + 1} commitado com sucesso")
+                print(f"[CLASSIFICATION] Lote {batch_index + 1} commitado com sucesso")
             except Exception as e:
-                print(f"[CLASSIFICATION] Erro ao commitar lote {i//batch_size + 1}: {e}")
+                print(f"[CLASSIFICATION] Erro ao commitar lote {batch_index + 1}: {e}")
                 self.db.rollback()
 
         return results
@@ -132,7 +139,14 @@ class ClassificationIntegrator:
         print(f"[CLASSIFICATION] Encontradas {len(run_ids)} runs não classificadas")
         return run_ids
 
-    def reclassify_existing_runs(self, project_id: str = None, force_update: bool = False, limit: int = 1000) -> Dict[str, Optional[ClassificationResult]]:
+    def reclassify_existing_runs(
+        self,
+        project_id: str = None,
+        force_update: bool = False,
+        limit: int = 1000,
+        skip_batches: int = 0,
+        batch_size: int = 50,
+    ) -> Dict[str, Optional[ClassificationResult]]:
         """
         Reclassifica runs existentes (retroativo)
 
@@ -155,7 +169,11 @@ class ClassificationIntegrator:
         run_ids = [row[0] for row in query.limit(limit).all()]
 
         print(f"[CLASSIFICATION] Iniciando reclassificação de {len(run_ids)} runs")
-        return self.classify_multiple_runs(run_ids)
+        return self.classify_multiple_runs(
+            run_ids,
+            batch_size=batch_size,
+            skip_batches=skip_batches,
+        )
 
     def _extract_response_from_evidences(self, run_id: str) -> Optional[str]:
         """Extrai texto da resposta das evidências"""
@@ -163,19 +181,57 @@ class ClassificationIntegrator:
 
         response_texts = []
         for evidence in evidences:
-            if evidence.parsed_json:
-                # Tentar extrair resposta de diferentes formatos
-                parsed = evidence.parsed_json
-                if isinstance(parsed, dict):
-                    # Formato comum: {"response": "texto"}
-                    if "response" in parsed:
-                        response_texts.append(str(parsed["response"]))
-                    elif "answer" in parsed:
-                        response_texts.append(str(parsed["answer"]))
-                    elif "content" in parsed:
-                        response_texts.append(str(parsed["content"]))
-                    elif "text" in parsed:
-                        response_texts.append(str(parsed["text"]))
+            if not evidence.parsed_json:
+                continue
+
+            parsed = evidence.parsed_json
+            if not isinstance(parsed, dict):
+                continue
+
+            # Formatos diretos
+            if "response" in parsed:
+                response_texts.append(str(parsed["response"]))
+                continue
+            if "answer" in parsed:
+                response_texts.append(str(parsed["answer"]))
+                continue
+            if "content" in parsed:
+                response_texts.append(str(parsed["content"]))
+                continue
+            if "text" in parsed:
+                response_texts.append(str(parsed["text"]))
+                continue
+
+            # Estruturas aninhadas comuns (ex.: {"parsed": {"text": ...}})
+            nested = parsed.get("parsed")
+            if isinstance(nested, dict):
+                text_val = nested.get("text") or nested.get("response")
+                if text_val:
+                    response_texts.append(str(text_val))
+                    continue
+
+            # Alguns providers guardam texto em raw -> message
+            raw = parsed.get("raw")
+            if isinstance(raw, dict):
+                # Anthropic/OpenAI style -> raw["response"]["output"][...]
+                if "text" in raw:
+                    response_texts.append(str(raw["text"]))
+                    continue
+                raw_resp = raw.get("response")
+                if isinstance(raw_resp, dict):
+                    text_val = raw_resp.get("text")
+                    if text_val:
+                        response_texts.append(str(text_val))
+                        continue
+                    # Alguns modelos retornam lista em output
+                    output = raw_resp.get("output")
+                    if isinstance(output, list):
+                        for item in output:
+                            if isinstance(item, dict):
+                                text_val = item.get("content") or item.get("text")
+                                if text_val:
+                                    response_texts.append(str(text_val))
+                                    break
 
         return " ".join(response_texts) if response_texts else None
 
@@ -232,8 +288,10 @@ class ClassificationIntegrator:
         run.classification_confidence = result.confidence
         run.classified_at = datetime.utcnow()
         run.classification_version = CLASSIFIER_VERSION
-        run.question_type = result.question_type.value
-        run.funnel_stage = result.funnel_stage.value
+
+        if run.id in RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE:
+            run.question_type = result.question_type.value
+            run.funnel_stage = result.funnel_stage.value
 
         # Calcular e aplicar métricas avançadas
         try:
@@ -273,20 +331,41 @@ def classify_run_async(run_id: str, response_text: str = None) -> Optional[Class
         return integrator.classify_and_update_run(run_id, response_text)
 
 
-def batch_classify_unclassified_runs(project_id: str = None, limit: int = 1000) -> Dict[str, Optional[ClassificationResult]]:
+def batch_classify_unclassified_runs(
+    project_id: str = None,
+    limit: int = 1000,
+    skip_batches: int = 0,
+    batch_size: int = 50,
+) -> Dict[str, Optional[ClassificationResult]]:
     """
     Função de conveniência para classificação em lote de runs não classificadas
     """
     with ClassificationIntegrator() as integrator:
         unclassified = integrator.get_unclassified_runs(project_id, limit)
         if unclassified:
-            return integrator.classify_multiple_runs(unclassified)
+            return integrator.classify_multiple_runs(
+                unclassified,
+                batch_size=batch_size,
+                skip_batches=skip_batches,
+            )
         return {}
 
 
-def retroactively_classify_all_runs(project_id: str = None, force_update: bool = False, limit: int = 1000) -> Dict[str, Optional[ClassificationResult]]:
+def retroactively_classify_all_runs(
+    project_id: str = None,
+    force_update: bool = False,
+    limit: int = 1000,
+    skip_batches: int = 0,
+    batch_size: int = 50,
+) -> Dict[str, Optional[ClassificationResult]]:
     """
     Função de conveniência para classificação retroativa de todas as runs
     """
     with ClassificationIntegrator() as integrator:
-        return integrator.reclassify_existing_runs(project_id, force_update, limit)
+        return integrator.reclassify_existing_runs(
+            project_id,
+            force_update,
+            limit,
+            skip_batches=skip_batches,
+            batch_size=batch_size,
+        )

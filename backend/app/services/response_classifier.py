@@ -341,7 +341,7 @@ class ResponseClassifier:
             len(text) > 200,  # Resposta substantiva
             len(citations) > 2,  # Múltiplas fontes
             "detalhes" in text or "informações completas" in text,
-            re.search(r'\d+.*(?:passos?|etapas?)', text),  # Passos numerados
+            bool(re.search(r'\d+.*(?:passos?|etapas?)', text)),  # Passos numerados
         ]
 
         # Fatores que indicam baixa suficiência
@@ -356,7 +356,7 @@ class ResponseClassifier:
         partial_indicators = [
             "clique" in text or "acesse" in text,
             "para mais detalhes" in text,
-            len(citations) == 1 or len(citations) == 2,
+            len(citations) in (1, 2),
         ]
 
         high_score = sum(high_sufficiency_indicators)

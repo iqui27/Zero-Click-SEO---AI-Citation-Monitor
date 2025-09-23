@@ -55,6 +55,12 @@ def main():
         action='store_true',
         help='Apenas mostrar quantas runs seriam processadas, sem executar'
     )
+    parser.add_argument(
+        '--skip-batches',
+        type=int,
+        default=0,
+        help='Ignorar N lotes completos antes de começar o processamento'
+    )
 
     args = parser.parse_args()
 
@@ -109,13 +115,17 @@ def main():
             if args.only_unclassified or not args.force_update:
                 results = batch_classify_unclassified_runs(
                     project_id=args.project_id,
-                    limit=args.limit
+                    limit=args.limit,
+                    skip_batches=args.skip_batches,
+                    batch_size=args.batch_size
                 )
             else:
                 results = retroactively_classify_all_runs(
                     project_id=args.project_id,
                     force_update=args.force_update,
-                    limit=args.limit
+                    limit=args.limit,
+                    skip_batches=args.skip_batches,
+                    batch_size=args.batch_size
                 )
 
             # Estatísticas finais
