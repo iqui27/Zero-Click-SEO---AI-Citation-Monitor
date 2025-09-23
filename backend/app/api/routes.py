@@ -315,6 +315,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             Run.zcrs,
             Run.amr_flag,
             Run.dcr_flag,
+            Run.response_type,
+            Run.brand_positioning,
             Run.question_type,
             Run.funnel_stage,
             Run.tokens_total,
@@ -394,6 +396,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
+    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id",
         "monitor_id",
@@ -416,6 +419,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         "prompt_text",
         "ai_overview_run_id",
         "categoria",
+        "response_type",
+        "brand_positioning",
         "tipo_pergunta",
         "funil",
         "response_text",
@@ -464,6 +469,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         cits = cits_by_run.get(rid, [])
         doms = [d or "" for (d, _u, _ours) in cits if d]
         urls = [u or "" for (_d, u, _ours) in cits if u]
+        ours_flags = ["1" if _ours else "0" for (_d, _u, _ours) in cits]
 
         pn = getattr(r, "prompt_name", None)
         nn = _norm_name(pn)
@@ -490,11 +496,14 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             getattr(r, "prompt_text", None) or "",
             ai_map.get(rid, ""),
             category,
+            getattr(r, "response_type", None) or "",
+            getattr(r, "brand_positioning", None) or "",
             getattr(r, "question_type", None) or "",
             getattr(r, "funnel_stage", None) or "",
             text_str,
             " ".join(doms),
             " ".join(urls),
+            " ".join(ours_flags),
         ])
 
     buf.seek(0)
@@ -568,11 +577,12 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
     if not run_ids:
         buf = io.StringIO()
         writer = csv.writer(buf)
+        writer.writerow(["sep=,"])
         writer.writerow([
             "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
             "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
             "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-            "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","tipo_pergunta","funil","response_text","screenshot_url",
+            "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","response_type","brand_positioning","tipo_pergunta","funil","response_text","screenshot_url",
             "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
         ])
         buf.seek(0)
@@ -604,6 +614,8 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             Run.unique_domains_count,
             Run.question_type,
             Run.funnel_stage,
+            Run.response_type,
+            Run.brand_positioning,
             Run.model_name,
             Run.error_code,
             Run.schedule_date,
@@ -681,11 +693,12 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
 
     buf = io.StringIO()
     writer = csv.writer(buf)
+    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
         "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
-        "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","tipo_pergunta","funil","response_text","screenshot_url",
+        "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","response_type","brand_positioning","tipo_pergunta","funil","response_text","screenshot_url",
         "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
     ])
     # Build category map from PromptTemplate by normalizing Prompt.name (strip 'Run: ')
@@ -756,6 +769,8 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             ai_overview_id,
             getattr(r, "subproject_name", None) or "",
             category,
+            getattr(r, "response_type", None) or "",
+            getattr(r, "brand_positioning", None) or "",
             getattr(r, "question_type", None) or "",
             getattr(r, "funnel_stage", None) or "",
             ev_text.get(rid, ""),
@@ -944,6 +959,7 @@ def monitors_history_csv(project_id: str | None = None, db: Session = Depends(ge
     items = monitors_history(project_id=project_id, db=db)
     buf = io.StringIO()
     writer = csv.writer(buf)
+    writer.writerow(["sep=,"])
     writer.writerow(["monitor_id", "project_id", "name", "status", "runs_total", "runs_completed", "runs_failed", "deleted_at"])
     for it in items:
         writer.writerow([
@@ -1534,6 +1550,10 @@ def export_runs_csv(
             Run.tokens_output,
             Run.tokens_total,
             Run.latency_ms,
+            Run.response_type,
+            Run.brand_positioning,
+            Run.question_type,
+            Run.funnel_stage,
         )
         .join(Engine, Engine.id == Run.engine_id)
     )
@@ -1598,6 +1618,7 @@ def export_runs_csv(
             run_to_ours.setdefault(rid, []).append("1" if bool(is_ours) else "0")
     buf = io.StringIO()
     writer = csv.writer(buf)
+    writer.writerow(["sep=,"])
     writer.writerow([
         "id",
         "engine",
@@ -1611,6 +1632,8 @@ def export_runs_csv(
         "tokens_total",
         "latency_ms",
         "cost_usd",
+        "response_type",
+        "brand_positioning",
         "tipo_pergunta",
         "funil",
         "citations_domains",
@@ -1638,6 +1661,8 @@ def export_runs_csv(
             r.tokens_total if r.tokens_total is not None else "",
             r.latency_ms if r.latency_ms is not None else "",
             f"{float(r.cost_usd):.6f}" if r.cost_usd is not None else "",
+            r.response_type or "",
+            r.brand_positioning or "",
             r.question_type or "",
             r.funnel_stage or "",
             " ".join(run_to_domains.get(r.id, [])),
@@ -2660,9 +2685,11 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
             Run.zcrs,
             Run.amr_flag,
             Run.dcr_flag,
+            Run.response_type,
+            Run.brand_positioning,
             Run.question_type,
             Run.funnel_stage,
-            Engine.name,
+            Engine.name.label("engine"),
         )
         .join(Engine, Engine.id == Run.engine_id)
         .filter(Run.subproject_id == subproject_id)
@@ -2684,6 +2711,7 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
+    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id",
         "started_at",
@@ -2693,23 +2721,28 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
         "zcrs",
         "amr",
         "dcr",
+        "response_type",
+        "brand_positioning",
         "tipo_pergunta",
         "funil",
         "citations",
         "citations_is_ours",
     ])
-    for rid, started, finished, status, zcrs, amr, dcr, question_type, funnel_stage, eng in rows:
+    for r in rows:
+        rid = r.id
         writer.writerow([
             rid,
-            started.isoformat() if started else "",
-            finished.isoformat() if finished else "",
-            status,
-            eng,
-            zcrs if zcrs is not None else "",
-            1 if amr else 0 if amr is not None else "",
-            1 if dcr else 0 if dcr is not None else "",
-            question_type or "",
-            funnel_stage or "",
+            r.started_at.isoformat() if r.started_at else "",
+            r.finished_at.isoformat() if r.finished_at else "",
+            r.status,
+            getattr(r, "engine", None) or "",
+            r.zcrs if r.zcrs is not None else "",
+            1 if r.amr_flag else 0 if r.amr_flag is not None else "",
+            1 if r.dcr_flag else 0 if r.dcr_flag is not None else "",
+            r.response_type or "",
+            r.brand_positioning or "",
+            r.question_type or "",
+            r.funnel_stage or "",
             " ".join(run_to_urls.get(rid, [])),
             " ".join(run_to_ours.get(rid, [])),
         ])
