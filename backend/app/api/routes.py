@@ -411,6 +411,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         "response_text",
         "citations_domains",
         "citations_urls",
+        "citations_is_ours",
     ])
 
     # Preparar mapa de categoria por (project_id, template_name) inferindo do prompt_name (remove prefixo 'Run: ')
@@ -453,6 +454,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         cits = cits_by_run.get(rid, [])
         doms = [d or "" for (d, _u, _ours) in cits if d]
         urls = [u or "" for (_d, u, _ours) in cits if u]
+        ios = [("1" if _ours else "0") for (_d, _u, _ours) in cits]
 
         pn = getattr(r, "prompt_name", None)
         nn = _norm_name(pn)
@@ -482,6 +484,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             text_str,
             " ".join(doms),
             " ".join(urls),
+            " ".join(ios),
         ])
 
     buf.seek(0)
@@ -1537,6 +1540,21 @@ def export_runs_csv(
         for rid, msg, _ in ev_ai:
             if rid not in ai_map and (msg or "").strip():
                 ai_map[rid] = (msg or "").strip()
+    # Citations map (domains, urls, is_ours per run)
+    run_to_domains: dict[str, list[str]] = {}
+    run_to_urls: dict[str, list[str]] = {}
+    run_to_ours: dict[str, list[str]] = {}
+    if run_ids:
+        cit_rows = (
+            db.query(Citation.run_id, Citation.domain, Citation.url, Citation.is_ours)
+            .filter(Citation.run_id.in_(run_ids))
+            .order_by(Citation.run_id.asc())
+            .all()
+        )
+        for rid, dom, url, is_ours in cit_rows:
+            run_to_domains.setdefault(rid, []).append(dom or "")
+            run_to_urls.setdefault(rid, []).append(url or "")
+            run_to_ours.setdefault(rid, []).append("1" if bool(is_ours) else "0")
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -1552,6 +1570,9 @@ def export_runs_csv(
         "tokens_total",
         "latency_ms",
         "cost_usd",
+        "citations_domains",
+        "citations_urls",
+        "citations_is_ours",
     ])
     for r in rows:
         # Determine AI Overview run id: explicit link, else own id for google_serp
@@ -1574,6 +1595,9 @@ def export_runs_csv(
             r.tokens_total if r.tokens_total is not None else "",
             r.latency_ms if r.latency_ms is not None else "",
             f"{float(r.cost_usd):.6f}" if r.cost_usd is not None else "",
+            " ".join(run_to_domains.get(r.id, [])),
+            " ".join(run_to_urls.get(r.id, [])),
+            " ".join(run_to_ours.get(r.id, [])),
         ])
     buf.seek(0)
     headers = {"Content-Disposition": "attachment; filename=runs_export.csv"}
@@ -2588,18 +2612,20 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
     )
     # map run_id -> citations joined
     cits = (
-        db.query(Citation.run_id, Citation.url)
+        db.query(Citation.run_id, Citation.url, Citation.is_ours)
         .join(Run, Run.id == Citation.run_id)
         .filter(Run.subproject_id == subproject_id)
         .all()
     )
     run_to_urls: dict[str, list[str]] = {}
-    for rid, url in cits:
+    run_to_ours: dict[str, list[str]] = {}
+    for rid, url, is_ours in cits:
         run_to_urls.setdefault(rid, []).append(url or "")
+        run_to_ours.setdefault(rid, []).append("1" if bool(is_ours) else "0")
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["run_id", "started_at", "finished_at", "status", "engine", "zcrs", "amr", "dcr", "citations"])
+    writer.writerow(["run_id", "started_at", "finished_at", "status", "engine", "zcrs", "amr", "dcr", "citations", "citations_is_ours"])
     for rid, started, finished, status, zcrs, amr, dcr, eng in rows:
         writer.writerow([
             rid,
@@ -2611,6 +2637,7 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
             1 if amr else 0 if amr is not None else "",
             1 if dcr else 0 if dcr is not None else "",
             " ".join(run_to_urls.get(rid, [])),
+            " ".join(run_to_ours.get(rid, [])),
         ])
     buf.seek(0)
     headers = {"Content-Disposition": f"attachment; filename=subproject_{subproject_id}.csv"}

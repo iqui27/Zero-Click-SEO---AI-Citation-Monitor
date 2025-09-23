@@ -46,6 +46,9 @@ async def on_startup() -> None:
                     # insights.run_id para relacionar insight com run
                     "ALTER TABLE insights ADD COLUMN IF NOT EXISTS run_id VARCHAR(255)",
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.constraint_column_usage WHERE table_name='insights' AND column_name='run_id') THEN BEGIN EXCEPTION WHEN others THEN END; END IF; END $$;",
+                    # citations.is_ours (booleano) para marcar se o domínio citado é nosso
+                    "ALTER TABLE citations ADD COLUMN IF NOT EXISTS is_ours BOOLEAN",
+                    "UPDATE citations SET is_ours = FALSE WHERE is_ours IS NULL",
                 ]
                 for sql in stmts:
                     conn.execute(text(sql))
@@ -207,6 +210,18 @@ async def on_startup() -> None:
                 END
             """, "Add scheduling metadata columns to runs")
             
+            # Adicionar citations.is_ours (booleano) se não existir e backfill para 0
+            _exec_safe("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'citations' AND COLUMN_NAME = 'is_ours'
+                )
+                BEGIN
+                    ALTER TABLE dbo.citations ADD is_ours BIT NULL;
+                    UPDATE dbo.citations SET is_ours = 0 WHERE is_ours IS NULL;
+                END
+            """, "Add citations.is_ours column and backfill false")
+
             print("[MIGRATION] SQL Server migration completed.")
     except Exception:
         # tolerar ambiente que não suporte IF NOT EXISTS
