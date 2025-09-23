@@ -328,6 +328,21 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         except Exception:
             pass
 
+        # Classificação Zero-Click da resposta
+        try:
+            from app.services.classification_integration import classify_run_async
+            response_text = (last_parsed or {}).get("text") if last_parsed else None
+            if response_text:
+                classification_result = classify_run_async(run.id, response_text)
+                if classification_result:
+                    _log(db, run.id, "classify", "ok", f"Classified as {classification_result.response_type}/{classification_result.brand_positioning}")
+                else:
+                    _log(db, run.id, "classify", "fail", "Classification failed")
+            else:
+                _log(db, run.id, "classify", "skip", "No response text found")
+        except Exception as e:
+            _log(db, run.id, "classify", "fail", f"Classification error: {str(e)}")
+
         run.status = "completed"
         run.finished_at = datetime.utcnow()
         try:

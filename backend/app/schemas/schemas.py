@@ -92,6 +92,15 @@ class RunOut(BaseModel):
     cost_usd: Optional[float] = None
     latency_ms: Optional[int] = None
     cycles_total: Optional[int] = None
+    # Classificação Zero-Click
+    response_type: Optional[str] = None
+    sufficiency_level: Optional[str] = None
+    actionability_type: Optional[str] = None
+    trust_source: Optional[str] = None
+    brand_positioning: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    classified_at: Optional[datetime] = None
+    classification_version: Optional[str] = None
 
 
 class RunListItem(BaseModel):
@@ -119,6 +128,20 @@ class RunListItem(BaseModel):
     schedule_index_today: Optional[int] = None
     schedule_total_today: Optional[int] = None
     schedule_source: Optional[str] = None
+    # Classificação Zero-Click
+    response_type: Optional[str] = None
+    sufficiency_level: Optional[str] = None
+    actionability_type: Optional[str] = None
+    trust_source: Optional[str] = None
+    brand_positioning: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    # Métricas Avançadas Zero-Click
+    user_intent: Optional[str] = None
+    satisfaction_score: Optional[float] = None
+    competitive_mentions: Optional[int] = None
+    financial_value_score: Optional[float] = None
+    content_gap_detected: Optional[bool] = None
+    conversion_potential: Optional[str] = None
 
 
 class RunDetailOut(BaseModel):
@@ -148,6 +171,22 @@ class RunDetailOut(BaseModel):
     schedule_index_today: Optional[int] = None
     schedule_total_today: Optional[int] = None
     schedule_source: Optional[str] = None
+    # Classificação Zero-Click
+    response_type: Optional[str] = None
+    sufficiency_level: Optional[str] = None
+    actionability_type: Optional[str] = None
+    trust_source: Optional[str] = None
+    brand_positioning: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    classified_at: Optional[datetime] = None
+    classification_version: Optional[str] = None
+    # Métricas Avançadas Zero-Click
+    user_intent: Optional[str] = None
+    satisfaction_score: Optional[float] = None
+    competitive_mentions: Optional[int] = None
+    financial_value_score: Optional[float] = None
+    content_gap_detected: Optional[bool] = None
+    conversion_potential: Optional[str] = None
 
 
 class CitationOut(BaseModel):

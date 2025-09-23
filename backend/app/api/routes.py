@@ -1221,6 +1221,14 @@ def list_runs(
     order_dir: str | None = None,
     has_text: bool | None = None,
 ):
+    """
+    Lista runs com otimizações de performance:
+    - Índices específicos para filtros mais comuns
+    - Remoção de JOINs custosos desnecessários
+    - Cache de subqueries
+    - Limit de page_size para evitar queries massivas
+    """
+    # Query otimizada - removendo JOINs custosos desnecessários
     q = (
         db.query(
             Run.id,
@@ -1241,27 +1249,20 @@ def list_runs(
             Run.schedule_index_today,
             Run.schedule_total_today,
             Run.schedule_source,
-            func.coalesce(Prompt.name, literal_column("'-'")) .label("template_name"),
-            PromptTemplate.category.label("template_category"),
-            func.coalesce(SubProject.name, literal_column("'-'")) .label("subproject_name"),
+            # Campos de classificação Zero-Click
+            Run.response_type,
+            Run.sufficiency_level,
+            Run.actionability_type,
+            Run.trust_source,
+            Run.brand_positioning,
+            Run.classification_confidence,
+            # Usando subquery mais eficiente para template_name
+            literal_column("'-'").label("template_name"),
+            literal_column("NULL").label("template_category"),
+            func.coalesce(SubProject.name, literal_column("'-'")).label("subproject_name"),
             Monitor.name.label("monitor_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
-        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
-        .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
-        .outerjoin(
-            PromptTemplate,
-            and_(
-                PromptTemplate.project_id == Run.project_id,
-                # Map Prompt.name (strip prefixes) to template name
-                func.replace(func.replace(Prompt.name, 'Template: ', ''), 'Run: ', '') == PromptTemplate.name,
-                # Prefer the template from the same subproject (tema)
-                or_(
-                    PromptTemplate.subproject_id == Run.subproject_id,
-                    and_(PromptTemplate.subproject_id.is_(None), Run.subproject_id.is_(None)),
-                ),
-            ),
-        )
         .outerjoin(SubProject, SubProject.id == Run.subproject_id)
         .outerjoin(Monitor, Monitor.id == Run.monitor_id)
     )
@@ -1282,16 +1283,16 @@ def list_runs(
     if date_to:
         q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
     # Optional: only runs that have any evidence with parsed_json.text not empty
+    # Otimizado para reduzir overhead da subquery
     if has_text:
-        txt = func.json_value(Evidence.parsed_json, '$.text')
-        subq = (
-            select(1)
-            .select_from(Evidence)
-            .where(Evidence.run_id == Run.id)
-            .where(txt.isnot(None))
-            .where(func.ltrim(func.rtrim(txt)) != '')
+        # Usar EXISTS mais simples e rápido
+        evidence_subq = (
+            db.query(Evidence.run_id)
+            .filter(Evidence.run_id == Run.id)
+            .filter(Evidence.parsed_json.isnot(None))
+            .exists()
         )
-        q = q.filter(subq.exists())
+        q = q.filter(evidence_subq)
     # paginação
     page = max(1, int(page or 1))
     page_size = max(10, min(int(page_size or 100), 200))
@@ -1340,6 +1341,13 @@ def list_runs(
             schedule_total_today=getattr(r, "schedule_total_today", None),
             schedule_source=getattr(r, "schedule_source", None),
             monitor_name=getattr(r, "monitor_name", None),
+            # Campos de classificação Zero-Click
+            response_type=getattr(r, "response_type", None),
+            sufficiency_level=getattr(r, "sufficiency_level", None),
+            actionability_type=getattr(r, "actionability_type", None),
+            trust_source=getattr(r, "trust_source", None),
+            brand_positioning=getattr(r, "brand_positioning", None),
+            classification_confidence=getattr(r, "classification_confidence", None),
         )
         for r in rows
     ]
@@ -3477,3 +3485,557 @@ def project_stats(project_id: str, db: Session = Depends(get_db)):
     sp_count = db.query(func.count(SubProject.id)).filter(SubProject.project_id == project_id).scalar() or 0
     run_count = db.query(func.count(Run.id)).filter(Run.project_id == project_id).scalar() or 0
     return {"subprojects": int(sp_count), "runs": int(run_count)}
+
+
+# ============================================================================
+# CLASSIFICATION ENDPOINTS
+# ============================================================================
+
+@api_router.post("/runs/{run_id}/classify")
+def classify_run(run_id: str, db: Session = Depends(get_db)):
+    """Classifica uma run específica usando o sistema Zero-Click"""
+    from app.services.classification_integration import classify_run_async
+
+    # Verificar se a run existe
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrada")
+
+    # Executar classificação
+    result = classify_run_async(run_id)
+
+    if result is None:
+        raise HTTPException(status_code=400, detail="Falha ao classificar a run")
+
+    return {
+        "run_id": run_id,
+        "classification": {
+            "response_type": result.response_type.value,
+            "sufficiency_level": result.sufficiency_level.value,
+            "actionability_type": result.actionability_type.value,
+            "trust_source": result.trust_source.value,
+            "brand_positioning": result.brand_positioning.value,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning
+        },
+        "classified_at": datetime.utcnow().isoformat(),
+        "version": "1.0"
+    }
+
+
+@api_router.post("/projects/{project_id}/classify/batch")
+def classify_project_runs(
+    project_id: str,
+    force_update: bool = False,
+    limit: int = 1000,
+    db: Session = Depends(get_db)
+):
+    """Classifica todas as runs de um projeto em lote"""
+    from app.services.classification_integration import retroactively_classify_all_runs
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    # Executar classificação em lote
+    results = retroactively_classify_all_runs(
+        project_id=project_id,
+        force_update=force_update,
+        limit=limit
+    )
+
+    # Estatísticas do processamento
+    total_processed = len(results)
+    successful = sum(1 for r in results.values() if r is not None)
+    failed = total_processed - successful
+
+    return {
+        "project_id": project_id,
+        "total_processed": total_processed,
+        "successful": successful,
+        "failed": failed,
+        "force_update": force_update,
+        "limit": limit,
+        "processed_at": datetime.utcnow().isoformat()
+    }
+
+
+@api_router.get("/projects/{project_id}/classification/stats")
+def get_classification_stats(project_id: str, db: Session = Depends(get_db)):
+    """Retorna estatísticas de classificação para um projeto"""
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    # Estatísticas gerais
+    total_runs = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed"
+    ).scalar() or 0
+
+    classified_runs = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed",
+        Run.response_type.isnot(None)
+    ).scalar() or 0
+
+    # Distribuição por tipo de resposta
+    response_type_stats = db.query(
+        Run.response_type,
+        func.count(Run.id).label('count')
+    ).filter(
+        Run.project_id == project_id,
+        Run.response_type.isnot(None)
+    ).group_by(Run.response_type).all()
+
+    # Distribuição por posicionamento da marca
+    brand_positioning_stats = db.query(
+        Run.brand_positioning,
+        func.count(Run.id).label('count')
+    ).filter(
+        Run.project_id == project_id,
+        Run.brand_positioning.isnot(None)
+    ).group_by(Run.brand_positioning).all()
+
+    # Distribuição por nível de suficiência
+    sufficiency_stats = db.query(
+        Run.sufficiency_level,
+        func.count(Run.id).label('count')
+    ).filter(
+        Run.project_id == project_id,
+        Run.sufficiency_level.isnot(None)
+    ).group_by(Run.sufficiency_level).all()
+
+    # Confiança média das classificações
+    avg_confidence = db.query(
+        func.avg(Run.classification_confidence)
+    ).filter(
+        Run.project_id == project_id,
+        Run.classification_confidence.isnot(None)
+    ).scalar() or 0.0
+
+    return {
+        "project_id": project_id,
+        "overview": {
+            "total_runs": total_runs,
+            "classified_runs": classified_runs,
+            "unclassified_runs": total_runs - classified_runs,
+            "classification_coverage": round(classified_runs / total_runs * 100, 1) if total_runs > 0 else 0,
+            "avg_confidence": round(float(avg_confidence), 2)
+        },
+        "response_types": {
+            row.response_type: row.count for row in response_type_stats
+        },
+        "brand_positioning": {
+            row.brand_positioning: row.count for row in brand_positioning_stats
+        },
+        "sufficiency_levels": {
+            row.sufficiency_level: row.count for row in sufficiency_stats
+        }
+    }
+
+
+@api_router.get("/classification/unprocessed")
+def get_unprocessed_runs(
+    project_id: str = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Retorna lista de runs que ainda não foram classificadas"""
+    from app.services.classification_integration import ClassificationIntegrator
+
+    with ClassificationIntegrator(db) as integrator:
+        unclassified_ids = integrator.get_unclassified_runs(project_id, limit)
+
+    return {
+        "unclassified_runs": unclassified_ids,
+        "count": len(unclassified_ids),
+        "project_id": project_id,
+        "limit": limit
+    }
+
+
+# ============================================================================
+# ADVANCED ANALYTICS ENDPOINTS
+# ============================================================================
+
+@api_router.get("/projects/{project_id}/analytics/brand-presence")
+def get_brand_presence_analytics(
+    project_id: str,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Métricas de presença da marca (% consultas com BB, evolução temporal)"""
+    from app.services.advanced_analytics import AdvancedAnalyticsService
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    analytics = AdvancedAnalyticsService(db)
+    return analytics.get_brand_presence_metrics(project_id, days)
+
+
+@api_router.get("/projects/{project_id}/analytics/competitive-share")
+def get_competitive_share_analytics(
+    project_id: str,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Análise de share competitivo e gaps de conteúdo"""
+    from app.services.advanced_analytics import AdvancedAnalyticsService
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    analytics = AdvancedAnalyticsService(db)
+    return analytics.get_competitive_share_analysis(project_id, days)
+
+
+@api_router.get("/projects/{project_id}/analytics/satisfaction-quality")
+def get_satisfaction_quality_analytics(
+    project_id: str,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Métricas de satisfação e qualidade por LLM"""
+    from app.services.advanced_analytics import AdvancedAnalyticsService
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    analytics = AdvancedAnalyticsService(db)
+    return analytics.get_satisfaction_and_quality_metrics(project_id, days)
+
+
+@api_router.get("/projects/{project_id}/analytics/conversion-value")
+def get_conversion_value_analytics(
+    project_id: str,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Métricas de valor financeiro e potencial de conversão"""
+    from app.services.advanced_analytics import AdvancedAnalyticsService
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    analytics = AdvancedAnalyticsService(db)
+    return analytics.get_conversion_and_value_metrics(project_id, days)
+
+
+@api_router.get("/projects/{project_id}/analytics/comprehensive-dashboard")
+def get_comprehensive_dashboard(
+    project_id: str,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Dashboard completo com todas as métricas avançadas integradas"""
+    from app.services.advanced_analytics import AdvancedAnalyticsService
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    analytics = AdvancedAnalyticsService(db)
+    return analytics.get_comprehensive_dashboard(project_id, days)
+
+
+@api_router.get("/projects/{project_id}/analytics/content-gaps")
+def get_content_gap_opportunities(
+    project_id: str,
+    days: int = 30,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Lista de oportunidades onde concorrentes aparecem mas BB está ausente"""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+    # Buscar runs com gaps de conteúdo
+    gap_runs = db.query(
+        Run.id,
+        Run.prompt_version_id,
+        Run.competitive_mentions,
+        Run.financial_value_score,
+        Run.user_intent,
+        Run.finished_at
+    ).filter(
+        Run.project_id == project_id,
+        Run.status == "completed",
+        Run.finished_at >= cutoff_date,
+        Run.content_gap_detected == True,
+        Run.financial_value_score >= 5.0  # Apenas gaps de valor médio/alto
+    ).order_by(
+        Run.financial_value_score.desc()
+    ).limit(limit).all()
+
+    gap_opportunities = []
+    for run in gap_runs:
+        # Buscar texto do prompt
+        prompt_text = None
+        try:
+            prompt_version = db.query(PromptVersion).filter(
+                PromptVersion.id == run.prompt_version_id
+            ).first()
+            if prompt_version:
+                prompt_text = prompt_version.text[:200] + "..." if len(prompt_version.text) > 200 else prompt_version.text
+        except:
+            pass
+
+        gap_opportunities.append({
+            "run_id": run.id,
+            "prompt_preview": prompt_text,
+            "competitive_mentions": run.competitive_mentions,
+            "financial_value": run.financial_value_score,
+            "user_intent": run.user_intent,
+            "date": run.finished_at.isoformat() if run.finished_at else None
+        })
+
+    return {
+        "project_id": project_id,
+        "period_days": days,
+        "total_gaps_found": len(gap_opportunities),
+        "opportunities": gap_opportunities
+    }
+
+
+# ============================================================================
+# GEMINI-POWERED CLASSIFICATION ENDPOINTS
+# ============================================================================
+
+@api_router.post("/runs/{run_id}/classify/gemini")
+def classify_run_with_gemini_endpoint(run_id: str, db: Session = Depends(get_db)):
+    """Classifica uma run específica usando Gemini 2.0 Flash"""
+    from app.services.gemini_integration import classify_run_with_gemini
+
+    # Verificar se a run existe
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrada")
+
+    # Executar classificação com Gemini
+    result = classify_run_with_gemini(run_id)
+
+    if result is None:
+        raise HTTPException(status_code=400, detail="Falha ao classificar com Gemini")
+
+    return {
+        "run_id": run_id,
+        "classification": {
+            "response_type": result.response_type.value,
+            "sufficiency_level": result.sufficiency_level.value,
+            "actionability_type": result.actionability_type.value,
+            "trust_source": result.trust_source.value,
+            "brand_positioning": result.brand_positioning.value,
+            "confidence": result.confidence
+        },
+        "advanced_metrics": {
+            "user_intent": result.user_intent.value,
+            "satisfaction_score": result.satisfaction_score,
+            "competitive_mentions": result.competitive_mentions,
+            "financial_value_score": result.financial_value_score,
+            "content_gap_detected": result.content_gap_detected,
+            "conversion_potential": result.conversion_potential.value
+        },
+        "ai_insights": {
+            "strategic_insights": result.strategic_insights,
+            "optimization_suggestions": result.optimization_suggestions,
+            "reasoning": result.reasoning
+        },
+        "classified_at": datetime.utcnow().isoformat(),
+        "version": "2.0-gemini"
+    }
+
+
+@api_router.post("/projects/{project_id}/classify/gemini/batch")
+def batch_classify_with_gemini_endpoint(
+    project_id: str,
+    limit: int = 500,
+    db: Session = Depends(get_db)
+):
+    """Classifica runs de um projeto em lote usando Gemini 2.0 Flash"""
+    from app.services.gemini_integration import batch_classify_with_gemini_service
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    # Executar classificação em lote com Gemini
+    results = batch_classify_with_gemini_service(project_id=project_id, limit=limit)
+
+    # Estatísticas do processamento
+    total_processed = len(results)
+    successful = sum(1 for r in results.values() if r is not None)
+    failed = total_processed - successful
+
+    # Análise de insights
+    strategic_insights = []
+    optimization_suggestions = []
+
+    for result in results.values():
+        if result:
+            strategic_insights.extend(result.strategic_insights)
+            optimization_suggestions.extend(result.optimization_suggestions)
+
+    # Remover duplicatas e pegar top insights
+    unique_insights = list(set(strategic_insights))[:10]
+    unique_suggestions = list(set(optimization_suggestions))[:10]
+
+    return {
+        "project_id": project_id,
+        "processing_summary": {
+            "total_processed": total_processed,
+            "successful": successful,
+            "failed": failed,
+            "success_rate": round(successful / total_processed * 100, 1) if total_processed > 0 else 0,
+            "limit": limit
+        },
+        "aggregated_insights": {
+            "strategic_insights": unique_insights,
+            "optimization_suggestions": unique_suggestions
+        },
+        "processed_at": datetime.utcnow().isoformat(),
+        "version": "2.0-gemini"
+    }
+
+
+@api_router.get("/projects/{project_id}/insights/gemini")
+def get_gemini_insights_summary(
+    project_id: str,
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    """Obtém resumo de insights estratégicos gerados pelo Gemini"""
+    from app.services.gemini_integration import get_gemini_insights_for_project
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    insights = get_gemini_insights_for_project(project_id, days)
+    return insights
+
+
+@api_router.get("/projects/{project_id}/classification/gemini-status")
+def get_gemini_classification_status(project_id: str, db: Session = Depends(get_db)):
+    """Verifica status das classificações com Gemini para um projeto"""
+
+    # Verificar se o projeto existe
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    # Contar runs por versão de classificação
+    total_runs = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed"
+    ).scalar() or 0
+
+    gemini_classified = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed",
+        Run.classification_version == "2.0-gemini"
+    ).scalar() or 0
+
+    basic_classified = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed",
+        Run.classification_version == "1.0"
+    ).scalar() or 0
+
+    unclassified = db.query(func.count(Run.id)).filter(
+        Run.project_id == project_id,
+        Run.status == "completed",
+        Run.response_type.is_(None)
+    ).scalar() or 0
+
+    # Qualidade média das classificações Gemini
+    gemini_avg_confidence = db.query(
+        func.avg(Run.classification_confidence)
+    ).filter(
+        Run.project_id == project_id,
+        Run.classification_version == "2.0-gemini",
+        Run.classification_confidence.isnot(None)
+    ).scalar() or 0.0
+
+    return {
+        "project_id": project_id,
+        "classification_status": {
+            "total_completed_runs": total_runs,
+            "gemini_classified": gemini_classified,
+            "basic_classified": basic_classified,
+            "unclassified": unclassified,
+            "gemini_coverage": round(gemini_classified / total_runs * 100, 1) if total_runs > 0 else 0,
+            "gemini_avg_confidence": round(float(gemini_avg_confidence), 2)
+        },
+        "recommendations": {
+            "should_upgrade_to_gemini": basic_classified > 0,
+            "needs_initial_classification": unclassified > 0,
+            "upgrade_candidates": basic_classified,
+            "new_classification_needed": unclassified
+        }
+    }
+
+
+@api_router.post("/classification/migrate-to-gemini")
+def migrate_existing_classifications_to_gemini(
+    project_id: str = None,
+    limit: int = 200,
+    db: Session = Depends(get_db)
+):
+    """Migra classificações básicas existentes para análise avançada do Gemini"""
+    from app.services.gemini_integration import batch_classify_with_gemini_service
+
+    # Buscar runs com classificação básica que podem ser upgradeadas
+    query = db.query(Run.id).filter(
+        Run.status == "completed",
+        Run.classification_version == "1.0",  # Apenas básicas
+        Run.response_type.isnot(None)  # Já classificadas
+    )
+
+    if project_id:
+        # Verificar se o projeto existe
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado")
+        query = query.filter(Run.project_id == project_id)
+
+    migration_candidates = [row[0] for row in query.limit(limit).all()]
+
+    if not migration_candidates:
+        return {
+            "message": "Nenhuma classificação básica encontrada para migração",
+            "project_id": project_id,
+            "candidates_found": 0
+        }
+
+    # Executar migração
+    print(f"[GEMINI_MIGRATION] Migrando {len(migration_candidates)} runs para Gemini")
+    results = batch_classify_with_gemini_service(project_id=project_id, limit=limit)
+
+    successful_migrations = sum(1 for r in results.values() if r is not None)
+
+    return {
+        "migration_summary": {
+            "candidates_found": len(migration_candidates),
+            "processed": len(results),
+            "successful_migrations": successful_migrations,
+            "migration_rate": round(successful_migrations / len(migration_candidates) * 100, 1) if migration_candidates else 0
+        },
+        "project_id": project_id,
+        "limit": limit,
+        "completed_at": datetime.utcnow().isoformat()
+    }

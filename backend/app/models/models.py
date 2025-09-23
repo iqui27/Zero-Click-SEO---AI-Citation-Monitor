@@ -157,6 +157,24 @@ class Run(Base):
     schedule_total_today: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     schedule_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # monitor|monitor_now|manual
 
+    # Classificação Zero-Click da Resposta
+    response_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # direta|explicativa|instrucional|comparativa|consultiva|navegacional
+    sufficiency_level: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # total|parcial|insuficiente
+    actionability_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # transacional|informativa
+    trust_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # citada|generica
+    brand_positioning: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # protagonista|competidor|ausente
+    classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0-1.0
+    classified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    classification_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # versão do sistema de classificação
+
+    # Métricas Avançadas Zero-Click
+    user_intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # informational|transactional|navigational|commercial
+    satisfaction_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0-1.0 score combinado
+    competitive_mentions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # número de concorrentes mencionados
+    financial_value_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # valor estimado da consulta
+    content_gap_detected: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # gap de conteúdo identificado
+    conversion_potential: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # alto|medio|baixo
+
 
 class Evidence(Base):
     __tablename__ = "evidences"
