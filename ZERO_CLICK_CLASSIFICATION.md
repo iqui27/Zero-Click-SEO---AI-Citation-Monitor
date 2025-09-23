@@ -54,9 +54,9 @@ O Sistema de Classificação Zero-Click SEO é uma solução completa para anál
 - **content_gap_detected**: Detecta gaps de conteúdo (boolean)
 - **classification_confidence**: Confiança da classificação (0.0-1.0)
 
-### 3. Análise com Gemini 2.0 Flash
+### 3. Análise com Gemini 2.5 Pro
 
-O sistema integra o Google Gemini 2.0 Flash para análises mais sofisticadas e insights estratégicos.
+O sistema integra o Google Gemini 2.5 Pro para análises mais sofisticadas e insights estratégicos.
 
 #### Recursos Gemini
 - Análise contextual avançada
@@ -103,7 +103,7 @@ conversion_potential = Column(String(50))
    - Avaliação de valor financeiro
 
 3. **GeminiZeroClickAnalyzer** (`backend/app/services/gemini_classifier.py`)
-   - Integração com Gemini 2.0 Flash
+   - Integração com Gemini 2.5 Pro
    - Análise contextual avançada
    - Geração de insights estratégicos
 

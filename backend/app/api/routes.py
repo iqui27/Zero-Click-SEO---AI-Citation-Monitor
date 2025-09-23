@@ -454,7 +454,6 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         cits = cits_by_run.get(rid, [])
         doms = [d or "" for (d, _u, _ours) in cits if d]
         urls = [u or "" for (_d, u, _ours) in cits if u]
-        ios = [("1" if _ours else "0") for (_d, _u, _ours) in cits]
 
         pn = getattr(r, "prompt_name", None)
         nn = _norm_name(pn)
@@ -484,7 +483,6 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
             text_str,
             " ".join(doms),
             " ".join(urls),
-            " ".join(ios),
         ])
 
     buf.seek(0)
@@ -560,7 +558,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
             "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
             "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","response_text","screenshot_url",
-            "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
+            "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
         ])
         buf.seek(0)
         headers = {"Content-Disposition": f"attachment; filename={filename}"}
@@ -645,6 +643,9 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
     for rid, dom, url, anchor, position, ctype, is_ours in cit_rows:
         cits_by_run.setdefault(rid, []).append((dom, url, anchor, position, ctype, bool(is_ours)))
 
+    # Aggregate boolean per run: any citation is ours?
+    any_ours_by_run: dict[str, bool] = {rid: any(flag for (_d, _u, _a, _p, _t, flag) in lst) for rid, lst in cits_by_run.items()}
+
     # AI Overview mapping (explicit link or self if google_serp)
     ai_map: dict[str, str] = {}
     if run_ids:
@@ -665,7 +666,7 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
         "schedule_date","schedule_slot","schedule_index_today","schedule_total_today","schedule_source",
         "prompt_id","prompt_name","prompt_version_id","prompt_text","ai_overview_run_id","tema","categoria","response_text","screenshot_url",
-        "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours",
+        "cit_domain","cit_url","cit_anchor","cit_position","cit_type","cit_is_ours","citations_is_ours",
     ])
     # Build category map from PromptTemplate by normalizing Prompt.name (strip 'Run: ')
     def _norm_name(n: str | None) -> str | None:
@@ -736,11 +737,12 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
             ev_shot.get(rid, ""),
         ]
         cits = cits_by_run.get(rid, [])
+        any_ours = any_ours_by_run.get(rid, False)
         if not cits:
-            writer.writerow(base + ["", "", "", "", "", ""])  # no citations
+            writer.writerow(base + ["", "", "", "", "", "", "true" if any_ours else "false"])  # no citations
         else:
             for (dom, url, anchor, pos, ctype, is_ours) in cits:
-                writer.writerow(base + [dom or "", url or "", anchor or "", pos or "", ctype or "", 1 if is_ours else 0])
+                writer.writerow(base + [dom or "", url or "", anchor or "", pos or "", ctype or "", 1 if is_ours else 0, "true" if any_ours else "false"]) 
 
     buf.seek(0)
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
