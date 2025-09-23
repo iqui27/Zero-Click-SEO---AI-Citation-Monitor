@@ -396,7 +396,6 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id",
         "monitor_id",
@@ -577,7 +576,6 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
     if not run_ids:
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(["sep=,"])
         writer.writerow([
             "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
             "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
@@ -693,7 +691,6 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id","project_id","subproject_id","engine","model","status","started_at","finished_at","cycles_total","zcrs",
         "tokens_input","tokens_output","tokens_total","cost_usd","latency_ms","citations_count","our_citations_count","unique_domains_count","error_code",
@@ -959,7 +956,6 @@ def monitors_history_csv(project_id: str | None = None, db: Session = Depends(ge
     items = monitors_history(project_id=project_id, db=db)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["sep=,"])
     writer.writerow(["monitor_id", "project_id", "name", "status", "runs_total", "runs_completed", "runs_failed", "deleted_at"])
     for it in items:
         writer.writerow([
@@ -1618,7 +1614,6 @@ def export_runs_csv(
             run_to_ours.setdefault(rid, []).append("1" if bool(is_ours) else "0")
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["sep=,"])
     writer.writerow([
         "id",
         "engine",
@@ -2711,7 +2706,6 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["sep=,"])
     writer.writerow([
         "run_id",
         "started_at",
