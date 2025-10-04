@@ -54,6 +54,19 @@ class GeminiSemanticService:
         )
 
     @staticmethod
+    def _get_empty_structure() -> Dict[str, Any]:
+        """Retorna estrutura vazia válida para quando Gemini falha."""
+        return {
+            "entities": [],
+            "relationships": [],
+            "keywords": [],
+            "perception": {},
+            "summary": {},
+            "competitors": [],
+            "wordcloud": []
+        }
+    
+    @staticmethod
     def _format_citations(citations: List[Dict[str, Any]]) -> str:
         if not citations:
             return "Nenhuma citação disponível."
@@ -128,15 +141,7 @@ class GeminiSemanticService:
         print(f"[SEMANTIC] Resposta original (primeiros 200 chars): {raw[:200]}")
         
         # Retornar estrutura mínima válida ao invés de lançar erro
-        return {
-            "entities": [],
-            "relationships": [],
-            "keywords": [],
-            "perception": {},
-            "summary": {},
-            "competitors": [],
-            "wordcloud": []
-        }
+        return GeminiSemanticService._get_empty_structure()
 
     @staticmethod
     def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,21 +327,54 @@ Observação: Alguns dados podem estar incompletos.
             project_name=project_name,
         )
 
-        response = self.model.generate_content(prompt)
-        raw_text = getattr(response, "text", None)
-
-        if not raw_text and response.candidates:
-            # Fallback: concatenar partes retornadas
-            raw_parts = []
-            for candidate in response.candidates:
-                for part in getattr(candidate.content, "parts", []) or []:
-                    text = getattr(part, "text", None)
-                    if text:
-                        raw_parts.append(text)
-            raw_text = "\n".join(raw_parts)
-
+        try:
+            response = self.model.generate_content(prompt)
+        except Exception as e:
+            print(f"[SEMANTIC] Erro ao chamar Gemini API: {e}")
+            print(f"[SEMANTIC] Retornando estrutura vazia devido a erro de API")
+            return self._get_empty_structure()
+        
+        # Verificar finish_reason para detectar bloqueios
+        if response.candidates:
+            candidate = response.candidates[0]
+            finish_reason = getattr(candidate, "finish_reason", None)
+            
+            # finish_reason 2 = SAFETY (bloqueado por filtro de segurança)
+            # finish_reason 3 = RECITATION (bloqueado por recitação)
+            # finish_reason 4 = OTHER (outros bloqueios)
+            if finish_reason in [2, 3, 4]:
+                reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
+                reason_name = reason_names.get(finish_reason, str(finish_reason))
+                print(f"[SEMANTIC] Gemini bloqueou resposta: finish_reason={reason_name}")
+                print(f"[SEMANTIC] Retornando estrutura vazia devido a bloqueio")
+                return self._get_empty_structure()
+        
+        # Tentar obter texto da resposta
+        raw_text = None
+        try:
+            raw_text = response.text
+        except (ValueError, AttributeError) as e:
+            # response.text pode lançar erro se não houver partes válidas
+            print(f"[SEMANTIC] Erro ao acessar response.text: {e}")
+            
+            # Fallback: tentar concatenar partes manualmente
+            if response.candidates:
+                raw_parts = []
+                for candidate in response.candidates:
+                    content = getattr(candidate, "content", None)
+                    if content:
+                        parts = getattr(content, "parts", []) or []
+                        for part in parts:
+                            text = getattr(part, "text", None)
+                            if text:
+                                raw_parts.append(text)
+                if raw_parts:
+                    raw_text = "\n".join(raw_parts)
+        
         if not raw_text:
-            raise ValueError("Gemini retornou resposta vazia ao gerar insights semânticos")
+            print(f"[SEMANTIC] Gemini retornou resposta vazia")
+            print(f"[SEMANTIC] Retornando estrutura vazia")
+            return self._get_empty_structure()
 
         data = self._safe_json_loads(raw_text)
         normalized = self._normalize_payload(data)
