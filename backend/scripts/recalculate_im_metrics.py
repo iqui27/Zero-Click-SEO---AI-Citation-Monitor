@@ -109,6 +109,17 @@ def recalculate_all_metrics(limit: int = None, project_id: str = None):
                         if cit.get("is_ours"):
                             target_url = cit.get("url")
                             break
+                    
+                    # Se não houver citação nossa, usar domínio primário do projeto como fallback
+                    if not target_url and project_domains:
+                        primary_domain = db.query(Domain).filter(
+                            Domain.project_id == project.id,
+                            Domain.is_primary == True
+                        ).first()
+                        if primary_domain:
+                            target_url = f"https://{primary_domain.domain}"
+                        elif project_domains:
+                            target_url = f"https://{project_domains[0]}"
                 except Exception as e:
                     print(f"\n   ⚠️  Erro ao buscar dados SERP para run {run.id}: {e}")
                 

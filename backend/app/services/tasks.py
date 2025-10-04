@@ -455,6 +455,20 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                     if cit.get("is_ours"):
                         target_url = cit.get("url")
                         break
+                
+                # Se não houver citação nossa, usar domínio primário do projeto como fallback
+                if not target_url and project_domains:
+                    primary_domain = db.query(Domain).filter(
+                        Domain.project_id == project.id,
+                        Domain.is_primary == True
+                    ).first()
+                    if primary_domain:
+                        target_url = f"https://{primary_domain.domain}"
+                        print(f"[IM_METRICS] Usando domínio primário como fallback: {target_url}")
+                    elif project_domains:
+                        # Se não tiver primário, usar o primeiro domínio
+                        target_url = f"https://{project_domains[0]}"
+                        print(f"[IM_METRICS] Usando primeiro domínio como fallback: {target_url}")
             except Exception as e:
                 print(f"[IM_METRICS] Erro ao buscar dados SERP: {e}")
             
