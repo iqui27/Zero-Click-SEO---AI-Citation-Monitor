@@ -808,7 +808,7 @@ def get_im_filters(
         runs_query = runs_query.filter(Run.project_id == project_id)
 
     runs_rows = (
-        runs_query.order_by(Run.started_at.desc(), Run.id.desc())
+        runs_query.order_by(Run.started_at.desc().nullslast(), Run.id.desc())
         .limit(limit_runs)
         .all()
     )

@@ -2758,7 +2758,7 @@ def export_subproject_csv(subproject_id: str, db: Session = Depends(get_db)):
         )
         .join(Engine, Engine.id == Run.engine_id)
         .filter(Run.subproject_id == subproject_id)
-        .order_by(Run.started_at.asc().nullsfirst())
+        .order_by(Run.started_at.asc())
         .all()
     )
     # map run_id -> citations joined
@@ -2845,7 +2845,7 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
         .join(Engine, Engine.id == Run.engine_id)
         .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
         .filter(Run.subproject_id == subproject_id)
-        .order_by(Run.started_at.desc().nullslast())
+        .order_by(Run.started_at.desc())
         .limit(200)
         .all()
     )
@@ -2949,7 +2949,7 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
         runs_full = (
             db.query(Run)
             .filter(Run.subproject_id == subproject_id)
-            .order_by(Run.started_at.desc().nullslast())
+            .order_by(Run.started_at.desc())
             .limit(200)
             .all()
         )
