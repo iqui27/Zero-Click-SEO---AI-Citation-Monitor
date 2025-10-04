@@ -746,18 +746,45 @@ def get_im_filters(
         for theme in themes_query.all()
     ]
 
-    prompts_query = db.query(Prompt.id, Prompt.name, Prompt.project_id, Prompt.intent).order_by(Prompt.name.asc())
+    prompts_query = db.query(Prompt.id, Prompt.name, Prompt.text, Prompt.project_id, Prompt.intent).order_by(Prompt.name.asc())
     if project_id:
         prompts_query = prompts_query.filter(Prompt.project_id == project_id)
-    prompts = [
-        {
-            "id": prompt.id,
-            "name": prompt.name,
-            "project_id": prompt.project_id,
-            "intent": prompt.intent,
-        }
-        for prompt in prompts_query.all()
-    ]
+    
+    # Agrupar prompts pelo texto para juntar prompts custom iguais
+    prompts_by_text = {}
+    for prompt in prompts_query.all():
+        # Para prompts custom, usar o texto como chave de agrupamento
+        if prompt.name and prompt.name.startswith("Prompt custom"):
+            # Usar primeiros 100 chars do texto como preview
+            text_preview = prompt.text[:100] if prompt.text else prompt.name
+            group_key = f"custom_{prompt.text}"  # Agrupar pelo texto completo
+            
+            if group_key not in prompts_by_text:
+                prompts_by_text[group_key] = {
+                    "id": prompt.id,  # Usar ID do primeiro
+                    "name": text_preview,  # Mostrar preview do texto
+                    "text": prompt.text,  # Texto completo
+                    "project_id": prompt.project_id,
+                    "intent": prompt.intent,
+                    "prompt_ids": [prompt.id],  # Lista de IDs agrupados
+                    "is_custom": True,
+                }
+            else:
+                # Adicionar ID ao grupo
+                prompts_by_text[group_key]["prompt_ids"].append(prompt.id)
+        else:
+            # Prompts normais (templates) não agrupar
+            prompts_by_text[f"template_{prompt.id}"] = {
+                "id": prompt.id,
+                "name": prompt.name,
+                "text": prompt.text,
+                "project_id": prompt.project_id,
+                "intent": prompt.intent,
+                "prompt_ids": [prompt.id],
+                "is_custom": False,
+            }
+    
+    prompts = list(prompts_by_text.values())
 
     engine_rows = db.query(Engine.id, Engine.project_id, Engine.name, Engine.region, Engine.device).order_by(Engine.name.asc()).all()
     if project_id:
