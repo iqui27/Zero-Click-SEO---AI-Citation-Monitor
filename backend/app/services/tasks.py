@@ -14,12 +14,25 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.models import Run, Evidence, Citation, Domain, Engine, RunEvent, Insight
+from app.models.models import (
+    Run,
+    Evidence,
+    Citation,
+    Domain,
+    Engine,
+    RunEvent,
+    Insight,
+    Project,
+    RunSemanticInsight,
+    PromptVersion,
+    SerpFeature,
+)
 from app.services.insights import generate_basic_insights
 from app.services.kpis import compute_run_report
 from app.services.normalization import normalize_domain
 from app.services.engine_runner import run_engine
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
+from app.services.gemini_semantic import GeminiSemanticService
 
 celery = Celery(
     "seo_monitor",
@@ -36,6 +49,50 @@ def _log(db: Session, run_id: str, step: str, status: str, message: str | None =
     db.add(RunEvent(run_id=run_id, version=step, status=status, message=message))
     db.commit()
 
+
+def _persist_serp_feature_details(db: Session, run_id: str, serp_metrics: dict[str, Any]) -> None:
+    if not serp_metrics:
+        return
+
+    features = serp_metrics.get("serp_features") or {}
+    feature = db.query(SerpFeature).filter(SerpFeature.run_id == run_id).one_or_none()
+    if not feature:
+        feature = SerpFeature(run_id=run_id)
+        db.add(feature)
+
+    feature.has_featured_snippet = bool(features.get("featured_snippet"))
+    feature.has_paa = bool(features.get("people_also_ask"))
+    feature.has_knowledge_panel = bool(features.get("knowledge_graph"))
+    feature.has_ai_overview = bool(features.get("ai_overview"))
+    feature.has_local_pack = bool(features.get("local_pack"))
+    feature.has_video_carousel = bool(features.get("video_carousel"))
+    feature.has_image_pack = bool(features.get("image_pack"))
+
+    paa_items = serp_metrics.get("paa_items") or []
+    if paa_items:
+        feature.paa_questions = json.dumps([item.get("question") for item in paa_items if item.get("question")], ensure_ascii=False)[:8000]
+        feature.paa_items = json.dumps(paa_items, ensure_ascii=False)[:16000]
+    else:
+        feature.paa_questions = None
+        feature.paa_items = None
+
+    knowledge_panel = serp_metrics.get("knowledge_panel")
+    feature.knowledge_panel_json = (
+        json.dumps(knowledge_panel, ensure_ascii=False)[:16000] if knowledge_panel else None
+    )
+
+    ai_overview = serp_metrics.get("ai_overview")
+    feature.ai_overview_json = (
+        json.dumps(ai_overview, ensure_ascii=False)[:20000] if ai_overview else None
+    )
+
+    featured_snippet = serp_metrics.get("featured_snippet")
+    feature.featured_snippet_content = (
+        json.dumps(featured_snippet, ensure_ascii=False)[:8000] if featured_snippet else None
+    )
+
+    feature.organic_position = serp_metrics.get("organic_position")
+    feature.competitors_in_top10 = serp_metrics.get("competitors_top10") or 0
 
 def enqueue_run(run_id: str, cycles: int = 1) -> None:
     celery.send_task("tasks.execute_run", args=[run_id, cycles], queue="runs")
@@ -343,6 +400,201 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         except Exception as e:
             _log(db, run.id, "classify", "fail", f"Classification error: {str(e)}")
 
+        # === CÁLCULO DE MÉTRICAS IM-SEO / IM-SEOIA ===
+        print(f"[DEBUG] Iniciando cálculo de métricas IM para run {run.id}")
+        try:
+            from app.services.im_metrics_simple import SimpleIMMetrics
+            
+            _log(db, run.id, "im_metrics", "started", "Calculating IM-SEO and IM-SEOIA metrics")
+            print(f"[DEBUG] Log de im_metrics.started enviado")
+            
+            # Preparar dados para cálculo
+            response_text = (last_parsed or {}).get("text") if last_parsed else None
+            print(f"[DEBUG] response_text length: {len(response_text) if response_text else 0}")
+            
+            # Salvar response_text na run para análises futuras
+            if response_text:
+                run.response_text = response_text[:50000]  # Limitar tamanho
+            
+            # Buscar citações da run
+            citations_list = db.query(Citation).filter(Citation.run_id == run.id).all()
+            citations_data = [
+                {
+                    "domain": c.domain,
+                    "url": c.url,
+                    "is_ours": c.is_ours,
+                }
+                for c in citations_list
+            ]
+            
+            # Preparar dados da run
+            run_data = {
+                "amr_flag": run.amr_flag,
+                "dcr_flag": run.dcr_flag,
+                "zcrs": run.zcrs,
+            }
+            
+            # Buscar dados do SerpAPI se disponíveis
+            serp_data = None
+            project_domains = []
+            target_url = None
+            try:
+                # Buscar evidence para extrair dados SERP
+                evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
+                if evidence and evidence.parsed_json:
+                    serp_data = evidence.parsed_json.get("raw", {})
+                
+                # Buscar domínios do projeto
+                project = db.query(Project).filter(Project.id == run.project_id).first()
+                if project:
+                    domains_list = db.query(Domain).filter(Domain.project_id == project.id).all()
+                    project_domains = [d.domain for d in domains_list]
+                
+                # Tentar extrair URL alvo das citações (primeira citação nossa)
+                for cit in citations_data:
+                    if cit.get("is_ours"):
+                        target_url = cit.get("url")
+                        break
+            except Exception as e:
+                print(f"[IM_METRICS] Erro ao buscar dados SERP: {e}")
+            
+            # Calcular todas as métricas (com SerpAPI e PageSpeed se disponíveis)
+            print(f"[DEBUG] Chamando SimpleIMMetrics.calculate_all...")
+            im_metrics = SimpleIMMetrics.calculate_all(
+                run_data, 
+                citations_data, 
+                response_text,
+                serp_data=serp_data,
+                project_domains=project_domains,
+                target_url=target_url
+            )
+            print(f"[DEBUG] Métricas calculadas: IM-SEO={im_metrics.get('im_seo_score')}, IM-SEOIA={im_metrics.get('im_seoia_score')}")
+            
+            # Atualizar run com métricas calculadas
+            run.im_seo_score = im_metrics["im_seo_score"]
+            run.im_seoia_score = im_metrics["im_seoia_score"]
+            run.core_web_vitals_score = im_metrics["core_web_vitals_score"]
+            run.lcp_score = im_metrics.get("lcp_score")
+            run.fid_score = im_metrics.get("fid_score")
+            run.cls_score = im_metrics.get("cls_score")
+            run.share_of_voice_serp = im_metrics["share_of_voice_serp"]
+            
+            # E-E-A-T
+            eeat = im_metrics["eeat"]
+            run.eeat_score = eeat["overall"]
+            run.eeat_expertise = eeat["expertise"]
+            run.eeat_experience = eeat["experience"]
+            run.eeat_authoritativeness = eeat["authoritativeness"]
+            run.eeat_trustworthiness = eeat["trustworthiness"]
+            
+            # IA-Ready Blocks
+            ia_ready = im_metrics["ia_ready"]
+            run.ia_ready_score = ia_ready["score"]
+            run.ia_ready_blocks_count = ia_ready["blocks_count"]
+            run.has_lists = ia_ready["has_lists"]
+            run.has_faqs = ia_ready["has_faqs"]
+            run.has_tables = ia_ready["has_tables"]
+            run.has_step_by_step = ia_ready["has_step_by_step"]
+            
+            # IRZC
+            irzc = im_metrics["irzc"]
+            run.irzc_score = irzc["score"]
+            run.ctr_expected = irzc["ctr_expected"]
+            
+            # Entidades
+            entities = im_metrics["entities"]
+            run.entities_detected = entities["detected"]
+            run.entities_relevance_score = entities["relevance_score"]
+            run.entity_connection_score = entities["connection_score"]
+            
+            # Métricas do SerpAPI (se disponíveis)
+            run.serp_features_presence = im_metrics.get("serp_features_presence")
+            run.ia_resources_detected = im_metrics.get("ia_resources_detected")
+            run.ia_serp_presence_score = im_metrics.get("ia_serp_presence_score")
+            run.long_tail_terms_top10 = im_metrics.get("longtail_terms_top10")
+            run.long_tail_terms_top20 = im_metrics.get("longtail_terms_top20")
+            run.long_tail_coverage_score = im_metrics.get("longtail_coverage_score")
+            run.schema_types_detected = im_metrics.get("schema_types_detected")
+            run.schema_coverage_score = im_metrics.get("schema_coverage_score")
+            
+            # Posição orgânica e competidores
+            run.organic_position = im_metrics.get("organic_position")
+            run.competitors_in_top10 = im_metrics.get("competitors_top10") or 0
+
+            _persist_serp_feature_details(db, run.id, im_metrics.get("serp_metrics") or {})
+
+            db.commit()
+            print(f"[DEBUG] Métricas salvas no banco com sucesso!")
+            
+            _log(db, run.id, "im_metrics", "ok", f"IM-SEO: {run.im_seo_score}, IM-SEOIA: {run.im_seoia_score}")
+
+            if settings.semantic_insights_enabled:
+                try:
+                    process_semantic_insights.delay(run.id)
+                    _log(db, run.id, "semantic_insights", "queued", "Gemini semantic insights enqueued")
+                except Exception as queue_err:
+                    print(f"[SEMANTIC] Falha ao enfileirar insights para run {run.id}: {queue_err}")
+                    _log(db, run.id, "semantic_insights", "fail", f"queue error: {queue_err}")
+        except Exception as e:
+            print(f"[DEBUG] ERRO no cálculo de métricas: {e}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "im_metrics", "fail", f"IM metrics calculation error: {str(e)}")
+        
+        # === BUSCAR DADOS DO GOOGLE SEARCH CONSOLE ===
+        try:
+            from app.services.search_console import SearchConsoleService
+            from app.models.models import PromptVersion
+            
+            # Buscar projeto
+            project = db.query(Project).filter(Project.id == run.project_id).first()
+            
+            # Verificar se Search Console está conectado
+            if project and project.search_console_token and project.search_console_site_url:
+                # Buscar query/prompt text
+                prompt_version = db.get(PromptVersion, run.prompt_version_id)
+                query_text = prompt_version.text if prompt_version else ""
+                
+                _log(db, run.id, "search_console", "started", "Fetching data from Google Search Console")
+                print(f"[SEARCH_CONSOLE] Buscando dados para query: {query_text}")
+                
+                # Buscar dados (últimos 7 dias)
+                import asyncio
+                gsc_data = asyncio.run(SearchConsoleService.get_query_data(
+                    credentials_json=project.search_console_token,
+                    site_url=project.search_console_site_url,
+                    query=query_text
+                ))
+                
+                if gsc_data.get("has_data"):
+                    # Atualizar run com dados reais
+                    run.ctr_real = gsc_data['ctr'] * 100  # Converter para %
+                    
+                    # Calcular CTR ratio se temos CTR esperado
+                    if run.ctr_expected and run.ctr_real:
+                        run.ctr_ratio = run.ctr_real / run.ctr_expected
+                        
+                        # Recalcular IRZC com dados reais
+                        run.irzc_score = SearchConsoleService.calculate_irzc_with_real_data(
+                            ctr_ratio=run.ctr_ratio,
+                            zero_click_features=run.ia_resources_detected or 0
+                        )
+                    
+                    db.commit()
+                    _log(db, run.id, "search_console", "ok", f"CTR Real: {run.ctr_real:.2f}%, Clicks: {gsc_data['clicks']}, Impressions: {gsc_data['impressions']}")
+                    print(f"[SEARCH_CONSOLE] ✅ Dados obtidos - CTR: {run.ctr_real:.2f}%, IRZC: {run.irzc_score}")
+                else:
+                    _log(db, run.id, "search_console", "no_data", "No data found for this query in Search Console")
+                    print(f"[SEARCH_CONSOLE] ⚠️ Sem dados para esta query")
+            else:
+                print(f"[SEARCH_CONSOLE] Search Console não conectado para este projeto")
+                
+        except Exception as e:
+            print(f"[SEARCH_CONSOLE] Erro ao buscar dados: {e}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "search_console", "fail", f"Error: {str(e)}")
+
         run.status = "completed"
         run.finished_at = datetime.utcnow()
         try:
@@ -374,5 +626,103 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 db.commit()
         except Exception:
             pass
+    finally:
+        db.close()
+
+
+@celery.task(name="tasks.process_semantic_insights", queue="runs", soft_time_limit=600, time_limit=900)
+def process_semantic_insights(run_id: str) -> None:
+    """Gera insights semânticos via Gemini para uma run já processada."""
+    if not settings.semantic_insights_enabled:
+        return
+
+    db: Session = SessionLocal()
+    try:
+        run = db.get(Run, run_id)
+        if not run:
+            return
+
+        response_text = (run.response_text or "").strip()
+        if not response_text:
+            print(f"[SEMANTIC] Run {run_id} sem response_text. Abortando insights.")
+            return
+
+        prompt_version = db.get(PromptVersion, run.prompt_version_id)
+        question_text = (prompt_version.text if prompt_version else "").strip()
+
+        citations = db.query(Citation).filter(Citation.run_id == run_id).all()
+        citations_payload = [
+            {
+                "domain": cite.domain,
+                "url": cite.url,
+                "is_ours": cite.is_ours,
+            }
+            for cite in citations
+        ]
+
+        project = db.get(Project, run.project_id)
+        project_name = project.name if project else None
+
+        _log(db, run.id, "semantic_insights", "started", "Gemini semantic analysis")
+
+        service = GeminiSemanticService()
+        payload = service.analyze(
+            question=question_text or "",
+            response_text=response_text,
+            citations=citations_payload,
+            project_name=project_name,
+        )
+
+        insight = db.get(RunSemanticInsight, run_id)
+        if insight:
+            insight.payload = payload
+            insight.updated_at = datetime.utcnow()
+        else:
+            insight = RunSemanticInsight(run_id=run_id, payload=payload)
+            db.add(insight)
+
+        perception = payload.get("perception") or {}
+        primary_category = perception.get("primary_category") or perception.get("category")
+        if primary_category:
+            run.perceived_value_category = primary_category
+
+        summary = payload.get("summary") or {}
+        headline = summary.get("headline") or summary.get("title")
+        bullets = summary.get("bullets") or summary.get("opportunities") or []
+        # Construir resumo curto (limitar 2000 chars)
+        pieces = []
+        if headline:
+            pieces.append(headline.strip())
+        if bullets:
+            try:
+                bullets_text = "; ".join(str(b).strip() for b in bullets if str(b).strip())
+            except Exception:
+                bullets_text = ""
+            if bullets_text:
+                pieces.append(bullets_text)
+        summary_text = " — ".join(pieces)
+        if summary_text:
+            run.semantic_summary = summary_text[:2000]
+
+        entities_count = len(payload.get("entities", []))
+        relationships = payload.get("relationships", [])
+        avg_weight = 0.0
+        if relationships:
+            weights = [rel.get("weight") or 0.0 for rel in relationships]
+            avg_weight = sum(weights) / max(len(weights), 1)
+        if entities_count > 0:
+            run.entities_detected = entities_count
+            avg_conf = sum((entity.get("confidence") or 0.0) for entity in payload.get("entities", [])) / entities_count
+            run.entities_relevance_score = round(avg_conf, 3)
+        if avg_weight:
+            run.entity_connection_score = round(avg_weight * 100, 2)
+
+        db.commit()
+        _log(db, run.id, "semantic_insights", "ok", f"entities={entities_count}, perception={primary_category}")
+
+    except Exception as exc:
+        db.rollback()
+        print(f"[SEMANTIC] Erro ao gerar insights para run {run_id}: {exc}")
+        _log(db, run_id, "semantic_insights", "fail", str(exc))
     finally:
         db.close()

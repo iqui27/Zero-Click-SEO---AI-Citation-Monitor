@@ -1,0 +1,549 @@
+import { useState, useEffect } from 'react'
+import { Select } from '../components/ui/select'
+import { Badge } from '../components/ui/badge'
+import { Skeleton } from '../components/ui/skeleton'
+import { 
+  LineChart, 
+  Line, 
+  BarChart,
+  Bar,
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar
+} from 'recharts'
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Target, 
+  Zap, 
+  AlertTriangle,
+  Award,
+  Sparkles,
+  BarChart3,
+  Activity
+} from 'lucide-react'
+
+// Simple Card components
+const Card = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <div className={`border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm ${className}`}>
+    {children}
+  </div>
+)
+
+const CardHeader = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <div className={`p-4 pb-2 ${className}`}>{children}</div>
+)
+
+const CardTitle = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <h3 className={`font-semibold ${className}`}>{children}</h3>
+)
+
+const CardDescription = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>
+)
+
+const CardContent = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <div className={`p-4 pt-2 ${className}`}>{children}</div>
+)
+
+interface TimeSeriesData {
+  date: string
+  im_seo: number | null
+  im_seoia: number | null
+  irzc: number | null
+  eeat: number | null
+}
+
+interface OverviewData {
+  total_runs: number
+  date_range: {
+    start: string
+    end: string
+  }
+  im_seo: {
+    average: number
+    min: number
+    max: number
+  }
+  im_seoia: {
+    average: number
+    min: number
+    max: number
+  }
+  sub_metrics: {
+    eeat_avg: number
+    irzc_avg: number
+    cwv_avg: number
+    ia_ready_avg: number
+  }
+  distribution: {
+    im_seo_ranges: {
+      'excellent (80-100)': number
+      'good (60-79)': number
+      'fair (40-59)': number
+      'poor (0-39)': number
+    }
+    im_seoia_ranges: {
+      'excellent (80-100)': number
+      'good (60-79)': number
+      'fair (40-59)': number
+      'poor (0-39)': number
+    }
+  }
+}
+
+const COLORS = {
+  excellent: '#10b981',
+  good: '#eab308',
+  fair: '#f97316',
+  poor: '#ef4444'
+}
+
+export default function IMMetricsDashboard({ 
+  projectId, 
+  subprojectId 
+}: {
+  projectId?: string
+  subprojectId?: string
+}) {
+  const [days, setDays] = useState(30)
+  const [overview, setOverview] = useState<OverviewData | null>(null)
+  const [series, setSeries] = useState<TimeSeriesData[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadData()
+  }, [projectId, subprojectId, days])
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (projectId) params.append('project_id', projectId)
+      if (subprojectId) params.append('subproject_id', subprojectId)
+      params.append('days', days.toString())
+
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      
+      const [overviewRes, seriesRes] = await Promise.all([
+        fetch(`${apiUrl}/api/analytics/im-metrics/overview?${params}`).then(r => r.json()),
+        fetch(`${apiUrl}/api/analytics/im-metrics/series?${params}`).then(r => r.json())
+      ])
+
+      setOverview(overviewRes)
+      setSeries(seriesRes.series)
+    } catch (error) {
+      console.error('Failed to load IM metrics:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6 p-6">
+        <Skeleton className="h-12 w-full" />
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-32" />
+          ))}
+        </div>
+        <Skeleton className="h-96 w-full" />
+      </div>
+    )
+  }
+
+  if (!overview) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Nenhum dado disponível</p>
+      </div>
+    )
+  }
+
+  // Preparar dados para gráficos
+  const distributionData = [
+    { name: 'Excelente', value: overview.distribution.im_seo_ranges['excellent (80-100)'], color: COLORS.excellent },
+    { name: 'Bom', value: overview.distribution.im_seo_ranges['good (60-79)'], color: COLORS.good },
+    { name: 'Regular', value: overview.distribution.im_seo_ranges['fair (40-59)'], color: COLORS.fair },
+    { name: 'Ruim', value: overview.distribution.im_seo_ranges['poor (0-39)'], color: COLORS.poor }
+  ]
+
+  const radarData = [
+    { metric: 'E-E-A-T', value: overview.sub_metrics.eeat_avg },
+    { metric: 'CWV', value: overview.sub_metrics.cwv_avg },
+    { metric: 'IA-Ready', value: overview.sub_metrics.ia_ready_avg },
+    { metric: 'IRZC (inv)', value: 100 - overview.sub_metrics.irzc_avg }
+  ]
+
+  const comparisonData = [
+    { name: 'IM-SEO', value: overview.im_seo.average, color: '#8b5cf6' },
+    { name: 'IM-SEOIA', value: overview.im_seoia.average, color: '#3b82f6' }
+  ]
+
+  return (
+    <div className="space-y-6 p-6">
+      
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard IM-SEO & IM-SEOIA</h1>
+          <p className="text-muted-foreground mt-1">
+            Análise completa de métricas de maturidade SEO e IA
+          </p>
+        </div>
+        <select 
+          value={days.toString()} 
+          onChange={(e) => setDays(parseInt(e.target.value))}
+          className="w-[180px] px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-sm"
+        >
+          <option value="7">Últimos 7 dias</option>
+          <option value="14">Últimos 14 dias</option>
+          <option value="30">Últimos 30 dias</option>
+          <option value="90">Últimos 90 dias</option>
+        </select>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        
+        {/* IM-SEO Médio */}
+        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">IM-SEO Médio</CardTitle>
+            <Target className="h-4 w-4 text-purple-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-purple-700">
+              {overview.im_seo.average.toFixed(1)}
+            </div>
+            <p className="text-xs text-purple-600 mt-1">
+              Min: {overview.im_seo.min.toFixed(1)} | Max: {overview.im_seo.max.toFixed(1)}
+            </p>
+            <div className="flex items-center gap-1 mt-2">
+              {overview.im_seo.average >= 70 ? (
+                <TrendingUp className="h-3 w-3 text-green-600" />
+              ) : (
+                <TrendingDown className="h-3 w-3 text-red-600" />
+              )}
+              <span className="text-xs text-muted-foreground">
+                {overview.total_runs} runs analisadas
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* IM-SEOIA Médio */}
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">IM-SEOIA Médio</CardTitle>
+            <Zap className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-blue-700">
+              {overview.im_seoia.average.toFixed(1)}
+            </div>
+            <p className="text-xs text-blue-600 mt-1">
+              Min: {overview.im_seoia.min.toFixed(1)} | Max: {overview.im_seoia.max.toFixed(1)}
+            </p>
+            <div className="flex items-center gap-1 mt-2">
+              {overview.im_seoia.average >= 70 ? (
+                <TrendingUp className="h-3 w-3 text-green-600" />
+              ) : (
+                <TrendingDown className="h-3 w-3 text-red-600" />
+              )}
+              <span className="text-xs text-muted-foreground">
+                Otimização para IA
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* E-E-A-T Médio */}
+        <Card className="bg-gradient-to-br from-amber-50 to-amber-100 border-amber-200">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">E-E-A-T Médio</CardTitle>
+            <Award className="h-4 w-4 text-amber-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-amber-700">
+              {overview.sub_metrics.eeat_avg.toFixed(1)}
+            </div>
+            <p className="text-xs text-amber-600 mt-1">
+              Qualidade do conteúdo
+            </p>
+            <Badge variant="outline" className="mt-2 text-xs">
+              {overview.sub_metrics.eeat_avg >= 70 ? 'Alta qualidade' : 'Melhorar'}
+            </Badge>
+          </CardContent>
+        </Card>
+
+        {/* IRZC Médio */}
+        <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">IRZC Médio</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-orange-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-orange-700">
+              {overview.sub_metrics.irzc_avg.toFixed(1)}
+            </div>
+            <p className="text-xs text-orange-600 mt-1">
+              Risco zero-click
+            </p>
+            <Badge 
+              variant={overview.sub_metrics.irzc_avg > 70 ? 'destructive' : 'outline'} 
+              className="mt-2 text-xs"
+            >
+              {overview.sub_metrics.irzc_avg > 70 ? 'Alto risco' : overview.sub_metrics.irzc_avg > 40 ? 'Risco médio' : 'Baixo risco'}
+            </Badge>
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* Gráficos Principais */}
+      <div className="grid gap-4 md:grid-cols-2">
+        
+        {/* Evolução Temporal */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5" />
+              Evolução dos Índices
+            </CardTitle>
+            <CardDescription>
+              Acompanhamento diário das métricas IM-SEO e IM-SEOIA
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={series}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 12 }}
+                  stroke="#6b7280"
+                />
+                <YAxis domain={[0, 100]} stroke="#6b7280" />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: '#fff', 
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px'
+                  }}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="im_seo"
+                  stroke="#8b5cf6"
+                  strokeWidth={3}
+                  name="IM-SEO"
+                  connectNulls
+                  dot={{ fill: '#8b5cf6', r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="im_seoia"
+                  stroke="#3b82f6"
+                  strokeWidth={3}
+                  name="IM-SEOIA"
+                  connectNulls
+                  dot={{ fill: '#3b82f6', r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="eeat"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  name="E-E-A-T"
+                  connectNulls
+                  dot={{ fill: '#f59e0b', r: 3 }}
+                  strokeDasharray="5 5"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="irzc"
+                  stroke="#ef4444"
+                  strokeWidth={2}
+                  name="IRZC"
+                  connectNulls
+                  dot={{ fill: '#ef4444', r: 3 }}
+                  strokeDasharray="5 5"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Distribuição IM-SEO */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5 text-purple-600" />
+              Distribuição IM-SEO
+            </CardTitle>
+            <CardDescription>
+              Classificação das runs por faixa de score
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={distributionData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, value, percent }) => 
+                    `${name}: ${value} (${(percent * 100).toFixed(0)}%)`
+                  }
+                  outerRadius={100}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {distributionData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Radar de Sub-Métricas */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-blue-600" />
+              Análise Multidimensional
+            </CardTitle>
+            <CardDescription>
+              Visão geral das sub-métricas
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <RadarChart data={radarData}>
+                <PolarGrid stroke="#e5e7eb" />
+                <PolarAngleAxis dataKey="metric" tick={{ fontSize: 12 }} />
+                <PolarRadiusAxis domain={[0, 100]} />
+                <Radar
+                  name="Score"
+                  dataKey="value"
+                  stroke="#3b82f6"
+                  fill="#3b82f6"
+                  fillOpacity={0.6}
+                />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* Comparação e Insights */}
+      <div className="grid gap-4 md:grid-cols-3">
+        
+        {/* Comparação IM-SEO vs IM-SEOIA */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Comparação de Índices</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={comparisonData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis domain={[0, 100]} />
+                <Tooltip />
+                <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                  {comparisonData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Insights Rápidos */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-yellow-500" />
+              Insights e Recomendações
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {overview.im_seo.average < 60 && (
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-red-900">IM-SEO abaixo do ideal</p>
+                    <p className="text-xs text-red-700 mt-1">
+                      Foque em melhorar autoridade (AMR/DCR) e performance (CWV)
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {overview.sub_metrics.irzc_avg > 70 && (
+                <div className="flex items-start gap-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <AlertTriangle className="h-5 w-5 text-orange-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-orange-900">Alto risco de zero-click</p>
+                    <p className="text-xs text-orange-700 mt-1">
+                      Aumente citações e otimize para featured snippets
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {overview.sub_metrics.ia_ready_avg < 50 && (
+                <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Sparkles className="h-5 w-5 text-blue-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">Potencial de IA-Ready</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Adicione mais listas, FAQs e estruturas para IA
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {overview.im_seo.average >= 80 && overview.im_seoia.average >= 80 && (
+                <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <Award className="h-5 w-5 text-green-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-green-900">Excelente performance!</p>
+                    <p className="text-xs text-green-700 mt-1">
+                      Suas métricas estão acima da média. Continue monitorando.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+      </div>
+
+    </div>
+  )
+}

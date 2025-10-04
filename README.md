@@ -49,6 +49,7 @@ docker compose up -d --build
 - Timeline em tempo real (SSE com fallback polling) e “toolbelt” (LLM/Search/SERP/Screenshot).
 - Citações em cards (favicon e badge “nosso”).
 - Resposta com markdown rico (GFM) em streaming e ações de copiar (Markdown/HTML).
+- Aba “Insights semânticos” com resumo executivo, percepção, marcas/produtos e keywords derivados do Gemini.
 
 6) Monitores (agendamento)
 - Menu “Monitors”: agrupe múltiplos Templates e engines para rodar em lote.
@@ -58,6 +59,7 @@ docker compose up -d --build
 
 7) Dashboard por Subprojeto
 - KPIs agregados (AMR/DCR/ZCRS), série temporal de ZCRS e top domínios citados.
+- Módulo “Posicionamento IA & Palavras‑chave” com percepção de valor, ranking de marcas e wordcloud de keywords (dados do Gemini).
 - Exportar CSV: botão na UI e endpoint dedicado `GET /api/analytics/subprojects/{id}/export.csv`.
 
 8) Settings
@@ -76,7 +78,8 @@ docker compose up -d --build
 - Runs: `POST /api/runs`, `GET /api/runs` (filtros: `subproject_id`, `engine`, `status`, `limit`), `GET /api/runs/{id}`
 - Relatórios: `GET /api/runs/{id}/report`, `GET /api/runs/{id}/evidences`
 - Eventos: `GET /api/runs/{id}/events`, SSE `GET /api/runs/{id}/stream`
-- Analytics: `GET /api/analytics/overview`, `GET /api/analytics/subprojects/{id}/overview`, `/series`, `/top-domains`, `GET /api/analytics/subprojects/{id}/export.csv`
+- Analytics: `GET /api/analytics/overview`, `GET /api/analytics/subprojects/{id}/overview`, `/series`, `/top-domains`, `GET /api/analytics/subprojects/{id}/export.csv`, `GET /api/analytics/semantic-insights`
+- Semântica por run: `GET /api/runs/{id}/semantic-insights`
 - Utils: `GET /api/utils/url-title`
 
 ## Adapters (estado)
@@ -96,6 +99,25 @@ docker compose restart frontend
 ```
 - Playwright/Chromium: primeira instalação pode demorar; logs no serviço `backend`.
 
+## 📚 Documentação Completa
+
+**Novo no projeto?** Comece por aqui:
+1. **[ONBOARDING.md](./ONBOARDING.md)** - Guia de onboarding (primeira semana)
+2. **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Comandos e padrões comuns
+
+**Desenvolvendo features?** Consulte:
+- **[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** - Guia completo do desenvolvedor (arquitetura, API, modelos, fluxos)
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Arquitetura do sistema, padrões de design e decisões técnicas
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Como contribuir (padrões de código, PR, code review)
+
+**Documentação especializada:**
+- **[SEMANTIC_INSIGHTS.md](./docs/SEMANTIC_INSIGHTS.md)** - Pipeline de insights semânticos (Gemini, entidades, wordcloud, percepção)
+- **[ZERO_CLICK_CLASSIFICATION.md](./ZERO_CLICK_CLASSIFICATION.md)** - Sistema de classificação zero-click com Gemini
+- **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Setup do ambiente de desenvolvimento
+- **[README-DEPLOYMENT.md](./README-DEPLOYMENT.md)** - Deploy em produção
+
+**📋 [DOCS_INDEX.md](./DOCS_INDEX.md)** - Índice completo de toda a documentação
+
 ## Roadmap (próximos)
 - Toolbelt com estados por ferramenta (eventos dedicados)
 - Markdown com ações (copiar em Markdown/HTML) e títulos das citações (captura `og:title`)
@@ -106,6 +128,7 @@ docker compose restart frontend
 ## Scripts úteis
 - Subir/derrubar: `docker compose up -d --build` / `docker compose down`
 - Logs: `docker compose logs -f backend|worker|frontend`
+- Backfill semântico: `docker compose exec backend bash -lc 'PYTHONPATH=/app python scripts/backfill_semantic_insights.py --days 30'`
 
 ## Deploy (DigitalOcean)
 

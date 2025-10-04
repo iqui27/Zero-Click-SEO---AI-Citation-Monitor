@@ -15,9 +15,22 @@ protobuf==4.25.3
 playwright==1.46.0
 beautifulsoup4==4.12.3
 google-genai == 1.29.0
+google-generativeai==0.8.3
 lxml==5.2.2
 croniter==2.0.1
 
 # Azure SQL (MSSQL) drivers
 pyodbc==5.1.0
 pymssql==2.2.11
+
+# Google Search Console API
+google-auth==2.23.0
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+google-api-python-client==2.100.0
+
+# Encryption
+cryptography==41.0.5
+
+# Export
+openpyxl==3.1.2

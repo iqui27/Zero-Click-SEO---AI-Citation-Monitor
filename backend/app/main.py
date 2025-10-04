@@ -9,6 +9,9 @@ from app.core.config import settings
 from app.db.session import engine, SessionLocal
 from app.db.base import Base
 from app.api.routes import api_router
+from app.api.search_console_routes import router as search_console_router
+from app.api.analytics_routes import router as analytics_router
+from app.api.export_routes import router as export_router
 from app.services.scheduler import start_scheduler
 
 app = FastAPI(title="Zero-Click SEO & AI Citation Monitor", version="0.1.0")
@@ -26,9 +29,77 @@ app.add_middleware(
 async def on_startup() -> None:
     # Cria tabelas e tenta aplicar colunas novas em bancos existentes (sem Alembic)
     Base.metadata.create_all(bind=engine)
-    # Migração leve (apenas Postgres): adicionar colunas de métricas, se não existirem
+    # Migração leve: adicionar colunas de métricas, se não existirem
     try:
-        if engine.dialect.name == "postgresql":
+        if engine.dialect.name == "sqlite":
+            # SQLite migrations - adicionar colunas IM-SEO/IM-SEOIA
+            print("[MIGRATION] Starting SQLite migration for IM metrics...")
+            with engine.begin() as conn:
+                # Helper para adicionar coluna se não existir
+                def add_column_if_not_exists(table: str, column: str, col_type: str):
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                        print(f"[MIGRATION] Added {table}.{column}")
+                    except Exception as e:
+                        if "duplicate column name" not in str(e).lower():
+                            print(f"[MIGRATION] Warning adding {table}.{column}: {e}")
+                
+                # Adicionar colunas IM-SEO/IM-SEOIA
+                im_columns = [
+                    ("lcp_score", "FLOAT"),
+                    ("fid_score", "FLOAT"),
+                    ("cls_score", "FLOAT"),
+                    ("core_web_vitals_score", "FLOAT"),
+                    ("share_of_voice_serp", "FLOAT"),
+                    ("serp_features_presence", "FLOAT"),
+                    ("ia_resources_detected", "INTEGER"),
+                    ("ia_serp_presence_score", "FLOAT"),
+                    ("long_tail_terms_top10", "INTEGER"),
+                    ("long_tail_terms_top20", "INTEGER"),
+                    ("long_tail_coverage_score", "FLOAT"),
+                    ("eeat_score", "FLOAT"),
+                    ("eeat_expertise", "FLOAT"),
+                    ("eeat_experience", "FLOAT"),
+                    ("eeat_authoritativeness", "FLOAT"),
+                    ("eeat_trustworthiness", "FLOAT"),
+                    ("entities_detected", "INTEGER"),
+                    ("entities_relevance_score", "FLOAT"),
+                    ("entity_connection_score", "FLOAT"),
+                    ("schema_types_detected", "TEXT"),
+                    ("schema_coverage_score", "FLOAT"),
+                    ("schema_valid", "BOOLEAN"),
+                    ("ia_ready_blocks_count", "INTEGER"),
+                    ("ia_ready_score", "FLOAT"),
+                    ("has_lists", "BOOLEAN"),
+                    ("has_faqs", "BOOLEAN"),
+                    ("has_tables", "BOOLEAN"),
+                    ("has_step_by_step", "BOOLEAN"),
+                    ("irzc_score", "FLOAT"),
+                    ("ctr_expected", "FLOAT"),
+                    ("ctr_real", "FLOAT"),
+                    ("ctr_ratio", "FLOAT"),
+                    ("im_seo_score", "FLOAT"),
+                    ("im_seoia_score", "FLOAT"),
+                    ("response_text", "TEXT"),
+                    ("perceived_value_category", "VARCHAR(50)"),
+                    ("semantic_summary", "TEXT"),
+                ]
+
+                for col_name, col_type in im_columns:
+                    add_column_if_not_exists("runs", col_name, col_type)
+
+                serp_columns = [
+                    ("paa_items", "TEXT"),
+                    ("knowledge_panel_json", "TEXT"),
+                    ("ai_overview_json", "TEXT"),
+                ]
+
+                for col_name, col_type in serp_columns:
+                    add_column_if_not_exists("serp_features", col_name, col_type)
+
+                print("[MIGRATION] SQLite migration completed for IM metrics.")
+        
+        elif engine.dialect.name == "postgresql":
             with engine.begin() as conn:  # transaction
                 stmts = [
                     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS tokens_input INTEGER",
@@ -67,6 +138,11 @@ async def on_startup() -> None:
                     # citations.is_ours (booleano) para marcar se o domínio citado é nosso
                     "ALTER TABLE citations ADD COLUMN IF NOT EXISTS is_ours BOOLEAN",
                     "UPDATE citations SET is_ours = FALSE WHERE is_ours IS NULL",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS perceived_value_category VARCHAR(50)",
+                    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS semantic_summary TEXT",
+                    "ALTER TABLE serp_features ADD COLUMN IF NOT EXISTS paa_items TEXT",
+                    "ALTER TABLE serp_features ADD COLUMN IF NOT EXISTS knowledge_panel_json TEXT",
+                    "ALTER TABLE serp_features ADD COLUMN IF NOT EXISTS ai_overview_json TEXT",
                 ]
                 for sql in stmts:
                     conn.execute(text(sql))
@@ -123,6 +199,7 @@ async def on_startup() -> None:
                 ("classification_confidence", "FLOAT"),
                 ("classified_at", "DATETIME"),
                 ("classification_version", "VARCHAR(50)"),
+                ("perceived_value_category", "VARCHAR(50)"),
                 # Métricas Avançadas Zero-Click
                 ("user_intent", "VARCHAR(50)"),
                 ("satisfaction_score", "FLOAT"),
@@ -258,7 +335,137 @@ async def on_startup() -> None:
                 END
             """, "Add citations.is_ours column and backfill false")
 
-            print("[MIGRATION] SQL Server migration completed.")
+            # === MIGRATIONS IM-SEO / IM-SEOIA ===
+            
+            # Criar tabela serp_features
+            _exec_safe("""
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='serp_features' and xtype='U')
+                BEGIN
+                    CREATE TABLE serp_features (
+                        id VARCHAR(50) PRIMARY KEY,
+                        run_id VARCHAR(50) NOT NULL,
+                        has_featured_snippet BIT DEFAULT 0,
+                        has_paa BIT DEFAULT 0,
+                        has_knowledge_panel BIT DEFAULT 0,
+                        has_ai_overview BIT DEFAULT 0,
+                        has_local_pack BIT DEFAULT 0,
+                        has_video_carousel BIT DEFAULT 0,
+                        has_image_pack BIT DEFAULT 0,
+                        featured_snippet_content NVARCHAR(MAX),
+                        paa_questions NVARCHAR(MAX),
+                        paa_items NVARCHAR(MAX),
+                        knowledge_panel_json NVARCHAR(MAX),
+                        ai_overview_json NVARCHAR(MAX),
+                        organic_position INT,
+                        competitors_in_top10 INT DEFAULT 0,
+                        created_at DATETIME DEFAULT GETDATE(),
+                        FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX ix_serp_features_run_id ON serp_features(run_id);
+                END
+            """, "Create serp_features table")
+
+            # Criar tabela entities
+            _exec_safe("""
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='entities' and xtype='U')
+                BEGIN
+                    CREATE TABLE entities (
+                        id VARCHAR(50) PRIMARY KEY,
+                        run_id VARCHAR(50) NOT NULL,
+                        name NVARCHAR(255) NOT NULL,
+                        entity_type VARCHAR(50),
+                        salience_score FLOAT,
+                        mentions_count INT DEFAULT 1,
+                        created_at DATETIME DEFAULT GETDATE(),
+                        FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX ix_entities_run_id ON entities(run_id);
+                END
+            """, "Create entities table")
+
+            _exec_safe("""
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='run_semantic_insights' and xtype='U')
+                BEGIN
+                    CREATE TABLE run_semantic_insights (
+                        run_id VARCHAR(50) PRIMARY KEY,
+                        payload NVARCHAR(MAX) NOT NULL,
+                        created_at DATETIME DEFAULT GETDATE(),
+                        updated_at DATETIME DEFAULT GETDATE(),
+                        FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+                    );
+                END
+            """, "Create run_semantic_insights table")
+
+            # Adicionar campos de Performance (Core Web Vitals) em runs
+            im_seo_columns = [
+                ("lcp_score", "FLOAT"),
+                ("fid_score", "FLOAT"),
+                ("cls_score", "FLOAT"),
+                ("core_web_vitals_score", "FLOAT"),
+                ("share_of_voice_serp", "FLOAT"),
+                ("serp_features_presence", "FLOAT"),
+                ("ia_resources_detected", "INT"),
+                ("ia_serp_presence_score", "FLOAT"),
+                ("long_tail_terms_top10", "INT"),
+                ("long_tail_terms_top20", "INT"),
+                ("long_tail_coverage_score", "FLOAT"),
+                ("eeat_score", "FLOAT"),
+                ("eeat_expertise", "FLOAT"),
+                ("eeat_experience", "FLOAT"),
+                ("eeat_authoritativeness", "FLOAT"),
+                ("eeat_trustworthiness", "FLOAT"),
+                ("entities_detected", "INT"),
+                ("entities_relevance_score", "FLOAT"),
+                ("entity_connection_score", "FLOAT"),
+                ("schema_types_detected", "NVARCHAR(MAX)"),
+                ("schema_coverage_score", "FLOAT"),
+                ("schema_valid", "BIT"),
+                ("ia_ready_blocks_count", "INT"),
+                ("ia_ready_score", "FLOAT"),
+                ("has_lists", "BIT"),
+                ("has_faqs", "BIT"),
+                ("has_tables", "BIT"),
+                ("has_step_by_step", "BIT"),
+                ("irzc_score", "FLOAT"),
+                ("ctr_expected", "FLOAT"),
+                ("ctr_real", "FLOAT"),
+                ("ctr_ratio", "FLOAT"),
+                ("im_seo_score", "FLOAT"),
+                ("im_seoia_score", "FLOAT"),
+                ("response_text", "NVARCHAR(MAX)"),
+                ("perceived_value_category", "VARCHAR(50)"),
+                ("semantic_summary", "NVARCHAR(MAX)"),
+            ]
+
+            for col_name, col_type in im_seo_columns:
+                _exec_safe(f"""
+                    IF NOT EXISTS (
+                        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'runs' AND COLUMN_NAME = '{col_name}'
+                    )
+                    BEGIN
+                        ALTER TABLE dbo.runs ADD {col_name} {col_type} NULL;
+                    END
+                """, f"Add runs.{col_name} column for IM metrics")
+
+            serp_feature_columns = [
+                ("paa_items", "NVARCHAR(MAX)"),
+                ("knowledge_panel_json", "NVARCHAR(MAX)"),
+                ("ai_overview_json", "NVARCHAR(MAX)"),
+            ]
+
+            for col_name, col_type in serp_feature_columns:
+                _exec_safe(f"""
+                    IF NOT EXISTS (
+                        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'serp_features' AND COLUMN_NAME = '{col_name}'
+                    )
+                    BEGIN
+                        ALTER TABLE dbo.serp_features ADD {col_name} {col_type} NULL;
+                    END
+                """, f"Add serp_features.{col_name} column")
+
+            print("[MIGRATION] SQL Server migration completed (including IM-SEO/IM-SEOIA).")
     except Exception:
         # tolerar ambiente que não suporte IF NOT EXISTS
         pass
@@ -280,3 +487,6 @@ def health() -> dict:
 
 
 app.include_router(api_router, prefix="/api")
+app.include_router(search_console_router)
+app.include_router(analytics_router, prefix="/api/analytics")
+app.include_router(export_router, prefix="/api")

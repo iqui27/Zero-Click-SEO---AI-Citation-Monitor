@@ -55,7 +55,7 @@ export default function Dashboard() {
         <h1 className="text-3xl font-semibold tracking-tight">Analytics</h1>
         <Button variant="secondary" className="ml-auto" onClick={() => window.location.href = '/runs'}>Nova Run</Button>
       </div>
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {overview ? (
           <>
             <KpiCard title="AMR" value={(overview.amr_avg * 100).toFixed(0) + '%'} subtitle="Absolute Mention Rate" barColor="bg-blue-500" />
@@ -70,7 +70,7 @@ export default function Dashboard() {
           </>
         )}
       </div>
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {costs ? (
           <>
             <KpiCard title="Custo (30d)" value={`$${(costs.total_cost_usd || 0).toFixed(4)}`} subtitle="Soma aproximada" barColor="bg-amber-500" />
@@ -85,11 +85,11 @@ export default function Dashboard() {
           </>
         )}
       </div>
-      <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
           <div className="text-sm opacity-70 mb-2">Evolução Temporal</div>
           {series ? (
-            <div style={{ height: 280 }}>
+            <div style={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={series} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -108,7 +108,7 @@ export default function Dashboard() {
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
           <div className="text-sm opacity-70 mb-2">Top Domínios Citados</div>
           {topDomains ? (
-            <div style={{ height: 300 }}>
+            <div style={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={topDomains} layout="vertical" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -125,7 +125,7 @@ export default function Dashboard() {
       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
         <div className="text-sm opacity-70 mb-2">Desempenho por Engine</div>
         {perf ? (
-          <div style={{ height: 300 }}>
+          <div style={{ height: 350 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={perf} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />

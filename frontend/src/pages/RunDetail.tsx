@@ -1,16 +1,18 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getRun, getRunReport, getRunEvidences, getRunEvents, createRun, getUrlTitle, openRunStream } from '../lib/api'
+import { getRun, getRunReport, getRunEvidences, getRunEvents, createRun, getUrlTitle, openRunStream, getRunSemanticInsights } from '../lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '../components/ui/button'
+import { Badge } from '../components/ui/badge'
 import { formatNumberCompact } from '../lib/utils'
 import { AiOverview } from '../components/AiOverview'
 import { Toaster, toast } from 'sonner'
-import { Search, Bot, Camera, Globe } from 'lucide-react'
+import { Search, Bot, Camera, Globe, Target, Zap } from 'lucide-react'
+import { IMMetricsCard } from '../components/IMMetricsCard'
 
 // API base handled by centralized api.ts
 
@@ -53,6 +55,13 @@ type RunDetail = {
   schedule_index_today?: number
   schedule_total_today?: number
   schedule_source?: 'manual'|'monitor'|'monitor_now'
+}
+
+const perceptionLabels: Record<string, string> = {
+  inovacao: 'Inovação & tecnologia',
+  tradicao: 'Tradição & segurança',
+  custo: 'Baixo custo',
+  atendimento: 'Atendimento & relacionamento',
 }
 
 // helper simples para renderizar markdown minimalista
@@ -105,30 +114,33 @@ const getFavicon = (url?: string) => {
     return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`
   } catch { return '' }
 }
-
 export default function RunDetail() {
   const { id } = useParams()
   const [report, setReport] = useState<Report | null>(null)
   const [evidences, setEvidences] = useState<Evidence[]>([])
   const [events, setEvents] = useState<EventItem[]>([])
   const [detail, setDetail] = useState<RunDetail | null>(null)
-  const [useSearch, setUseSearch] = useState<boolean>(true)
+  const [streamText, setStreamText] = useState('')
+  const [titles, setTitles] = useState<Record<string, string>>({})
   const [reprocessing, setReprocessing] = useState(false)
-  const [streamText, setStreamText] = useState<string>('')
-  const [selectedCycle, setSelectedCycle] = useState<number>(1)
+  const [useSearch, setUseSearch] = useState(false)
+  const [selectedCycle, setSelectedCycle] = useState(1)
+  const [imMetrics, setImMetrics] = useState<any>(null)
+  const [loadingMetrics, setLoadingMetrics] = useState(false)
+  const [semantic, setSemantic] = useState<any>(null)
   const esRef = useRef<EventSource | null>(null)
   const pollRef = useRef<number | null>(null)
   const lastTsRef = useRef<string | null>(null)
   const [hasLiveEvents, setHasLiveEvents] = useState(false)
-  const [titles, setTitles] = useState<Record<string, string>>({})
 
   const fetchAllData = async () => {
     if (!id) return
     try {
-      const [r1, r2, r4] = await Promise.allSettled([
+      const [r1, r2, r4, r5] = await Promise.allSettled([
         getRunReport(id),
         getRunEvidences(id),
         getRun(id),
+        getRunSemanticInsights(id),
       ])
       if (r1.status === 'fulfilled' && r1.value) setReport(r1.value)
       if (r2.status === 'fulfilled' && r2.value) setEvidences(r2.value)
@@ -137,11 +149,33 @@ export default function RunDetail() {
         const cfg = r4.value.engine?.config_json || {}
         setUseSearch(cfg.use_search !== false)
       }
-    } catch {}
+      if (r5.status === 'fulfilled' && r5.value) {
+        setSemantic(r5.value)
+      }
+    } catch (e) {
+      console.error('fetchAllData error:', e)
+    }
+  }
+
+  const fetchIMMetrics = async () => {
+    if (!id) return
+    setLoadingMetrics(true)
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/runs/${id}/metrics`)
+      if (response.ok) {
+        const data = await response.json()
+        setImMetrics(data)
+      }
+    } catch (e) {
+      console.error('Failed to load IM metrics:', e)
+    } finally {
+      setLoadingMetrics(false)
+    }
   }
 
   useEffect(() => {
     fetchAllData()
+    fetchIMMetrics()
   }, [id])
 
   useEffect(() => {
@@ -377,6 +411,32 @@ export default function RunDetail() {
     }
   } catch {}
 
+  const semanticPayload = semantic?.payload || null
+  const semanticPerception = semanticPayload?.perception || {}
+  const semanticSummaryText = semantic?.semantic_summary || semanticPayload?.summary?.headline || ''
+  const semanticSummaryBullets = Array.isArray(semanticPayload?.summary?.bullets)
+    ? semanticPayload.summary.bullets.slice(0, 4)
+    : []
+  const semanticBrandEntities = Array.isArray(semanticPayload?.entities)
+    ? semanticPayload.entities
+        .filter((entity: any) => Array.isArray(entity?.roles) && entity.roles.some((role: string) => role.toLowerCase() === 'brand'))
+        .slice(0, 5)
+    : []
+  const semanticCompetitorsList = Array.isArray(semanticPayload?.competitors)
+    ? semanticPayload.competitors.slice(0, 6)
+    : []
+  const derivedCompetitors = Array.isArray(semanticPayload?.entities)
+    ? semanticPayload.entities
+        .filter((entity: any) => Array.isArray(entity?.roles) && entity.roles.some((role: string) => role.toLowerCase() === 'competitor'))
+        .slice(0, 6)
+    : []
+  const semanticKeywords = Array.isArray(semanticPayload?.keywords)
+    ? semanticPayload.keywords.slice(0, 12)
+    : []
+  const competitorsToShow = semanticCompetitorsList.length ? semanticCompetitorsList : derivedCompetitors
+  const maxKeywordWeight = Math.max(1, ...semanticKeywords.map((kw: any) => (kw?.weight || 0) > 0 ? kw.weight : 0.5))
+  const semanticUpdatedAt = semantic?.updated_at ? new Date(semantic.updated_at).toLocaleString() : null
+
   return (
     <div className="space-y-6">
       <Toaster richColors position="top-right" />
@@ -453,6 +513,11 @@ export default function RunDetail() {
         <span className={`px-2 py-0.5 rounded-md border ${wsUsed ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'border-neutral-300 dark:border-neutral-700'}`}>Web search: {wsUsed ? 'on' : 'off'}</span>
         {typeof wsCalls === 'number' && <span className="px-2 py-0.5 border rounded-md">calls: {wsCalls}</span>}
         {ctxSize && <span className="px-2 py-0.5 border rounded-md">ctx: {ctxSize}</span>}
+        {semantic?.perceived_value_category && (
+          <span className="px-2 py-0.5 rounded-md border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-200">
+            Valor: {perceptionLabels[semantic.perceived_value_category] || semantic.perceived_value_category}
+          </span>
+        )}
         {/* Schedule/Monitor badges */}
         {detail?.monitor_id && (
           <span className="px-2 py-0.5 rounded-md border border-purple-300 dark:border-purple-800 text-purple-700 dark:text-purple-300">Monitor</span>
@@ -467,6 +532,112 @@ export default function RunDetail() {
           <span className="px-2 py-0.5 rounded-md border">{detail?.schedule_index_today}/{detail?.schedule_total_today}</span>
         )}
       </div>
+
+      <section>
+        <div className="flex flex-wrap items-start gap-3 mb-3">
+          <div className="flex-1">
+            <h2 className="text-lg font-medium">Insights semânticos</h2>
+            <p className="text-xs text-muted-foreground">
+              Entidades, keywords e percepção extraídos do AI Overview via Gemini.
+            </p>
+          </div>
+          {semanticUpdatedAt && (
+            <span className="text-xs text-muted-foreground">Atualizado em {semanticUpdatedAt}</span>
+          )}
+        </div>
+        {semanticPayload ? (
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="border rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 space-y-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Resumo executivo</h3>
+                {semanticPerception?.confidence && (
+                  <Badge variant="secondary" className="text-xs">
+                    confiança {(semanticPerception.confidence * 100).toFixed(0)}%
+                  </Badge>
+                )}
+              </div>
+              {semanticSummaryText ? (
+                <p className="text-sm leading-relaxed">{semanticSummaryText}</p>
+              ) : (
+                <p className="text-sm opacity-70">Sem resumo disponível.</p>
+              )}
+              {semanticSummaryBullets.length > 0 && (
+                <ul className="list-disc pl-4 text-xs space-y-1">
+                  {semanticSummaryBullets.map((bullet, idx) => (
+                    <li key={idx}>{bullet}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 space-y-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Marcas &amp; percepção</h3>
+                {semanticPerception?.primary_category && (
+                  <Badge variant="outline" className="capitalize text-xs">
+                    {perceptionLabels[semanticPerception.primary_category] || semanticPerception.primary_category}
+                  </Badge>
+                )}
+              </div>
+              {semanticBrandEntities.length ? (
+                <ul className="space-y-1 text-sm">
+                  {semanticBrandEntities.map((entity: any) => (
+                    <li key={entity.name} className="flex items-center justify-between gap-2">
+                      <span>{entity.name}</span>
+                      {typeof entity.confidence === 'number' && (
+                        <span className="text-xs text-muted-foreground">conf {(entity.confidence * 100).toFixed(0)}%</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm opacity-70">Nenhuma marca destacada.</div>
+              )}
+              {competitorsToShow.length > 0 && (
+                <div>
+                  <h4 className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Concorrentes</h4>
+                  <ul className="space-y-1 text-xs">
+                    {competitorsToShow.map((competitor: any, idx: number) => (
+                      <li key={`${competitor.name || idx}`} className="flex items-center justify-between">
+                        <span>{competitor.name || '—'}</span>
+                        {competitor.mentions && (
+                          <span className="text-muted-foreground">{competitor.mentions} menc.</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="border rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 space-y-3">
+              <h3 className="text-sm font-semibold">Palavras-chave</h3>
+              {semanticKeywords.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {semanticKeywords.map((kw: any) => {
+                    const norm = Math.max(0.25, (kw.weight || 0.5) / maxKeywordWeight)
+                    const fontSize = 0.85 + norm * 1.2
+                    return (
+                      <span
+                        key={kw.token}
+                        className="rounded-full px-2 py-1 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-50"
+                        style={{ fontSize: `${fontSize}rem`, opacity: 0.6 + norm * 0.4 }}
+                        title={`Marcas: ${kw.brands?.join(', ') || '—'}${kw.competitors?.length ? ` | Concorrentes: ${kw.competitors.join(', ')}` : ''}`}
+                      >
+                        {kw.token}
+                      </span>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="text-sm opacity-70">Sem palavras-chave relevantes.</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm opacity-70 border rounded-lg p-6 text-center">
+            Insights semânticos ainda não disponíveis para esta run.
+          </div>
+        )}
+      </section>
 
       <section className="grid gap-2">
         <Toolbelt events={eventsForView.length ? eventsForView : events} />
@@ -568,6 +739,29 @@ export default function RunDetail() {
             <div className="text-sm opacity-70 border rounded-lg p-4">Nenhuma citação.</div>
           )}
         </div>
+      </section>
+
+      {/* Métricas IM-SEO e IM-SEOIA */}
+      <section>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <Target className="h-5 w-5 text-purple-600" />
+            <h2 className="text-lg font-medium">Métricas IM-SEO & IM-SEOIA</h2>
+          </div>
+          <Zap className="h-4 w-4 text-blue-500" />
+        </div>
+        {loadingMetrics ? (
+          <div className="text-sm opacity-70 border rounded-lg p-8 text-center">
+            Carregando métricas...
+          </div>
+        ) : imMetrics ? (
+          <IMMetricsCard metrics={imMetrics} />
+        ) : (
+          <div className="text-sm opacity-70 border rounded-lg p-8 text-center">
+            <p className="mb-2">Métricas IM não disponíveis para esta run.</p>
+            <p className="text-xs">As métricas são calculadas automaticamente em novas runs.</p>
+          </div>
+        )}
       </section>
 
       <section>

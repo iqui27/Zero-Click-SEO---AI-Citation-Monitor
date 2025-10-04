@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
 
 
@@ -103,6 +103,10 @@ class RunOut(BaseModel):
     classification_confidence: Optional[float] = None
     classified_at: Optional[datetime] = None
     classification_version: Optional[str] = None
+    perceived_value_category: Optional[str] = None
+    semantic_summary: Optional[str] = None
+    perceived_value_category: Optional[str] = None
+    semantic_summary: Optional[str] = None
 
 
 class RunListItem(BaseModel):
@@ -146,9 +150,13 @@ class RunListItem(BaseModel):
     financial_value_score: Optional[float] = None
     content_gap_detected: Optional[bool] = None
     conversion_potential: Optional[str] = None
+    perceived_value_category: Optional[str] = None
+    semantic_summary: Optional[str] = None
 
 
 class RunDetailOut(BaseModel):
+    model_config = {"from_attributes": True}
+    
     id: str
     project_id: str
     prompt_version_id: str
@@ -193,6 +201,72 @@ class RunDetailOut(BaseModel):
     financial_value_score: Optional[float] = None
     content_gap_detected: Optional[bool] = None
     conversion_potential: Optional[str] = None
+    
+    # === MÉTRICAS IM-SEO / IM-SEOIA ===
+    # Índices Compostos
+    im_seo_score: Optional[float] = None
+    im_seoia_score: Optional[float] = None
+    
+    # Performance (Core Web Vitals)
+    lcp_score: Optional[float] = None
+    fid_score: Optional[float] = None
+    cls_score: Optional[float] = None
+    core_web_vitals_score: Optional[float] = None
+    
+    # Tráfego
+    share_of_voice_serp: Optional[float] = None
+    serp_features_presence: Optional[float] = None
+    
+    # IA - Recursos de SERP
+    ia_resources_detected: Optional[int] = None
+    ia_serp_presence_score: Optional[float] = None
+    
+    # Long-tail
+    long_tail_terms_top10: Optional[int] = None
+    long_tail_terms_top20: Optional[int] = None
+    long_tail_coverage_score: Optional[float] = None
+    
+    # E-E-A-T
+    eeat_score: Optional[float] = None
+    eeat_expertise: Optional[float] = None
+    eeat_experience: Optional[float] = None
+    eeat_authoritativeness: Optional[float] = None
+    eeat_trustworthiness: Optional[float] = None
+    
+    # Entidades
+    entities_detected: Optional[int] = None
+    entities_relevance_score: Optional[float] = None
+    entity_connection_score: Optional[float] = None
+    
+    # Schema
+    schema_types_detected: Optional[str] = None
+    schema_coverage_score: Optional[float] = None
+    
+    # IA-Ready Blocks
+    ia_ready_score: Optional[float] = None
+    ia_ready_blocks_count: Optional[int] = None
+    has_lists: Optional[bool] = None
+    has_faqs: Optional[bool] = None
+    has_tables: Optional[bool] = None
+    has_step_by_step: Optional[bool] = None
+    
+    # IRZC
+    irzc_score: Optional[float] = None
+    ctr_expected: Optional[float] = None
+    ctr_real: Optional[float] = None
+    ctr_ratio: Optional[float] = None
+    
+    # Posição Orgânica (do SerpAPI)
+    organic_position: Optional[int] = None
+    competitors_top10: Optional[int] = None
+
+
+class RunSemanticInsightOut(BaseModel):
+    run_id: str
+    perceived_value_category: Optional[str] = None
+    semantic_summary: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    updated_at: Optional[datetime] = None
 
 
 class CitationOut(BaseModel):
