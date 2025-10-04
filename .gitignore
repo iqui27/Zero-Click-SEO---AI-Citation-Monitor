@@ -28,6 +28,7 @@ venv/
 ENV/
 *.egg-info/
 .eggs/
+.codex_backend_env311/
 
 # Node/JS
 node_modules/
