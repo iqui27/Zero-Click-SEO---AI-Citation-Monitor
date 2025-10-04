@@ -70,6 +70,7 @@ jobs:
         GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
         PERPLEXITY_API_KEY=${{ secrets.PERPLEXITY_API_KEY }}
         SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+        PAGESPEED_API_KEY=${{ secrets.PAGESPEED_API_KEY }}
         CORS_ORIGINS=http://'$ORACLE_HOST',http://localhost:3000
         SECURE_COOKIES=false
         SESSION_TIMEOUT=3600
@@ -92,6 +93,10 @@ jobs:
     - name: Build and start services
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml build && sudo docker compose -f docker-compose.prod.yml up -d'
+        
+    - name: Restart nginx to refresh container IPs
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml restart reverse-proxy'
         
     - name: Wait for services to start
       run: |
