@@ -222,7 +222,33 @@ class GeminiSemanticService:
         response_text: str,
         citations_text: str,
         project_name: Optional[str] = None,
+        simplified: bool = False,
     ) -> str:
+        # Prompt simplificado para retry (mais neutro, menos chance de bloqueio)
+        if simplified:
+            return f"""
+Analise o seguinte texto e extraia informações estruturadas em formato JSON.
+
+Texto para análise:
+{response_text[:1500]}
+
+Retorne APENAS um objeto JSON com esta estrutura:
+{{
+  "entities": [
+    {{"name": "nome", "category": "brand|product|other", "confidence": 0.8}}
+  ],
+  "keywords": [
+    {{"token": "palavra", "weight": 0.7}}
+  ],
+  "summary": {{
+    "headline": "resumo breve"
+  }}
+}}
+
+Importante: Retorne APENAS o JSON, sem texto adicional.
+"""
+        
+        # Prompt completo normal
         brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
 
         return f"""
@@ -317,37 +343,55 @@ Observação: Alguns dados podem estar incompletos.
         response_text: str,
         citations: Optional[List[Dict[str, Any]]] = None,
         project_name: Optional[str] = None,
+        max_retries: int = 2,
     ) -> Dict[str, Any]:
         citations = citations or []
         citations_text = self._format_citations(citations)
-        prompt = self.build_prompt(
-            question=question,
-            response_text=response_text,
-            citations_text=citations_text,
-            project_name=project_name,
-        )
-
-        try:
-            response = self.model.generate_content(prompt)
-        except Exception as e:
-            print(f"[SEMANTIC] Erro ao chamar Gemini API: {e}")
-            print(f"[SEMANTIC] Retornando estrutura vazia devido a erro de API")
-            return self._get_empty_structure()
         
-        # Verificar finish_reason para detectar bloqueios
-        if response.candidates:
-            candidate = response.candidates[0]
-            finish_reason = getattr(candidate, "finish_reason", None)
+        # Tentar com prompt normal primeiro, depois com prompt simplificado
+        for attempt in range(max_retries):
+            # No retry, usar prompt mais neutro/simplificado
+            use_simplified = attempt > 0
             
-            # finish_reason 2 = SAFETY (bloqueado por filtro de segurança)
-            # finish_reason 3 = RECITATION (bloqueado por recitação)
-            # finish_reason 4 = OTHER (outros bloqueios)
-            if finish_reason in [2, 3, 4]:
-                reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
-                reason_name = reason_names.get(finish_reason, str(finish_reason))
-                print(f"[SEMANTIC] Gemini bloqueou resposta: finish_reason={reason_name}")
-                print(f"[SEMANTIC] Retornando estrutura vazia devido a bloqueio")
+            prompt = self.build_prompt(
+                question=question,
+                response_text=response_text,
+                citations_text=citations_text,
+                project_name=project_name,
+                simplified=use_simplified,
+            )
+
+            try:
+                response = self.model.generate_content(prompt)
+            except Exception as e:
+                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Erro ao chamar Gemini API: {e}")
+                if attempt < max_retries - 1:
+                    continue  # Tentar novamente
+                print(f"[SEMANTIC] Todas as tentativas falharam. Retornando estrutura vazia.")
                 return self._get_empty_structure()
+            
+            # Verificar finish_reason para detectar bloqueios
+            if response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = getattr(candidate, "finish_reason", None)
+                
+                # finish_reason 2 = SAFETY (bloqueado por filtro de segurança)
+                # finish_reason 3 = RECITATION (bloqueado por recitação)
+                # finish_reason 4 = OTHER (outros bloqueios)
+                if finish_reason in [2, 3, 4]:
+                    reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
+                    reason_name = reason_names.get(finish_reason, str(finish_reason))
+                    print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini bloqueou resposta: finish_reason={reason_name}")
+                    
+                    if attempt < max_retries - 1:
+                        print(f"[SEMANTIC] Tentando novamente com prompt simplificado...")
+                        continue  # Tentar com prompt simplificado
+                    
+                    print(f"[SEMANTIC] Todas as tentativas bloqueadas. Retornando estrutura vazia.")
+                    return self._get_empty_structure()
+            
+            # Se chegou aqui, não foi bloqueado - continuar processamento
+            break
         
         # Tentar obter texto da resposta
         raw_text = None
