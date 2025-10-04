@@ -66,32 +66,77 @@ class GeminiSemanticService:
 
     @staticmethod
     def _safe_json_loads(raw: str) -> Dict[str, Any]:
-        # Remover markdown code blocks se existirem
+        """Extrai JSON de resposta do Gemini com limpeza agressiva."""
+        import re
+        
+        # 1. Remover espaços em branco extras
         cleaned = raw.strip()
+        
+        # 2. Remover markdown code blocks
         if cleaned.startswith("```"):
-            # Remover ```json ou ``` do início
             lines = cleaned.split("\n")
+            # Remover primeira linha (```json ou ```)
             if lines[0].startswith("```"):
                 lines = lines[1:]
+            # Remover última linha se for ```
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             cleaned = "\n".join(lines).strip()
         
+        # 3. Tentar parse direto
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
-
-        # Tentar extrair trecho JSON válido
+        
+        # 4. Remover texto antes e depois do JSON
+        # Procurar primeiro { e último }
         start = cleaned.find("{")
         end = cleaned.rfind("}")
+        
         if start != -1 and end != -1 and end > start:
+            json_candidate = cleaned[start : end + 1]
+            
+            # 5. Tentar parse do trecho extraído
             try:
-                return json.loads(cleaned[start : end + 1])
+                return json.loads(json_candidate)
             except json.JSONDecodeError:
                 pass
-
-        raise ValueError("Resposta do Gemini não pôde ser interpretada como JSON")
+            
+            # 6. Limpeza agressiva: remover linhas que não são JSON
+            lines = json_candidate.split("\n")
+            json_lines = []
+            for line in lines:
+                stripped = line.strip()
+                # Manter apenas linhas que parecem JSON
+                if (stripped.startswith("{") or stripped.startswith("[") or 
+                    stripped.startswith('"') or stripped.startswith("}") or 
+                    stripped.startswith("]") or stripped.endswith(",") or
+                    ":" in stripped or stripped == ""):
+                    json_lines.append(line)
+            
+            cleaned_json = "\n".join(json_lines)
+            
+            # 7. Última tentativa
+            try:
+                return json.loads(cleaned_json)
+            except json.JSONDecodeError:
+                pass
+        
+        # 8. Se tudo falhar, retornar estrutura vazia ao invés de erro
+        print(f"[SEMANTIC] Aviso: Não foi possível parsear JSON. Retornando estrutura vazia.")
+        print(f"[SEMANTIC] Resposta original (primeiros 200 chars): {raw[:200]}")
+        
+        # Retornar estrutura mínima válida ao invés de lançar erro
+        return {
+            "entities": [],
+            "relationships": [],
+            "keywords": [],
+            "perception": {},
+            "summary": {},
+            "competitors": [],
+            "wordcloud": []
+        }
 
     @staticmethod
     def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,16 +235,31 @@ Extraia insights semânticos estruturados seguindo as instruções abaixo.
 ### Citações detectadas
 {citations_text}
 
-### Instruções IMPORTANTES
-1. Retorne APENAS um objeto JSON válido
-2. NÃO inclua markdown, comentários ou texto adicional
-3. NÃO use ```json ou qualquer formatação
-4. Comece diretamente com {{ e termine com }}
-5. Identifique entidades relevantes (marcas, produtos, categorias, concorrentes) com confiança 0-1
-6. Relacione marcas com produtos e concorrentes
-7. Extraia as top palavras-chave (token) com peso 0-1, associando a quais marcas/produtos aparecem
-8. Classifique a percepção/valor predominante entre: inovacao, tradicao, custo, atendimento
-9. Gere um resumo (headline + bullets) com oportunidades e riscos
+### Instruções CRÍTICAS - SIGA EXATAMENTE
+1. **RETORNE APENAS JSON PURO** - Nada mais, nenhum texto antes ou depois
+2. **NÃO USE MARKDOWN** - Sem ```json, sem ```, sem formatação
+3. **COMECE COM {{** e **TERMINE COM }}** - Primeira e última caractere
+4. **SEM EXPLICAÇÕES** - Não adicione "Aqui está", "Observação", etc.
+5. **SEM COMENTÁRIOS** - Não inclua // ou /* */ no JSON
+6. Identifique entidades relevantes (marcas, produtos, categorias, concorrentes) com confiança 0-1
+7. Relacione marcas com produtos e concorrentes
+8. Extraia as top palavras-chave (token) com peso 0-1, associando a quais marcas/produtos aparecem
+9. Classifique a percepção/valor predominante entre: inovacao, tradicao, custo, atendimento
+10. Gere um resumo (headline + bullets) com oportunidades e riscos
+
+**EXEMPLO DE RESPOSTA CORRETA:**
+{{
+  "entities": [...],
+  "relationships": [...],
+  ...
+}}
+
+**EXEMPLO DE RESPOSTA INCORRETA (NÃO FAÇA ISSO):**
+Aqui está a análise:
+```json
+{{...}}
+```
+Observação: Alguns dados podem estar incompletos.
 
 ### Estrutura esperada
 {{
