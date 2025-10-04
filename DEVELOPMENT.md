@@ -141,9 +141,12 @@ For background task processing:
 # Using Docker Compose (included in docker compose up)
 docker compose up worker
 
-# Or manually
+# Listen to both queues (runs + celery) when debugging manual workers
+docker compose exec worker bash -lc "celery -A celery_app.celery_app worker -Q runs,celery -l info"
+
+# Or manually (outside Docker)
 cd backend
-celery -A main.celery worker --loglevel=info
+celery -A main.celery worker --queues runs,celery --loglevel=info
 ```
 
 ## Development Workflow
@@ -183,6 +186,14 @@ docker compose exec api alembic revision --autogenerate -m "description"
 ```bash
 # Connect to PostgreSQL
 docker compose exec postgres psql -U postgres -d seo_analyzer_dev
+```
+
+#### Semantic Insights Backfill
+```bash
+# Reprocessa runs recentes para gerar entidades/wordcloud/percepção via Gemini
+docker compose exec backend bash -lc "PYTHONPATH=/app python scripts/backfill_semantic_insights.py --days 30"
+
+# Ajuste o parâmetro --project ou --limit conforme necessário
 ```
 
 ### 4. Testing

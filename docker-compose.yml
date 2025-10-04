@@ -11,7 +11,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/app.db}
+      # Forçar SQLite no ambiente local (prod usa Azure SQL)
+      DATABASE_URL: sqlite:////app/data/app.db
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"
@@ -19,6 +20,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       SERPAPI_KEY: ${SERPAPI_KEY}
+      PAGESPEED_API_KEY: ${PAGESPEED_API_KEY}
     ports:
       - "8000:8000"
     depends_on:
@@ -33,7 +35,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/app.db}
+      # Forçar SQLite no ambiente local (prod usa Azure SQL)
+      DATABASE_URL: sqlite:////app/data/app.db
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"
@@ -41,6 +44,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       SERPAPI_KEY: ${SERPAPI_KEY}
+      PAGESPEED_API_KEY: ${PAGESPEED_API_KEY}
     depends_on:
       - redis
     volumes:

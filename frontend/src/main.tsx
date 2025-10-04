@@ -11,6 +11,7 @@ import WorkspacePage from './pages/Workspace'
 import SettingsPage from './pages/Settings'
 import MonitorsPage from './pages/Monitors'
 import SandboxPage from './pages/Sandbox'
+import IMMetricsDashboard from './pages/IMMetricsDashboard'
 import './index.css'
 import { Button } from './components/ui/button'
 import { Toaster } from 'sonner'
@@ -131,6 +132,7 @@ function Layout() {
           </svg>
         </Link>
         <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
+        <Link to="/im-metrics" className="text-sm opacity-80 hover:opacity-100 font-medium text-purple-600 dark:text-purple-400">📊 IM Metrics</Link>
         <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
         <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
         <Link to="/monitors" className="text-sm opacity-80 hover:opacity-100">Monitores</Link>
@@ -157,7 +159,7 @@ function Layout() {
         </div>
       </nav>
       <main className="py-4">
-        <div className="space-y-4 px-3 sm:px-4 md:px-6 max-w-[1200px] mx-auto">
+        <div className="space-y-4 px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 max-w-[1920px] mx-auto">
           <Outlet />
         </div>
       </main>
@@ -178,6 +180,7 @@ const router = createBrowserRouter([
       { index: true, element: <RootRedirect /> },
       { path: 'runs', element: <Runs /> },
       { path: 'runs/:id', element: <RunDetail /> },
+      { path: 'im-metrics', element: <IMMetricsDashboard /> },
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'projects', element: <ProjectsPage /> },
       { path: 'subprojects', element: <SubprojectsPage /> },

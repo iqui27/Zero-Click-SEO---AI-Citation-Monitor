@@ -14,7 +14,7 @@ import os
 
 from app.db.session import SessionLocal
 from app.core.config import settings
-from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, MonitorHistoryRun, Insight
+from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, MonitorHistoryRun, Insight, RunSemanticInsight
 from app.schemas.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -30,6 +30,7 @@ from app.schemas.schemas import (
     RunOut,
     RunListItem,
     RunDetailOut,
+    RunSemanticInsightOut,
     RunReport,
     CitationOut,
     EvidenceOut,
@@ -1304,6 +1305,8 @@ def list_runs(
             Run.trust_source,
             Run.brand_positioning,
             Run.classification_confidence,
+            Run.perceived_value_category,
+            Run.semantic_summary,
             # Usando subquery mais eficiente para template_name
             literal_column("'-'").label("template_name"),
             literal_column("NULL").label("template_category"),
@@ -1396,6 +1399,8 @@ def list_runs(
             trust_source=getattr(r, "trust_source", None),
             brand_positioning=getattr(r, "brand_positioning", None),
             classification_confidence=getattr(r, "classification_confidence", None),
+            perceived_value_category=getattr(r, "perceived_value_category", None),
+            semantic_summary=getattr(r, "semantic_summary", None),
         )
         for r in rows
     ]
@@ -1705,6 +1710,18 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         finished_at=run.finished_at,
         subproject_id=run.subproject_id,
         prompt_text=prompt_text,
+        response_type=run.response_type,
+        sufficiency_level=run.sufficiency_level,
+        actionability_type=run.actionability_type,
+        trust_source=run.trust_source,
+        brand_positioning=run.brand_positioning,
+        question_type=run.question_type,
+        funnel_stage=run.funnel_stage,
+        classification_confidence=run.classification_confidence,
+        classified_at=run.classified_at,
+        classification_version=run.classification_version,
+        perceived_value_category=run.perceived_value_category,
+        semantic_summary=run.semantic_summary,
         model_name=run.model_name,
         tokens_input=run.tokens_input,
         tokens_output=run.tokens_output,
@@ -1719,6 +1736,59 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         schedule_index_today=run.schedule_index_today,
         schedule_total_today=run.schedule_total_today,
         schedule_source=run.schedule_source,
+        # Métricas IM-SEO / IM-SEOIA
+        im_seo_score=run.im_seo_score,
+        im_seoia_score=run.im_seoia_score,
+        lcp_score=run.lcp_score,
+        fid_score=run.fid_score,
+        cls_score=run.cls_score,
+        core_web_vitals_score=run.core_web_vitals_score,
+        share_of_voice_serp=run.share_of_voice_serp,
+        serp_features_presence=run.serp_features_presence,
+        ia_resources_detected=run.ia_resources_detected,
+        ia_serp_presence_score=run.ia_serp_presence_score,
+        long_tail_terms_top10=run.long_tail_terms_top10,
+        long_tail_terms_top20=run.long_tail_terms_top20,
+        long_tail_coverage_score=run.long_tail_coverage_score,
+        eeat_score=run.eeat_score,
+        eeat_expertise=run.eeat_expertise,
+        eeat_experience=run.eeat_experience,
+        eeat_authoritativeness=run.eeat_authoritativeness,
+        eeat_trustworthiness=run.eeat_trustworthiness,
+        entities_detected=run.entities_detected,
+        entities_relevance_score=run.entities_relevance_score,
+        entity_connection_score=run.entity_connection_score,
+        schema_types_detected=run.schema_types_detected,
+        schema_coverage_score=run.schema_coverage_score,
+        ia_ready_score=run.ia_ready_score,
+        ia_ready_blocks_count=run.ia_ready_blocks_count,
+        has_lists=run.has_lists,
+        has_faqs=run.has_faqs,
+        has_tables=run.has_tables,
+        has_step_by_step=run.has_step_by_step,
+        irzc_score=run.irzc_score,
+        ctr_expected=run.ctr_expected,
+        ctr_real=run.ctr_real,
+        ctr_ratio=run.ctr_ratio,
+        organic_position=run.organic_position,
+        competitors_top10=run.competitors_in_top10,
+    )
+
+
+@api_router.get("/runs/{run_id}/semantic-insights", response_model=RunSemanticInsightOut)
+def get_run_semantic_insights(run_id: str, db: Session = Depends(get_db)):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrado")
+
+    insight = db.get(RunSemanticInsight, run_id)
+
+    return RunSemanticInsightOut(
+        run_id=run_id,
+        perceived_value_category=run.perceived_value_category,
+        semantic_summary=run.semantic_summary,
+        payload=insight.payload if insight else None,
+        updated_at=insight.updated_at if insight else None,
     )
 
 
@@ -4185,4 +4255,300 @@ def migrate_existing_classifications_to_gemini(
         "project_id": project_id,
         "limit": limit,
         "completed_at": datetime.utcnow().isoformat()
+    }
+
+
+# === ENDPOINTS IM-SEO / IM-SEOIA ===
+
+@api_router.get("/runs/{run_id}/metrics")
+def get_run_metrics(run_id: str, db: Session = Depends(get_db)):
+    """
+    Retorna todas as métricas IM-SEO e IM-SEOIA de uma run específica.
+    """
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+
+    return {
+        "run_id": run.id,
+        
+        # Índices Compostos
+        "im_seo_score": run.im_seo_score,
+        "im_seoia_score": run.im_seoia_score,
+        
+        # Performance (Core Web Vitals)
+        "core_web_vitals": {
+            "lcp": run.lcp_score,
+            "fid": run.fid_score,
+            "cls": run.cls_score,
+            "score": run.core_web_vitals_score
+        },
+        
+        # Tráfego
+        "traffic": {
+            "share_of_voice": run.share_of_voice_serp,
+            "serp_features_presence": run.serp_features_presence
+        },
+        
+        # IA - E-E-A-T
+        "eeat": {
+            "overall": run.eeat_score,
+            "expertise": run.eeat_expertise,
+            "experience": run.eeat_experience,
+            "authoritativeness": run.eeat_authoritativeness,
+            "trustworthiness": run.eeat_trustworthiness
+        },
+        
+        # IA - Entidades
+        "entities": {
+            "detected": run.entities_detected,
+            "relevance_score": run.entities_relevance_score,
+            "connection_score": run.entity_connection_score
+        },
+        
+        # IA - Blocos IA-Ready
+        "ia_ready": {
+            "score": run.ia_ready_score,
+            "blocks_count": run.ia_ready_blocks_count,
+            "has_lists": run.has_lists,
+            "has_faqs": run.has_faqs,
+            "has_tables": run.has_tables,
+            "has_step_by_step": run.has_step_by_step
+        },
+        
+        # IRZC (Índice de Risco de Zero Click)
+        "irzc": {
+            "score": run.irzc_score,
+            "ctr_expected": run.ctr_expected,
+            "ctr_real": run.ctr_real,
+            "ctr_ratio": run.ctr_ratio
+        }
+    }
+
+
+@api_router.get("/analytics/im-metrics/overview")
+def get_im_metrics_overview(
+    project_id: str = None,
+    subproject_id: str = None,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """
+    Dashboard agregado de métricas IM-SEO e IM-SEOIA.
+    Retorna estatísticas agregadas para o período especificado.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    
+    query = db.query(Run).filter(
+        Run.started_at >= cutoff,
+        Run.status == "completed"
+    )
+    
+    if project_id:
+        query = query.filter(Run.project_id == project_id)
+    if subproject_id:
+        query = query.filter(Run.subproject_id == subproject_id)
+    
+    runs = query.all()
+    
+    if not runs:
+        return {
+            "total_runs": 0,
+            "im_seo_avg": 0,
+            "im_seoia_avg": 0,
+            "date_range": {
+                "start": cutoff.isoformat(),
+                "end": datetime.utcnow().isoformat()
+            },
+            "metrics": {}
+        }
+    
+    # Calcular médias
+    im_seo_scores = [r.im_seo_score for r in runs if r.im_seo_score is not None]
+    im_seoia_scores = [r.im_seoia_score for r in runs if r.im_seoia_score is not None]
+    eeat_scores = [r.eeat_score for r in runs if r.eeat_score is not None]
+    irzc_scores = [r.irzc_score for r in runs if r.irzc_score is not None]
+    cwv_scores = [r.core_web_vitals_score for r in runs if r.core_web_vitals_score is not None]
+    ia_ready_scores = [r.ia_ready_score for r in runs if r.ia_ready_score is not None]
+    
+    return {
+        "total_runs": len(runs),
+        "date_range": {
+            "start": cutoff.isoformat(),
+            "end": datetime.utcnow().isoformat()
+        },
+        
+        "im_seo": {
+            "average": round(sum(im_seo_scores) / len(im_seo_scores), 2) if im_seo_scores else 0,
+            "min": round(min(im_seo_scores), 2) if im_seo_scores else 0,
+            "max": round(max(im_seo_scores), 2) if im_seo_scores else 0
+        },
+        
+        "im_seoia": {
+            "average": round(sum(im_seoia_scores) / len(im_seoia_scores), 2) if im_seoia_scores else 0,
+            "min": round(min(im_seoia_scores), 2) if im_seoia_scores else 0,
+            "max": round(max(im_seoia_scores), 2) if im_seoia_scores else 0
+        },
+        
+        "sub_metrics": {
+            "eeat_avg": round(sum(eeat_scores) / len(eeat_scores), 2) if eeat_scores else 0,
+            "irzc_avg": round(sum(irzc_scores) / len(irzc_scores), 2) if irzc_scores else 0,
+            "cwv_avg": round(sum(cwv_scores) / len(cwv_scores), 2) if cwv_scores else 0,
+            "ia_ready_avg": round(sum(ia_ready_scores) / len(ia_ready_scores), 2) if ia_ready_scores else 0
+        },
+        
+        "distribution": {
+            "im_seo_ranges": {
+                "excellent (80-100)": len([s for s in im_seo_scores if s >= 80]),
+                "good (60-79)": len([s for s in im_seo_scores if 60 <= s < 80]),
+                "fair (40-59)": len([s for s in im_seo_scores if 40 <= s < 60]),
+                "poor (0-39)": len([s for s in im_seo_scores if s < 40])
+            },
+            "im_seoia_ranges": {
+                "excellent (80-100)": len([s for s in im_seoia_scores if s >= 80]),
+                "good (60-79)": len([s for s in im_seoia_scores if 60 <= s < 80]),
+                "fair (40-59)": len([s for s in im_seoia_scores if 40 <= s < 60]),
+                "poor (0-39)": len([s for s in im_seoia_scores if s < 40])
+            }
+        }
+    }
+
+
+@api_router.get("/analytics/im-metrics/series")
+def get_im_metrics_timeseries(
+    project_id: str = None,
+    subproject_id: str = None,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """
+    Série temporal de métricas IM-SEO e IM-SEOIA para gráficos.
+    Agrupa por dia e retorna médias diárias.
+    """
+    from collections import defaultdict
+    
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    
+    query = db.query(Run).filter(
+        Run.started_at >= cutoff,
+        Run.status == "completed"
+    )
+    
+    if project_id:
+        query = query.filter(Run.project_id == project_id)
+    if subproject_id:
+        query = query.filter(Run.subproject_id == subproject_id)
+    
+    runs = query.order_by(Run.started_at).all()
+    
+    # Agregar por dia
+    daily_data = defaultdict(lambda: {
+        "im_seo": [],
+        "im_seoia": [],
+        "irzc": [],
+        "eeat": []
+    })
+    
+    for run in runs:
+        if not run.started_at:
+            continue
+        day = run.started_at.date().isoformat()
+        if run.im_seo_score is not None:
+            daily_data[day]["im_seo"].append(run.im_seo_score)
+        if run.im_seoia_score is not None:
+            daily_data[day]["im_seoia"].append(run.im_seoia_score)
+        if run.irzc_score is not None:
+            daily_data[day]["irzc"].append(run.irzc_score)
+        if run.eeat_score is not None:
+            daily_data[day]["eeat"].append(run.eeat_score)
+    
+    # Calcular médias diárias
+    series = []
+    for day in sorted(daily_data.keys()):
+        data = daily_data[day]
+        series.append({
+            "date": day,
+            "im_seo": round(sum(data["im_seo"]) / len(data["im_seo"]), 2) if data["im_seo"] else None,
+            "im_seoia": round(sum(data["im_seoia"]) / len(data["im_seoia"]), 2) if data["im_seoia"] else None,
+            "irzc": round(sum(data["irzc"]) / len(data["irzc"]), 2) if data["irzc"] else None,
+            "eeat": round(sum(data["eeat"]) / len(data["eeat"]), 2) if data["eeat"] else None
+        })
+    
+    return {"series": series}
+
+
+@api_router.post("/runs/{run_id}/recalculate-metrics")
+def recalculate_run_metrics(run_id: str, db: Session = Depends(get_db)):
+    """
+    Recalcula métricas IM-SEO e IM-SEOIA para uma run existente.
+    Útil após ajustes nos algoritmos de cálculo.
+    """
+    from app.services.im_metrics_simple import SimpleIMMetrics
+    
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    
+    # Buscar citações
+    citations_list = db.query(Citation).filter(Citation.run_id == run_id).all()
+    citations_data = [
+        {
+            "domain": c.domain,
+            "url": c.url,
+            "is_ours": c.is_ours,
+        }
+        for c in citations_list
+    ]
+    
+    # Preparar dados da run
+    run_data = {
+        "amr_flag": run.amr_flag,
+        "dcr_flag": run.dcr_flag,
+        "zcrs": run.zcrs,
+    }
+    
+    # Recalcular métricas
+    im_metrics = SimpleIMMetrics.calculate_all(run_data, citations_data, run.response_text)
+    
+    # Atualizar run
+    run.im_seo_score = im_metrics["im_seo_score"]
+    run.im_seoia_score = im_metrics["im_seoia_score"]
+    run.core_web_vitals_score = im_metrics["core_web_vitals_score"]
+    run.share_of_voice_serp = im_metrics["share_of_voice_serp"]
+    
+    # E-E-A-T
+    eeat = im_metrics["eeat"]
+    run.eeat_score = eeat["overall"]
+    run.eeat_expertise = eeat["expertise"]
+    run.eeat_experience = eeat["experience"]
+    run.eeat_authoritativeness = eeat["authoritativeness"]
+    run.eeat_trustworthiness = eeat["trustworthiness"]
+    
+    # IA-Ready
+    ia_ready = im_metrics["ia_ready"]
+    run.ia_ready_score = ia_ready["score"]
+    run.ia_ready_blocks_count = ia_ready["blocks_count"]
+    run.has_lists = ia_ready["has_lists"]
+    run.has_faqs = ia_ready["has_faqs"]
+    run.has_tables = ia_ready["has_tables"]
+    run.has_step_by_step = ia_ready["has_step_by_step"]
+    
+    # IRZC
+    irzc = im_metrics["irzc"]
+    run.irzc_score = irzc["score"]
+    run.ctr_expected = irzc["ctr_expected"]
+    
+    # Entidades
+    entities = im_metrics["entities"]
+    run.entities_detected = entities["detected"]
+    run.entities_relevance_score = entities["relevance_score"]
+    run.entity_connection_score = entities["connection_score"]
+    
+    db.commit()
+    
+    return {
+        "run_id": run.id,
+        "im_seo_score": run.im_seo_score,
+        "im_seoia_score": run.im_seoia_score,
+        "recalculated_at": datetime.utcnow().isoformat()
     }

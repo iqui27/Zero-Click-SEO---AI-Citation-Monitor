@@ -45,6 +45,8 @@ export type RunListItem = {
   trust_source?: string
   brand_positioning?: string
   classification_confidence?: number
+  perceived_value_category?: string
+  semantic_summary?: string
 }
 
 export type EngineConfig = {
@@ -97,6 +99,26 @@ export type RunDetail = {
   schedule_index_today?: number
   schedule_total_today?: number
   schedule_source?: 'manual'|'monitor'|'monitor_now'
+  question_type?: string
+  funnel_stage?: string
+  perceived_value_category?: string
+  semantic_summary?: string
+}
+
+export type SemanticSnapshot = {
+  perception_distribution: Array<{ category: string; count: number; percentage: number }>
+  brand_ranking: Array<{ name: string; score: number; mentions: number }>
+  top_keywords: Array<{ token: string; weight: number; mentions: number; brands: string[]; competitors: string[] }>
+  competitors: Array<{ name: string; score: number; mentions: number }>
+  runs_analyzed: number
+}
+
+export type RunSemanticInsight = {
+  run_id: string
+  perceived_value_category?: string
+  semantic_summary?: string
+  payload?: Record<string, any> | null
+  updated_at?: string
 }
 
 export type EventItem = { step: string; status: string; message?: string; created_at: string }
@@ -155,6 +177,7 @@ export const getRunReport = (id: string) => http.get<Report>(`/runs/${id}/report
 export const getRunEvidences = (id: string) => http.get<Evidence[]>(`/runs/${id}/evidences`).then(r => r.data)
 export const getRunEvents = (id: string) => http.get<EventItem[]>(`/runs/${id}/events`).then(r => r.data)
 export const countRuns = (params: ListRunsParams) => http.get<{ count: number }>(`/runs/count`, { params }).then(r => r.data)
+export const getRunSemanticInsights = (id: string) => http.get<RunSemanticInsight>(`/runs/${id}/semantic-insights`).then(r => r.data)
 
 // ---------- Project & Subproject management ----------
 export const updateProject = (

@@ -43,6 +43,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY backend/app /app/app
 COPY backend/celery_app.py /app/celery_app.py
+COPY backend/scripts /app/scripts
 
 EXPOSE 8000
 

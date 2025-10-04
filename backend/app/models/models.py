@@ -52,6 +52,11 @@ class Project(Base):
     language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Google Search Console Integration
+    search_console_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    search_console_connected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    search_console_site_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     domains: Mapped[list[Domain]] = relationship(back_populates="project", cascade="all, delete-orphan")
     prompts: Mapped[list[Prompt]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -168,6 +173,7 @@ class Run(Base):
     classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0-1.0
     classified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     classification_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # versão do sistema de classificação
+    perceived_value_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # inovacao|tradicao|custo|atendimento
 
     # Métricas Avançadas Zero-Click
     user_intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # informational|transactional|navigational|commercial
@@ -176,6 +182,72 @@ class Run(Base):
     financial_value_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # valor estimado da consulta
     content_gap_detected: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # gap de conteúdo identificado
     conversion_potential: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # alto|medio|baixo
+
+    # === MÉTRICAS IM-SEO ===
+    # Performance (Core Web Vitals)
+    lcp_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Largest Contentful Paint (seconds)
+    fid_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # First Input Delay (ms)
+    cls_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Cumulative Layout Shift
+    core_web_vitals_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+
+    # Tráfego
+    share_of_voice_serp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % SoV em SERP
+    serp_features_presence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % termos com features
+
+    # IA - Recursos de SERP
+    ia_resources_detected: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ia_serp_presence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+
+    # IA - Long Tail
+    long_tail_terms_top10: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    long_tail_terms_top20: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    long_tail_coverage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+
+    # IA - E-E-A-T
+    eeat_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    eeat_expertise: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eeat_experience: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eeat_authoritativeness: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eeat_trustworthiness: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # IA - Conexão com Entidades
+    entities_detected: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    entities_relevance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1
+    entity_connection_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+
+    # IA - Dados Estruturados
+    schema_types_detected: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array: ["Article", "FAQ"]
+    schema_coverage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    schema_valid: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # IA - Blocos IA-Ready
+    ia_ready_blocks_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ia_ready_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    has_lists: Mapped[Optional[bool]] = mapped_column(Boolean, default=False)
+    has_faqs: Mapped[Optional[bool]] = mapped_column(Boolean, default=False)
+    has_tables: Mapped[Optional[bool]] = mapped_column(Boolean, default=False)
+    has_step_by_step: Mapped[Optional[bool]] = mapped_column(Boolean, default=False)
+
+    # IA - IRZC (Índice de Risco de Zero Click)
+    irzc_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    ctr_expected: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # CTR benchmark
+    ctr_real: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # CTR real (se disponível)
+    ctr_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # real/expected
+
+    # === ÍNDICES COMPOSTOS ===
+    im_seo_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    im_seoia_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+
+    # Texto completo da resposta (para análise)
+    response_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    semantic_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    citations: Mapped[list["Citation"]] = relationship("Citation", back_populates="run")
+    entities: Mapped[list["Entity"]] = relationship("Entity", back_populates="run")
+    serp_features: Mapped[list["SerpFeature"]] = relationship("SerpFeature", back_populates="run")
+    semantic_insights: Mapped[Optional["RunSemanticInsight"]] = relationship(
+        "RunSemanticInsight", back_populates="run", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Evidence(Base):
@@ -204,6 +276,8 @@ class Citation(Base):
     __table_args__ = (
         Index("ix_citations_run_id_domain", "run_id", "domain"),
     )
+
+    run: Mapped[Run] = relationship("Run", back_populates="citations")
 
 
 class Reason(Base):
@@ -347,3 +421,79 @@ class MonitorHistoryRun(Base):
         Index("ix_monitor_history_runs_run", "run_id"),
         UniqueConstraint("history_monitor_id", "run_id", name="uq_monitor_history_run"),
     )
+
+
+class SerpFeature(Base):
+    """Modelo para SERP Features detectadas em uma run."""
+    __tablename__ = "serp_features"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("sf"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+
+    # Tipos de features detectadas
+    has_featured_snippet: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_paa: Mapped[bool] = mapped_column(Boolean, default=False)  # People Also Ask
+    has_knowledge_panel: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_ai_overview: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_local_pack: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_video_carousel: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_image_pack: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Dados estruturados
+    featured_snippet_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    paa_questions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array de strings
+    paa_items: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array de objetos com posição/snippet
+    knowledge_panel_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_overview_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Posições
+    organic_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    competitors_in_top10: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_serp_features_run_id", "run_id"),
+    )
+
+    run: Mapped[Run] = relationship("Run", back_populates="serp_features")
+
+
+class Entity(Base):
+    """Modelo para Entidades detectadas no conteúdo de uma run."""
+    __tablename__ = "entities"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("ent"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String)  # PERSON, ORGANIZATION, LOCATION, etc.
+    salience_score: Mapped[float] = mapped_column(Float)  # 0-1 do Google NLP
+
+    # Contexto
+    mentions_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_entities_run_id", "run_id"),
+    )
+
+    run: Mapped[Run] = relationship("Run", back_populates="entities")
+
+
+class RunSemanticInsight(Base):
+    """Resultados estruturados de insights semânticos gerados pelo Gemini."""
+
+    __tablename__ = "run_semantic_insights"
+
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    run: Mapped[Run] = relationship("Run", back_populates="semantic_insights")

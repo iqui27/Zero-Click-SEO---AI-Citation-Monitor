@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     perplexity_api_key: str | None = None
     serpapi_key: str | None = None
+    semantic_insights_enabled: bool = True
 
     # Permitir variáveis extras do .env (ex.: SERPAPI_KEY, OPENAI_API_KEY)
     model_config = SettingsConfigDict(
