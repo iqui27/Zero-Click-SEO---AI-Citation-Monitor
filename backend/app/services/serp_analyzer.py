@@ -38,7 +38,9 @@ class SerpAnalyzer:
         if not raw_data:
             return SerpAnalyzer._empty_metrics()
         
-        serpapi_data = raw_data.get('serpapi', {})
+        # Acessar dados do SerpAPI na estrutura correta
+        # evidence.parsed_json.raw.serpapi_search contém os dados SERP
+        serpapi_data = raw_data.get('raw', {}).get('serpapi_search', {})
         
         # Detectar SERP Features
         serp_features = SerpAnalyzer._detect_serp_features(raw_data, serpapi_data)
@@ -96,8 +98,9 @@ class SerpAnalyzer:
         Returns:
             Dict com flags (0 ou 1) para cada feature
         """
+        # AI Overview está em raw.serpapi_ai
         features = {
-            "ai_overview": 1 if "serpapi_ai" in raw_data else 0,
+            "ai_overview": 1 if raw_data.get("raw", {}).get("serpapi_ai") else 0,
             "featured_snippet": 1 if "answer_box" in serpapi_data else 0,
             "knowledge_graph": 1 if "knowledge_graph" in serpapi_data else 0,
             "people_also_ask": 1 if serpapi_data.get("related_questions") else 0,
@@ -352,7 +355,8 @@ class SerpAnalyzer:
 
     @staticmethod
     def _extract_ai_overview(raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        ai_data = raw_data.get("serpapi_ai") or {}
+        # AI Overview está em raw.serpapi_ai
+        ai_data = raw_data.get("raw", {}).get("serpapi_ai") or {}
         if not ai_data:
             return None
 
