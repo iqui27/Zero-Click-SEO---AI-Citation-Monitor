@@ -424,6 +424,21 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             if response_text:
                 run.response_text = response_text[:50000]  # Limitar tamanho
             
+            # Classificar etapa do funil
+            try:
+                from app.services.funnel_classifier import FunnelClassifier
+                prompt_version = db.get(PromptVersion, run.prompt_version_id)
+                prompt_text = prompt_version.text if prompt_version else ""
+                
+                funnel_stage, confidence = FunnelClassifier.classify_with_confidence(
+                    prompt_text=prompt_text,
+                    response_text=response_text
+                )
+                run.funnel_stage = funnel_stage
+                print(f"[FUNNEL] Classificado como '{funnel_stage}' (confiança: {confidence:.2f})")
+            except Exception as e:
+                print(f"[FUNNEL] Erro ao classificar: {e}")
+            
             # Buscar citações da run
             citations_list = db.query(Citation).filter(Citation.run_id == run.id).all()
             citations_data = [
@@ -572,7 +587,6 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         # === BUSCAR DADOS DO GOOGLE SEARCH CONSOLE ===
         try:
             from app.services.search_console import SearchConsoleService
-            from app.models.models import PromptVersion
             
             # Buscar projeto
             project = db.query(Project).filter(Project.id == run.project_id).first()
