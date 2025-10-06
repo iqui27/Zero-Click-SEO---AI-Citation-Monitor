@@ -51,14 +51,22 @@ def _log(db: Session, run_id: str, step: str, status: str, message: str | None =
 
 
 def _persist_serp_feature_details(db: Session, run_id: str, serp_metrics: dict[str, Any]) -> None:
+    print(f"[SERP_PERSIST] Iniciando persistência para run {run_id}")
+    print(f"[SERP_PERSIST] serp_metrics is None? {serp_metrics is None}")
+    print(f"[SERP_PERSIST] serp_metrics empty? {not serp_metrics}")
+    
     if not serp_metrics:
+        print(f"[SERP_PERSIST] ABORTANDO: serp_metrics vazio")
         return
 
     features = serp_metrics.get("serp_features") or {}
+    print(f"[SERP_PERSIST] Features: {features}")
+    
     feature = db.query(SerpFeature).filter(SerpFeature.run_id == run_id).one_or_none()
     if not feature:
         feature = SerpFeature(run_id=run_id)
         db.add(feature)
+        print(f"[SERP_PERSIST] Criou novo SerpFeature")
 
     feature.has_featured_snippet = bool(features.get("featured_snippet"))
     feature.has_paa = bool(features.get("people_also_ask"))
@@ -442,7 +450,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 # Buscar evidence para extrair dados SERP
                 evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
                 if evidence and evidence.parsed_json:
-                    serp_data = evidence.parsed_json.get("raw", {})
+                    # Passar o payload completo para o SerpAnalyzer, que espera a estrutura
+                    # com as chaves `raw.serpapi_search` e `raw.serpapi_ai`.
+                    serp_data = evidence.parsed_json
                 
                 # Buscar domínios do projeto
                 project = db.query(Project).filter(Project.id == run.project_id).first()
@@ -535,7 +545,11 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             run.organic_position = im_metrics.get("organic_position")
             run.competitors_in_top10 = im_metrics.get("competitors_top10") or 0
 
-            _persist_serp_feature_details(db, run.id, im_metrics.get("serp_metrics") or {})
+            # Persistir SERP features detalhadas
+            serp_metrics_data = im_metrics.get("serp_metrics") or {}
+            print(f"[DEBUG] serp_metrics keys: {list(serp_metrics_data.keys())}")
+            print(f"[DEBUG] PAA items: {len(serp_metrics_data.get('paa_items', []))}")
+            _persist_serp_feature_details(db, run.id, serp_metrics_data)
 
             db.commit()
             print(f"[DEBUG] Métricas salvas no banco com sucesso!")

@@ -1,7 +1,7 @@
 """Export API Routes - Exportação de dados em múltiplos formatos abrangentes."""
 
 from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import csv
 import io
 import json
@@ -702,3 +702,600 @@ def _populate_sheet(ws, rows: List[Dict[str, Optional[object]]]) -> None:
     ws.append(headers)
     for row in rows:
         ws.append([row.get(header) for header in headers])
+
+
+# ============================================================================
+# HELPER FUNCTIONS FOR NEW GEO EXPORT TABLES
+# ============================================================================
+
+def _check_bb_mention(text: str) -> bool:
+    """Verifica se texto menciona Banco do Brasil."""
+    if not text:
+        return False
+    text_lower = text.lower()
+    return any(term in text_lower for term in ["banco do brasil", " bb ", "banco brasil"])
+
+
+def _find_bb_position(text: str) -> Optional[int]:
+    """Encontra posição da primeira menção ao BB no texto."""
+    if not text:
+        return None
+    text_lower = text.lower()
+    for term in ["banco do brasil", "banco brasil", " bb "]:
+        pos = text_lower.find(term)
+        if pos != -1:
+            return pos
+    return None
+
+
+def _parse_ai_overview(serp_feature) -> Dict[str, Any]:
+    """Extrai e estrutura dados do AI Overview JSON."""
+    if not serp_feature or not serp_feature.ai_overview_json:
+        return {
+            "summary": "",
+            "text_blocks": [],
+            "references": [],
+            "follow_up_questions": []
+        }
+    
+    try:
+        data = json.loads(serp_feature.ai_overview_json)
+        return {
+            "summary": data.get("summary", ""),
+            "text_blocks": data.get("text_blocks", []),
+            "references": data.get("references", []),
+            "follow_up_questions": data.get("follow_up_questions", [])
+        }
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "summary": "",
+            "text_blocks": [],
+            "references": [],
+            "follow_up_questions": []
+        }
+
+
+def _build_response_text(ai_overview: Dict[str, Any]) -> str:
+    """Constrói texto completo da resposta a partir do AI Overview."""
+    parts = [ai_overview["summary"]]
+    
+    for block in ai_overview["text_blocks"]:
+        if block.get("type") == "paragraph":
+            parts.append(block.get("snippet", ""))
+        elif block.get("type") == "list":
+            for item in block.get("list", []):
+                parts.append(f"• {item.get('snippet', '')}")
+    
+    return "\n\n".join(filter(None, parts))
+
+
+def _get_bb_url_info(references: List[Dict], citations: List) -> Dict[str, Any]:
+    """Analisa URLs do BB nas referências e citações."""
+    bb_refs = []
+    for idx, ref in enumerate(references):
+        domain = ref.get("domain", "").lower()
+        is_bb = "bb.com.br" in domain or "banco do brasil" in domain.lower()
+        bb_refs.append({
+            "position": idx + 1,
+            "domain": ref.get("domain"),
+            "url": ref.get("url"),
+            "is_bb": is_bb
+        })
+    
+    # Verificar também citations
+    for cite in citations:
+        if cite.is_ours and not any(r["url"] == cite.url for r in bb_refs):
+            bb_refs.append({
+                "position": len(bb_refs) + 1,
+                "domain": cite.domain,
+                "url": cite.url,
+                "is_bb": True
+            })
+    
+    has_bb_url = any(r["is_bb"] for r in bb_refs)
+    first_bb_pos = next((r["position"] for r in bb_refs if r["is_bb"]), None)
+    citation_binary = "".join("1" if r["is_bb"] else "0" for r in bb_refs[:10])
+    
+    return {
+        "tem_url": "Sim" if bb_refs else "Não",
+        "url_bb": "Sim" if has_bb_url else "Não",
+        "posicao_url_bb": first_bb_pos,
+        "citation_bb": citation_binary if citation_binary else None,
+        "ranking_url": json.dumps(bb_refs, ensure_ascii=False) if bb_refs else "[]"
+    }
+
+
+def _classify_relevance(im_seo_score: Optional[float], funnel_stage: Optional[str]) -> str:
+    """Classifica nível de relevância."""
+    if im_seo_score is None:
+        return "Não classificado"
+    
+    if im_seo_score >= 80:
+        return "Alta"
+    elif im_seo_score >= 60:
+        return "Média-Alta"
+    elif im_seo_score >= 40:
+        return "Média"
+    else:
+        return "Consultiva/Reputacional"
+
+
+def _map_funnel_stage(stage: Optional[str]) -> str:
+    """Mapeia etapa do funil."""
+    if not stage:
+        return "Não classificado"
+    
+    mapping = {
+        "reconhecimento": "Reconhecimento",
+        "consideracao": "Consideração",
+        "conversao": "Conversão"
+    }
+    return mapping.get(stage.lower(), stage.capitalize())
+
+
+def _calculate_perception_scores(perception: Dict[str, Any]) -> Dict[str, int]:
+    """Calcula notas de percepção (0-5) baseado em categorias."""
+    scores = {
+        "inovador": 0,
+        "seguranca": 0,
+        "custo": 0,
+        "atendimento": 0
+    }
+    
+    primary = perception.get("primary_category", "").lower()
+    secondary = [s.lower() for s in perception.get("secondary_categories", [])]
+    
+    # Categoria primária: 5 pontos
+    if "inovacao" in primary or "inovador" in primary:
+        scores["inovador"] = 5
+    elif "tradicao" in primary or "seguranca" in primary:
+        scores["seguranca"] = 5
+    elif "custo" in primary or "baixo custo" in primary:
+        scores["custo"] = 5
+    elif "atendimento" in primary or "relacionamento" in primary:
+        scores["atendimento"] = 5
+    
+    # Categorias secundárias: 3 pontos
+    for cat in secondary:
+        if "inovacao" in cat and scores["inovador"] < 3:
+            scores["inovador"] = 3
+        elif "tradicao" in cat or "seguranca" in cat and scores["seguranca"] < 3:
+            scores["seguranca"] = 3
+        elif "custo" in cat and scores["custo"] < 3:
+            scores["custo"] = 3
+        elif "atendimento" in cat and scores["atendimento"] < 3:
+            scores["atendimento"] = 3
+    
+    return scores
+
+
+# ============================================================================
+# EXPORT ENDPOINT: TABELA SERP - AI OVERVIEW
+# ============================================================================
+
+@router.get("/export/serp")
+def export_serp_table(
+    project_id: Optional[str] = None,
+    engine_ids: Optional[str] = None,
+    days: int = Query(30, ge=1, le=365),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    subproject_id: Optional[str] = None,
+    prompt_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    im_seo_min: Optional[float] = None,
+    im_seo_max: Optional[float] = None,
+    im_seoia_min: Optional[float] = None,
+    im_seoia_max: Optional[float] = None,
+    format: str = Query("csv", regex="^(csv|json|excel)$"),
+    db: Session = Depends(get_db),
+):
+    """Exporta Tabela SERP - AI Overview com análise de posicionamento do BB."""
+    
+    runs, period = _collect_runs(
+        db,
+        project_id=project_id,
+        engine_ids=engine_ids,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        subproject_id=subproject_id,
+        prompt_id=prompt_id,
+        run_id=run_id,
+        im_seo_min=im_seo_min,
+        im_seo_max=im_seo_max,
+        im_seoia_min=im_seoia_min,
+        im_seoia_max=im_seoia_max,
+    )
+    
+    refs = _hydrate_references(db, runs)
+    
+    # Construir linhas da tabela SERP
+    rows = []
+    for run in runs:
+        prompt = None
+        if run.prompt_version_id:
+            pv = refs["prompt_versions"].get(run.prompt_version_id)
+            if pv:
+                prompt = refs["prompts"].get(pv.prompt_id)
+        
+        subproject = refs["subprojects"].get(run.subproject_id) if run.subproject_id else None
+        
+        # Parse AI Overview
+        serp_feature = run.serp_features[0] if run.serp_features else None
+        ai_overview = _parse_ai_overview(serp_feature)
+        
+        # Construir resposta completa
+        resposta = _build_response_text(ai_overview)
+        
+        # Análise de URLs do BB
+        url_info = _get_bb_url_info(ai_overview["references"], run.citations or [])
+        
+        # Análise de menções ao BB no texto
+        prompt_text = prompt.text if prompt else ""
+        pergunta_bb = "Sim" if _check_bb_mention(prompt_text) else "Não"
+        nome_bb = "Sim" if _check_bb_mention(resposta) else "Não"
+        posicao_bb = _find_bb_position(resposta)
+        
+        # PAA e KP
+        tem_paa = "Sim" if serp_feature and serp_feature.has_paa else "Não"
+        tem_kp = "Sim" if serp_feature and serp_feature.has_knowledge_panel else "Não"
+        
+        # Ranking de texto (competitors mencionados)
+        ranking_txt = []
+        if run.semantic_insights and run.semantic_insights.payload.get("competitors"):
+            for comp in run.semantic_insights.payload["competitors"]:
+                ranking_txt.append({
+                    "name": comp.get("name"),
+                    "mentions": comp.get("mentions", 0)
+                })
+        
+        row = {
+            "run_id": run.id,
+            "prompt": prompt_text[:500] if prompt_text else "",
+            "produto": subproject.name if subproject else "",
+            "relevancia": _classify_relevance(run.im_seo_score, run.funnel_stage),
+            "pergunta_bb": pergunta_bb,
+            "funil": _map_funnel_stage(run.funnel_stage),
+            "resposta": resposta[:2000] if resposta else "",
+            "tem_url": url_info["tem_url"],
+            "url_bb": url_info["url_bb"],
+            "posicao_url_bb": url_info["posicao_url_bb"],
+            "citation_bb": url_info["citation_bb"],
+            "ranking_url": url_info["ranking_url"],
+            "nome_bb": nome_bb,
+            "posicao_bb": posicao_bb,
+            "ranking_txt": json.dumps(ranking_txt, ensure_ascii=False) if ranking_txt else "[]",
+            "tem_paa": tem_paa,
+            "bb_paa": "Não",  # TODO: Parse paa_questions quando disponível
+            "posicao_bb_paa": None,
+            "tem_kp": tem_kp,
+            "bb_kp": "Não",  # TODO: Parse knowledge_panel_json quando disponível
+        }
+        rows.append(row)
+    
+    # Retornar no formato solicitado
+    if format == "json":
+        return {
+            "metadata": _build_metadata(runs=runs, period=period, filters=_build_filters_dict(
+                project_id=project_id, engine_ids=engine_ids, days=days
+            )),
+            "data": rows
+        }
+    elif format == "csv":
+        output = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        filename = f"serp_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    else:  # excel
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "SERP - AI Overview"
+            _populate_sheet(ws, rows)
+            
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+            
+            filename = f"serp_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            return Response(
+                content=buffer.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Excel export requires 'openpyxl'")
+
+
+# ============================================================================
+# EXPORT ENDPOINT: TABELA INDICADORES - AI OVERVIEW
+# ============================================================================
+
+@router.get("/export/indicadores")
+def export_indicadores_table(
+    project_id: Optional[str] = None,
+    engine_ids: Optional[str] = None,
+    days: int = Query(30, ge=1, le=365),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    subproject_id: Optional[str] = None,
+    prompt_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    im_seo_min: Optional[float] = None,
+    im_seo_max: Optional[float] = None,
+    im_seoia_min: Optional[float] = None,
+    im_seoia_max: Optional[float] = None,
+    format: str = Query("csv", regex="^(csv|json|excel)$"),
+    db: Session = Depends(get_db),
+):
+    """Exporta Tabela Indicadores - AI Overview com métricas EEAT e percepção."""
+    
+    runs, period = _collect_runs(
+        db,
+        project_id=project_id,
+        engine_ids=engine_ids,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        subproject_id=subproject_id,
+        prompt_id=prompt_id,
+        run_id=run_id,
+        im_seo_min=im_seo_min,
+        im_seo_max=im_seo_max,
+        im_seoia_min=im_seoia_min,
+        im_seoia_max=im_seoia_max,
+    )
+    
+    refs = _hydrate_references(db, runs)
+    
+    rows = []
+    for run in runs:
+        prompt = None
+        if run.prompt_version_id:
+            pv = refs["prompt_versions"].get(run.prompt_version_id)
+            if pv:
+                prompt = refs["prompts"].get(pv.prompt_id)
+        
+        subproject = refs["subprojects"].get(run.subproject_id) if run.subproject_id else None
+        prompt_text = prompt.text if prompt else ""
+        
+        # Verificar menção ao BB
+        serp_feature = run.serp_features[0] if run.serp_features else None
+        ai_overview = _parse_ai_overview(serp_feature)
+        resposta = _build_response_text(ai_overview)
+        nome_bb = "Sim" if _check_bb_mention(resposta) else "Não"
+        
+        # Scores EEAT
+        score_eeat = run.eeat_score if run.eeat_score is not None else 0
+        experiencia = run.eeat_experience if run.eeat_experience is not None else 0
+        expertise = run.eeat_expertise if run.eeat_expertise is not None else 0
+        autoridade = run.eeat_authoritativeness if run.eeat_authoritativeness is not None else 0
+        confiabilidade = run.eeat_trustworthiness if run.eeat_trustworthiness is not None else 0
+        
+        # Percepção
+        perception_scores = {"inovador": 0, "seguranca": 0, "custo": 0, "atendimento": 0}
+        if run.semantic_insights and run.semantic_insights.payload.get("perception"):
+            perception_scores = _calculate_perception_scores(run.semantic_insights.payload["perception"])
+        
+        # Entidades
+        qt_total_entidades = run.entities_detected or 0
+        qt_entidades_bb = 0
+        if run.semantic_insights and run.semantic_insights.payload.get("entities"):
+            for entity in run.semantic_insights.payload["entities"]:
+                if _check_bb_mention(entity.get("name", "")):
+                    qt_entidades_bb += 1
+        
+        row = {
+            "run_id": run.id,
+            "prompt": prompt_text[:500] if prompt_text else "",
+            "produto": subproject.name if subproject else "",
+            "nome_bb": nome_bb,
+            "score_eeat_bb": round(score_eeat, 2),
+            "experiencia_bb": round(experiencia, 2),
+            "expertise_bb": round(expertise, 2),
+            "autoridade_bb": round(autoridade, 2),
+            "confiabilidade_bb": round(confiabilidade, 2),
+            "ranking_eeat": "[]",  # TODO: Implementar ranking cross-run
+            "inovador_bb": perception_scores["inovador"],
+            "seguranca_bb": perception_scores["seguranca"],
+            "custo_bb": perception_scores["custo"],
+            "atendimento_bb": perception_scores["atendimento"],
+            "resultado_percepcao": json.dumps(perception_scores, ensure_ascii=False),
+            "qt_total_entidades": qt_total_entidades,
+            "qt_entidades_bb": qt_entidades_bb,
+            "conexoes_bancos": "[]",  # TODO: Parse relationships quando disponível
+        }
+        rows.append(row)
+    
+    # Retornar no formato solicitado
+    if format == "json":
+        return {
+            "metadata": _build_metadata(runs=runs, period=period, filters=_build_filters_dict(
+                project_id=project_id, engine_ids=engine_ids, days=days
+            )),
+            "data": rows
+        }
+    elif format == "csv":
+        output = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        filename = f"indicadores_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    else:  # excel
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Indicadores - AI Overview"
+            _populate_sheet(ws, rows)
+            
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+            
+            filename = f"indicadores_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            return Response(
+                content=buffer.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Excel export requires 'openpyxl'")
+
+
+# ============================================================================
+# EXPORT ENDPOINT: TABELA ESTRUTURA WEB - AI OVERVIEW
+# ============================================================================
+
+@router.get("/export/estrutura-web")
+def export_estrutura_web_table(
+    project_id: Optional[str] = None,
+    engine_ids: Optional[str] = None,
+    days: int = Query(30, ge=1, le=365),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    subproject_id: Optional[str] = None,
+    prompt_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    im_seo_min: Optional[float] = None,
+    im_seo_max: Optional[float] = None,
+    im_seoia_min: Optional[float] = None,
+    im_seoia_max: Optional[float] = None,
+    format: str = Query("csv", regex="^(csv|json|excel)$"),
+    db: Session = Depends(get_db),
+):
+    """Exporta Tabela Estrutura Web - AI Overview com dados de estrutura e performance."""
+    
+    runs, period = _collect_runs(
+        db,
+        project_id=project_id,
+        engine_ids=engine_ids,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        subproject_id=subproject_id,
+        prompt_id=prompt_id,
+        run_id=run_id,
+        im_seo_min=im_seo_min,
+        im_seo_max=im_seo_max,
+        im_seoia_min=im_seoia_min,
+        im_seoia_max=im_seoia_max,
+    )
+    
+    refs = _hydrate_references(db, runs)
+    
+    rows = []
+    for run in runs:
+        prompt = None
+        if run.prompt_version_id:
+            pv = refs["prompt_versions"].get(run.prompt_version_id)
+            if pv:
+                prompt = refs["prompts"].get(pv.prompt_id)
+        
+        subproject = refs["subprojects"].get(run.subproject_id) if run.subproject_id else None
+        prompt_text = prompt.text if prompt else ""
+        
+        # URL BB citada?
+        has_bb_url = any(cite.is_ours for cite in (run.citations or []))
+        url_bb = "Sim" if has_bb_url else "Não"
+        
+        # AI Ready Blocks
+        tem_aiblocks = "Sim" if (run.ia_ready_blocks_count or 0) > 0 else "Não"
+        qt_aiblocks = run.ia_ready_blocks_count or 0
+        tipos = []
+        if run.has_lists:
+            tipos.append("listas")
+        if run.has_faqs:
+            tipos.append("FAQs")
+        if run.has_tables:
+            tipos.append("tabelas")
+        if run.has_step_by_step:
+            tipos.append("passo a passo")
+        tipos_aiblocks = ", ".join(tipos) if tipos else ""
+        
+        # Performance
+        performance = run.core_web_vitals_score if run.core_web_vitals_score is not None else None
+        latencia = run.latency_ms if run.latency_ms is not None else None
+        
+        row = {
+            "run_id": run.id,
+            "prompt": prompt_text[:500] if prompt_text else "",
+            "produto": subproject.name if subproject else "",
+            "url_bb": url_bb,
+            "tem_titulo_bb": None,  # Não disponível - requer scraping
+            "txt_titulo_bb": None,
+            "tem_descricao_bb": None,
+            "txt_descricao_bb": None,
+            "tem_keywords": None,
+            "txt_keywords": None,
+            "tem_robots_bb": None,
+            "txt_robots_bb": None,
+            "tem_ogtags_bb": None,
+            "ogtags_bb": None,
+            "tem_aiblocks_bb": tem_aiblocks,
+            "qt_aiblocks_bb": qt_aiblocks,
+            "tipos_aiblocks_bb": tipos_aiblocks,
+            "ranking_web": "[]",  # TODO: Implementar ranking cross-run
+            "latencia": latencia,
+            "performance": round(performance, 2) if performance is not None else None,
+        }
+        rows.append(row)
+    
+    # Retornar no formato solicitado
+    if format == "json":
+        return {
+            "metadata": _build_metadata(runs=runs, period=period, filters=_build_filters_dict(
+                project_id=project_id, engine_ids=engine_ids, days=days
+            )),
+            "data": rows
+        }
+    elif format == "csv":
+        output = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        filename = f"estrutura_web_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    else:  # excel
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Estrutura Web - AI Overview"
+            _populate_sheet(ws, rows)
+            
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+            
+            filename = f"estrutura_web_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            return Response(
+                content=buffer.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Excel export requires 'openpyxl'")

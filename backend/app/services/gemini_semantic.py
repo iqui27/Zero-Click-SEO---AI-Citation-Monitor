@@ -362,9 +362,13 @@ Observação: Alguns dados podem estar incompletos.
             )
 
             try:
+                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Chamando Gemini API...")
                 response = self.model.generate_content(prompt)
+                print(f"[SEMANTIC] Gemini respondeu. Verificando resposta...")
             except Exception as e:
                 print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Erro ao chamar Gemini API: {e}")
+                import traceback
+                traceback.print_exc()
                 if attempt < max_retries - 1:
                     continue  # Tentar novamente
                 print(f"[SEMANTIC] Todas as tentativas falharam. Retornando estrutura vazia.")
@@ -420,8 +424,15 @@ Observação: Alguns dados podem estar incompletos.
             print(f"[SEMANTIC] Retornando estrutura vazia")
             return self._get_empty_structure()
 
+        print(f"[SEMANTIC] Raw text length: {len(raw_text)}")
+        print(f"[SEMANTIC] Raw text preview: {raw_text[:500]}")
+        
         data = self._safe_json_loads(raw_text)
+        print(f"[SEMANTIC] JSON parsed. Keys: {list(data.keys()) if data else 'None'}")
+        
         normalized = self._normalize_payload(data)
+        print(f"[SEMANTIC] Normalized payload keys: {list(normalized.keys())}")
+        print(f"[SEMANTIC] Entities count: {len(normalized.get('entities', []))}")
 
         usage = getattr(response, "usage_metadata", None)
         if usage:
