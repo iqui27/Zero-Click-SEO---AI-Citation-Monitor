@@ -226,99 +226,31 @@ class GeminiSemanticService:
     ) -> str:
         # Prompt simplificado para retry (mais neutro, menos chance de bloqueio)
         if simplified:
-            brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
             return f"""
-Você é um analista de SEO e posicionamento de marcas para respostas de AI Overview em português.
-Extraia insights semânticos estruturados seguindo as instruções abaixo.
+Analise o seguinte texto e extraia informações estruturadas em formato JSON.
 
-{brand_hint}
+Texto para análise:
+{response_text[:1500]}
 
-### Pergunta original
-{question}
-
-### Resposta da IA (texto plano)
-{response_text}
-
-### Citações detectadas
-{citations_text}
-
-### Instruções CRÍTICAS - SIGA EXATAMENTE
-1. **RETORNE APENAS JSON PURO** - Nada mais, nenhum texto antes ou depois
-2. **NÃO USE MARKDOWN** - Sem ```json, sem ```, sem formatação
-3. **COMECE COM {{** e **TERMINE COM }}** - Primeira e última caractere
-4. **SEM EXPLICAÇÕES** - Não adicione "Aqui está", "Observação", etc.
-5. **SEM COMENTÁRIOS** - Não inclua // ou /* */ no JSON
-6. Identifique entidades relevantes (marcas, produtos, categorias, concorrentes) com confiança 0-1
-7. Relacione marcas com produtos e concorrentes
-8. Extraia as top palavras-chave (token) com peso 0-1, associando a quais marcas/produtos aparecem
-9. Classifique a percepção/valor predominante entre: inovacao, tradicao, custo, atendimento
-10. Gere um resumo (headline + bullets) com oportunidades e riscos
-11. **MAPEIE TODOS OS CONCORRENTES** citados explícita ou implicitamente, incluindo bancos tradicionais (Itaú, Bradesco, Santander, Caixa), bancos digitais (Nubank, Inter, C6, Next), fintechs (PicPay, Mercado Pago) e qualquer outra instituição financeira mencionada
-12. Para cada concorrente, informe nome, quantidade de menções (count), produtos/serviços associados, palavras-chave relevantes e a categoria (por exemplo: banco digital, fintech, banco tradicional)
-13. Caso não haja citações explícitas, detecte concorrentes pela menção de marcas nos textos, incluindo variações (ex.: "Banco Santander" → "Santander").
-
-**EXEMPLO DE RESPOSTA CORRETA:**
+Retorne APENAS um objeto JSON com esta estrutura:
 {{
-  "entities": [...],
-  "relationships": [...],
-  ...
-}}
-
-**EXEMPLO DE RESPOSTA INCORRETA (NÃO FAÇA ISSO):**
-Aqui está a análise:
-```json
-{{...}}
-```
-Observação: Alguns dados podem estar incompletos.
-
-### Estrutura esperada
-{{
-  "entities": [{{
-      "name": "Banco do Brasil",
-      "category": "brand|product|feature|competitor|other",
-      "roles": ["brand"],
-      "confidence": 0.92,
-      "citations": ["https://www.bb.com.br"],
-      "description": ""
-  }}],
-  "relationships": [{{
-      "source": "Banco do Brasil",
-      "target": "Conta Digital",
-      "type": "brand_product",
-      "weight": 0.76,
-      "explanation": "Produto próprio destacado como principal oferta"
-  }}],
-  "keywords": [{{
-      "token": "conta digital",
-      "weight": 0.81,
-      "brands": ["Banco do Brasil"],
-      "products": ["Conta Digital"],
-      "competitors": ["Nubank"],
-      "context": "Termo associado a conta sem tarifa"
-  }}],
-  "perception": {{
-      "primary_category": "inovacao",
-      "secondary_categories": ["custo"],
-      "confidence": 0.74,
-      "rationale": "Resposta destaca experiências digitais e tarifas competitivas"
-  }},
+  "entities": [
+    {{"name": "nome", "category": "brand|product|other", "confidence": 0.8}}
+  ],
+  "keywords": [
+    {{"token": "palavra", "weight": 0.7}}
+  ],
   "summary": {{
-      "headline": "BB visto como alternativa moderna para contas digitais",
-      "bullets": ["AI Overview prioriza apps móveis", "Concorrentes Nubank e Inter citados"],
-      "opportunities": ["Reforçar diferenciais em atendimento humano"]
-  }},
-  "competitors": [{{
-      "name": "Nubank",
-      "mentions": 2,
-      "keywords": ["cartão sem anuidade"],
-      "products": ["conta digital"],
-      "categories": ["banco digital"]
-  }}]
+    "headline": "resumo breve"
+  }}
 }}
-"""
 
+Importante: Retorne APENAS o JSON, sem texto adicional.
+"""
+        
         # Prompt completo normal
         brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
+
         return f"""
 Você é um analista de SEO e posicionamento de marcas para respostas de AI Overview em português.
 Extraia insights semânticos estruturados seguindo as instruções abaixo.
@@ -345,9 +277,6 @@ Extraia insights semânticos estruturados seguindo as instruções abaixo.
 8. Extraia as top palavras-chave (token) com peso 0-1, associando a quais marcas/produtos aparecem
 9. Classifique a percepção/valor predominante entre: inovacao, tradicao, custo, atendimento
 10. Gere um resumo (headline + bullets) com oportunidades e riscos
-11. **MAPEIE TODOS OS CONCORRENTES** citados explícita ou implicitamente, incluindo bancos tradicionais (Itaú, Bradesco, Santander, Caixa), bancos digitais (Nubank, Inter, C6, Next), fintechs (PicPay, Mercado Pago) e qualquer outra instituição financeira mencionada
-12. Para cada concorrente, informe nome, quantidade de menções (count), produtos/serviços associados, palavras-chave relevantes e a categoria (por exemplo: banco digital, fintech, banco tradicional)
-13. Caso não haja citações explícitas, detecte concorrentes pela menção de marcas nos textos, incluindo variações (ex.: "Banco Santander" → "Santander").
 
 **EXEMPLO DE RESPOSTA CORRETA:**
 {{
@@ -371,8 +300,8 @@ Observação: Alguns dados podem estar incompletos.
       "roles": ["brand"],
       "confidence": 0.92,
       "citations": ["https://www.bb.com.br"],
-      "description": ""
-  }}],
+      "description": ""}}
+  ],
   "relationships": [{{
       "source": "Banco do Brasil",
       "target": "Conta Digital",
@@ -402,9 +331,7 @@ Observação: Alguns dados podem estar incompletos.
   "competitors": [{{
       "name": "Nubank",
       "mentions": 2,
-      "keywords": ["cartão sem anuidade"],
-      "products": ["conta digital"],
-      "categories": ["banco digital"]
+      "keywords": ["cartão sem anuidade"]
   }}]
 }}
 """
