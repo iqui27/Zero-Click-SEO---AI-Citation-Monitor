@@ -9,9 +9,10 @@ Este módulo integra com a PageSpeed Insights API para obter:
 """
 
 from __future__ import annotations
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 import httpx
 import os
+import time
 
 
 class PageSpeedAnalyzer:
@@ -20,6 +21,8 @@ class PageSpeedAnalyzer:
     # API Key do Google PageSpeed Insights (opcional mas recomendado)
     API_KEY = os.getenv("PAGESPEED_API_KEY", "")
     BASE_URL = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+    CACHE_TTL_SECONDS = int(os.getenv("PAGESPEED_CACHE_TTL", "900"))  # 15 minutos por padrão
+    _cache: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
     
     # Thresholds do Google para Core Web Vitals
     THRESHOLDS = {
@@ -41,6 +44,12 @@ class PageSpeedAnalyzer:
         Returns:
             Dict com métricas de Core Web Vitals
         """
+        cache_key = (url, strategy)
+        cached = PageSpeedAnalyzer._get_cached(cache_key, allow_stale=False)
+        if cached is not None:
+            print(f"[PAGESPEED] Usando cache válido para {url} ({strategy})")
+            return cached
+
         try:
             params = {
                 "url": url,
@@ -56,16 +65,30 @@ class PageSpeedAnalyzer:
                 response.raise_for_status()
                 data = response.json()
             
-            return PageSpeedAnalyzer._parse_pagespeed_data(data)
+            result = PageSpeedAnalyzer._parse_pagespeed_data(data)
+            PageSpeedAnalyzer._cache[cache_key] = (time.time(), result)
+            return result
             
         except httpx.TimeoutException:
             print(f"[PAGESPEED] Timeout ao analisar {url}")
+            fallback = PageSpeedAnalyzer._get_cached(cache_key, allow_stale=True)
+            if fallback is not None:
+                print(f"[PAGESPEED] Usando cache antigo para {url} ({strategy}) após timeout")
+                return fallback
             return PageSpeedAnalyzer._empty_metrics()
         except httpx.HTTPStatusError as e:
             print(f"[PAGESPEED] Erro HTTP {e.response.status_code} ao analisar {url}")
+            fallback = PageSpeedAnalyzer._get_cached(cache_key, allow_stale=True)
+            if fallback is not None:
+                print(f"[PAGESPEED] Usando cache antigo para {url} ({strategy}) após erro HTTP")
+                return fallback
             return PageSpeedAnalyzer._empty_metrics()
         except Exception as e:
             print(f"[PAGESPEED] Erro ao analisar {url}: {e}")
+            fallback = PageSpeedAnalyzer._get_cached(cache_key, allow_stale=True)
+            if fallback is not None:
+                print(f"[PAGESPEED] Usando cache antigo para {url} ({strategy}) após erro inesperado")
+                return fallback
             return PageSpeedAnalyzer._empty_metrics()
     
     @staticmethod
@@ -157,3 +180,16 @@ class PageSpeedAnalyzer:
             "cls_score": None,
             "strategy": None,
         }
+
+    @classmethod
+    def _get_cached(cls, key: Tuple[str, str], allow_stale: bool) -> Optional[Dict[str, Any]]:
+        entry = cls._cache.get(key)
+        if not entry:
+            return None
+        timestamp, value = entry
+        age = time.time() - timestamp
+        if age <= cls.CACHE_TTL_SECONDS:
+            return value
+        if allow_stale:
+            return value
+        return None

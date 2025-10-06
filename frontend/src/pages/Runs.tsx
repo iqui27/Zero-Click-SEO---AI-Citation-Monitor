@@ -49,7 +49,11 @@ function VirtualizedRunsListView({ items, onDelete }: { items: RunItem[]; onDele
     return (
       <tr style={style as any} className="border-t border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50/70 dark:hover:bg-neutral-800/50">
         <td className="px-3 py-2">
-          <span className="px-2 py-0.5 rounded-full text-xs border border-neutral-300 dark:border-neutral-700">{r.status}</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-xs border border-neutral-300 dark:border-neutral-700 ${r.status === 'post_processing' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-700' : ''}`}
+          >
+            {r.status === 'post_processing' ? 'post-processing' : r.status}
+          </span>
         </td>
         <td className="px-3 py-2">{r.engine}</td>
         <td className="px-3 py-2 truncate max-w-[18ch]" title={r.monitor_name || ''}>{r.monitor_name || '-'}</td>
@@ -616,6 +620,7 @@ function RunCard({ r, onDelete }: { r: RunItem, onDelete: (id: string) => void |
     r.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300' :
     r.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300' :
     r.status === 'running' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300' :
+    r.status === 'post_processing' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300 animate-pulse' :
     'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
   return (
     <div className="stack-card stack-animate-in">

@@ -50,6 +50,18 @@ def _log(db: Session, run_id: str, step: str, status: str, message: str | None =
     db.commit()
 
 
+def _finalize_run(db: Session, run: Run, message: str | None = None) -> None:
+    if run.status == "failed":
+        return
+    already_completed = run.status == "completed"
+    run.status = "completed"
+    if run.finished_at is None:
+        run.finished_at = datetime.utcnow()
+    db.commit()
+    if not already_completed or message:
+        _log(db, run.id, "completed", "ok", message)
+
+
 def _persist_serp_feature_details(db: Session, run_id: str, serp_metrics: dict[str, Any]) -> None:
     print(f"[SERP_PERSIST] Iniciando persistência para run {run_id}")
     print(f"[SERP_PERSIST] serp_metrics is None? {serp_metrics is None}")
@@ -212,6 +224,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
         total_cycles = max(1, int(cycles or 1))
         aggregated_extracted: list[dict[str, Any]] = []
+        semantic_pending = False
         project_domains = {normalize_domain(d.domain) for d in db.query(Domain).filter(Domain.project_id == run.project_id).all()}
         t0_all = time.perf_counter()
         last_raw: dict[str, Any] | None = None
@@ -574,6 +587,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             if settings.semantic_insights_enabled:
                 try:
                     process_semantic_insights.delay(run.id)
+                    semantic_pending = True
                     _log(db, run.id, "semantic_insights", "queued", "Gemini semantic insights enqueued")
                 except Exception as queue_err:
                     print(f"[SEMANTIC] Falha ao enfileirar insights para run {run.id}: {queue_err}")
@@ -637,16 +651,19 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             traceback.print_exc()
             _log(db, run.id, "search_console", "fail", f"Error: {str(e)}")
 
-        run.status = "completed"
-        run.finished_at = datetime.utcnow()
         try:
             for ins in generate_basic_insights(db, run):
                 db.add(ins)
-            db.commit()
         except Exception:
             pass
-        db.commit()
-        _log(db, run.id, "completed", "ok")
+
+        if semantic_pending:
+            run.status = "post_processing"
+            run.finished_at = None
+            db.commit()
+            _log(db, run.id, "post_processing", "ok", "Waiting for semantic insights")
+        else:
+            _finalize_run(db, run)
     except SoftTimeLimitExceeded as e:
         # Celery soft timeout triggered: log and mark failed, so the UI reflects termination
         try:
@@ -761,10 +778,14 @@ def process_semantic_insights(run_id: str) -> None:
 
         db.commit()
         _log(db, run.id, "semantic_insights", "ok", f"entities={entities_count}, perception={primary_category}")
+        _finalize_run(db, run, "Semantic insights completed")
 
     except Exception as exc:
         db.rollback()
         print(f"[SEMANTIC] Erro ao gerar insights para run {run_id}: {exc}")
         _log(db, run_id, "semantic_insights", "fail", str(exc))
+        run = db.get(Run, run_id)
+        if run:
+            _finalize_run(db, run, "Semantic insights failed")
     finally:
         db.close()

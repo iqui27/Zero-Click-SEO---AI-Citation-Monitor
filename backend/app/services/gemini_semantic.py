@@ -379,13 +379,15 @@ Observação: Alguns dados podem estar incompletos.
                 candidate = response.candidates[0]
                 finish_reason = getattr(candidate, "finish_reason", None)
                 
+                reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
+                reason_name = reason_names.get(finish_reason, str(finish_reason))
+                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: finish_reason={reason_name}")
+                
                 # finish_reason 2 = SAFETY (bloqueado por filtro de segurança)
                 # finish_reason 3 = RECITATION (bloqueado por recitação)
                 # finish_reason 4 = OTHER (outros bloqueios)
                 if finish_reason in [2, 3, 4]:
-                    reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
-                    reason_name = reason_names.get(finish_reason, str(finish_reason))
-                    print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini bloqueou resposta: finish_reason={reason_name}")
+                    print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini bloqueou resposta (reason={reason_name}).")
                     
                     if attempt < max_retries - 1:
                         print(f"[SEMANTIC] Tentando novamente com prompt simplificado...")

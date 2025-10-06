@@ -64,6 +64,38 @@ const perceptionLabels: Record<string, string> = {
   atendimento: 'Atendimento & relacionamento',
 }
 
+const STEP_LABELS: Record<string, string> = {
+  queued: 'Fila / início',
+  opts: 'Configuração efetiva',
+  fetch: 'Coleta do motor',
+  chunk: 'Texto parcial recebido',
+  persist: 'Persistência de evidências',
+  extract: 'Extração de citações',
+  classify: 'Classificação Zero-Click',
+  im_metrics: 'Cálculo IM-SEO / IA',
+  search_console: 'Google Search Console',
+  post_processing: 'Pós-processamento',
+  semantic_insights: 'Insights semânticos',
+  completed: 'Conclusão',
+  error: 'Erro',
+}
+
+const STEP_ORDER = [
+  'queued',
+  'opts',
+  'fetch',
+  'chunk',
+  'persist',
+  'extract',
+  'classify',
+  'im_metrics',
+  'search_console',
+  'post_processing',
+  'semantic_insights',
+  'completed',
+  'error',
+]
+
 // helper simples para renderizar markdown minimalista
 function renderSimpleMarkdown(md: string) {
   const lines = md.split(/\n/)
@@ -437,11 +469,66 @@ export default function RunDetail() {
   const maxKeywordWeight = Math.max(1, ...semanticKeywords.map((kw: any) => (kw?.weight || 0) > 0 ? kw.weight : 0.5))
   const semanticUpdatedAt = semantic?.updated_at ? new Date(semantic.updated_at).toLocaleString() : null
 
+  const statusBadgeLabel = detail?.status === 'post_processing' ? 'post-processing' : (detail?.status || '—')
+  const statusBadgeTone = detail?.status === 'completed'
+    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300'
+    : detail?.status === 'failed'
+      ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300'
+      : detail?.status === 'running'
+        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300'
+        : detail?.status === 'post_processing'
+          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300 animate-pulse'
+          : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
+
+  const timeline = useMemo(() => {
+    const sorted = [...events].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    const grouped = new Map<string, EventItem[]>()
+    for (const ev of sorted) {
+      if (!ev.step) continue
+      const step = ev.step
+      if (step === 'chunk') continue
+      if (!grouped.has(step)) grouped.set(step, [])
+      grouped.get(step)!.push(ev)
+    }
+    const items = Array.from(grouped.entries()).map(([step, evs]) => ({
+      step,
+      first: evs[0],
+      last: evs[evs.length - 1],
+      events: evs,
+    }))
+    items.sort((a, b) => {
+      const ai = STEP_ORDER.indexOf(a.step)
+      const bi = STEP_ORDER.indexOf(b.step)
+      if (ai !== -1 && bi !== -1 && ai !== bi) return ai - bi
+      return new Date(a.first.created_at).getTime() - new Date(b.first.created_at).getTime()
+    })
+    return items
+  }, [events])
+
+  const statusChip = (status: string) => {
+    if (status === 'ok') return 'text-green-600'
+    if (status === 'fail' || status === 'error') return 'text-red-600'
+    if (status === 'started' || status === 'queued') return 'text-blue-600'
+    if (status === 'timeout') return 'text-orange-600'
+    return 'text-neutral-500'
+  }
+
   return (
     <div className="space-y-6">
       <Toaster richColors position="top-right" />
       <div className="flex items-center gap-3">
         <h1 className="text-3xl font-semibold tracking-tight">Run {id}</h1>
+        {detail?.status && (
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadgeTone}`}>
+            {statusBadgeLabel}
+          </span>
+        )}
+        {detail?.status === 'post_processing' && !detail?.finished_at && (
+          <span className="text-xs flex items-center gap-1 text-amber-600 dark:text-amber-300">
+            <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" aria-hidden />
+            Aguardando insights semânticos
+          </span>
+        )}
         {(detail?.cycles_total || 1) > 1 && (
           <div className="ml-4 flex items-center gap-2 text-sm">
             <span className="opacity-70">Ciclo:</span>
@@ -685,6 +772,42 @@ export default function RunDetail() {
             )}
           </div>
         </details>
+      </section>
+
+      <section className="border border-neutral-200 dark:border-neutral-800 rounded-md p-3">
+        <h2 className="text-sm font-semibold mb-2">Linha do tempo</h2>
+        {timeline.length ? (
+          <ol className="space-y-2 text-xs">
+            {timeline.map(({ step, first, last, events }) => {
+              const label = STEP_LABELS[step] || step
+              const status = last?.status || first?.status || 'ok'
+              const message = last?.message || first?.message || ''
+              const time = last ? new Date(last.created_at).toLocaleTimeString() : ''
+              return (
+                <li key={`${step}-${first?.created_at || ''}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-3 border-l-2 border-neutral-200 dark:border-neutral-700 pl-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${status === 'ok' ? 'bg-green-500' : status === 'fail' || status === 'error' ? 'bg-red-500' : status === 'post_processing' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                    <div>
+                      <div className="font-medium capitalize">{label}</div>
+                      {message && <div className="opacity-70 max-w-xs truncate" title={message}>{message}</div>}
+                      {events.length > 1 && (
+                        <div className="opacity-50">{events.length} eventos</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {time && <span className="font-mono opacity-70">{time}</span>}
+                    <span className={`px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 ${statusChip(status)}`}>
+                      {status}
+                    </span>
+                  </div>
+                </li>
+              )
+            })}
+          </ol>
+        ) : (
+          <p className="text-xs opacity-70">Nenhum evento registrado ainda.</p>
+        )}
       </section>
 
       {/* Progresso detalhado removido (mantido apenas o bloco minimalista colapsável acima) */}
