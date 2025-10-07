@@ -74,6 +74,13 @@ export type RunDetail = {
   started_at?: string
   finished_at?: string
   subproject_id?: string
+  project_name?: string
+  subproject_name?: string
+  prompt_name?: string
+  prompt_category?: string
+  prompt_template_category?: string
+  prompt_template_name?: string
+  prompt_id?: string
   prompt_text?: string
   model_name?: string
   tokens_input?: number

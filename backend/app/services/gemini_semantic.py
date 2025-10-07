@@ -144,7 +144,12 @@ class GeminiSemanticService:
         return GeminiSemanticService._get_empty_structure()
 
     @staticmethod
-    def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_payload(
+        data: Dict[str, Any],
+        *,
+        response_text: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         def as_list(value: Any) -> List[Any]:
             if isinstance(value, list):
                 return value
@@ -213,6 +218,80 @@ class GeminiSemanticService:
             if kw.get("token")
         ]
 
+        # === Fallback: derivar concorrentes se lista vier vazia ===
+        if not payload["competitors"] and payload["entities"]:
+            import re
+
+            response_lower = response_text.lower() if isinstance(response_text, str) else ""
+            project_tokens: List[str] = []
+            if project_name:
+                pn = project_name.strip().lower()
+                if pn:
+                    project_tokens.append(pn)
+                    # também considerar versões sem acentos / abreviações simples
+                    project_tokens.extend({
+                        pn.replace(" banco", "").strip(),
+                        pn.replace(" do brasil", "").strip(),
+                    })
+            fallback: Dict[str, Dict[str, Any]] = {}
+
+            def count_mentions(text: str, term: str) -> int:
+                if not text or not term:
+                    return 0
+                # Escapar termo para regex (respeitando espaços e caracteres especiais)
+                pattern = r"(?<![\w@])" + re.escape(term.lower()) + r"(?![\w@])"
+                return len(re.findall(pattern, text))
+
+            for entity in payload["entities"]:
+                name = (entity.get("name") or "").strip()
+                if not name:
+                    continue
+                name_lower = name.lower()
+
+                # Ignorar marca principal do projeto
+                if project_tokens and any(tok and tok in name_lower for tok in project_tokens if tok):
+                    continue
+
+                category = (entity.get("category") or "").lower()
+                roles = [r.lower() for r in entity.get("roles") or []]
+
+                looks_like_competitor = (
+                    "competitor" in roles
+                    or category in {"brand", "company", "organization"}
+                    or any(keyword in name_lower for keyword in ["bank", "banco", "fintech", "cartão", "card"])
+                )
+
+                if not looks_like_competitor:
+                    continue
+
+                entry = fallback.setdefault(
+                    name_lower,
+                    {
+                        "name": name,
+                        "mentions": 0,
+                        "keywords": set(),
+                        "categories": set(),
+                    },
+                )
+                if category:
+                    entry["categories"].add(category)
+
+                if response_lower:
+                    entry["mentions"] += count_mentions(response_lower, name_lower)
+
+            if fallback:
+                competitors_list: List[Dict[str, Any]] = []
+                for data_entry in fallback.values():
+                    competitors_list.append(
+                        {
+                            "name": data_entry["name"],
+                            "mentions": data_entry["mentions"] or None,
+                            "categories": sorted({c for c in data_entry["categories"] if c}),
+                        }
+                    )
+                if competitors_list:
+                    payload["competitors"] = competitors_list
+
         return payload
 
     def build_prompt(
@@ -250,12 +329,14 @@ Importante: Retorne APENAS o JSON, sem texto adicional.
         
         # Prompt completo normal
         brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
+        domain_hint = "Domínio principal: banco.com.br (Banco do Brasil)." if project_name and "Brasil" in project_name else ""
 
         return f"""
 Você é um analista de SEO e posicionamento de marcas para respostas de AI Overview em português.
 Extraia insights semânticos estruturados seguindo as instruções abaixo.
 
 {brand_hint}
+{domain_hint}
 
 ### Pergunta original
 {question}
@@ -432,7 +513,11 @@ Observação: Alguns dados podem estar incompletos.
         data = self._safe_json_loads(raw_text)
         print(f"[SEMANTIC] JSON parsed. Keys: {list(data.keys()) if data else 'None'}")
         
-        normalized = self._normalize_payload(data)
+        normalized = self._normalize_payload(
+            data,
+            response_text=response_text,
+            project_name=project_name,
+        )
         print(f"[SEMANTIC] Normalized payload keys: {list(normalized.keys())}")
         print(f"[SEMANTIC] Entities count: {len(normalized.get('entities', []))}")
 

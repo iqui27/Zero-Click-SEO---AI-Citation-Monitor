@@ -14,7 +14,26 @@ import os
 
 from app.db.session import SessionLocal
 from app.core.config import settings
-from app.models.models import Project, Domain, Prompt, PromptVersion, Engine, Run, Citation, Reason, Evidence, RunEvent, SubProject, PromptTemplate, Monitor, MonitorTemplate, MonitorHistory, MonitorHistoryRun, Insight, RunSemanticInsight
+from app.models.models import (
+    Project,
+    Domain,
+    Prompt,
+    PromptVersion,
+    Engine,
+    Run,
+    Citation,
+    Reason,
+    Evidence,
+    RunEvent,
+    SubProject,
+    PromptTemplate,
+    Monitor,
+    MonitorTemplate,
+    MonitorHistory,
+    MonitorHistoryRun,
+    Insight,
+    RunSemanticInsight,
+)
 from app.schemas.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -1281,6 +1300,8 @@ def list_runs(
     q = (
         db.query(
             Run.id,
+            Run.project_id.label("project_id"),
+            Run.subproject_id.label("subproject_id"),
             Engine.name.label("engine"),
             Run.status,
             Run.started_at,
@@ -1307,13 +1328,15 @@ def list_runs(
             Run.classification_confidence,
             Run.perceived_value_category,
             Run.semantic_summary,
-            # Usando subquery mais eficiente para template_name
-            literal_column("'-'").label("template_name"),
-            literal_column("NULL").label("template_category"),
-            func.coalesce(SubProject.name, literal_column("'-'")).label("subproject_name"),
+            PromptVersion.text.label("prompt_version_text"),
+            Prompt.name.label("prompt_name_raw"),
+            func.coalesce(SubProject.name, literal_column("'-'"))
+            .label("subproject_name"),
             Monitor.name.label("monitor_name"),
         )
         .join(Engine, Engine.id == Run.engine_id)
+        .outerjoin(PromptVersion, PromptVersion.id == Run.prompt_version_id)
+        .outerjoin(Prompt, Prompt.id == PromptVersion.prompt_id)
         .outerjoin(SubProject, SubProject.id == Run.subproject_id)
         .outerjoin(Monitor, Monitor.id == Run.monitor_id)
     )
@@ -1368,42 +1391,104 @@ def list_runs(
         q = q.order_by(nulls_last.asc(), sort_col.desc(), Run.id.desc())
 
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
-    return [
-        RunListItem(
-            id=r.id,
-            engine=r.engine,
-            status=r.status,
-            started_at=r.started_at,
-            finished_at=r.finished_at,
-            zcrs=r.zcrs,
-            amr_flag=r.amr_flag,
-            dcr_flag=r.dcr_flag,
-            template_name=getattr(r, "template_name", None),
-            template_category=getattr(r, "template_category", None),
-            subproject_name=getattr(r, "subproject_name", None),
-            cost_usd=getattr(r, "cost_usd", None),
-            tokens_total=getattr(r, "tokens_total", None),
-            cycles_total=getattr(r, "cycles_total", None),
-            cycle_delay_seconds=getattr(r, "cycle_delay_seconds", None),
-            monitor_id=getattr(r, "monitor_id", None),
-            schedule_date=getattr(r, "schedule_date", None),
-            schedule_slot=getattr(r, "schedule_slot", None),
-            schedule_index_today=getattr(r, "schedule_index_today", None),
-            schedule_total_today=getattr(r, "schedule_total_today", None),
-            schedule_source=getattr(r, "schedule_source", None),
-            monitor_name=getattr(r, "monitor_name", None),
-            # Campos de classificação Zero-Click
-            response_type=getattr(r, "response_type", None),
-            sufficiency_level=getattr(r, "sufficiency_level", None),
-            actionability_type=getattr(r, "actionability_type", None),
-            trust_source=getattr(r, "trust_source", None),
-            brand_positioning=getattr(r, "brand_positioning", None),
-            classification_confidence=getattr(r, "classification_confidence", None),
-            perceived_value_category=getattr(r, "perceived_value_category", None),
-            semantic_summary=getattr(r, "semantic_summary", None),
+
+    def resolve_template_meta(row) -> tuple[str | None, str | None]:
+        text_value = getattr(row, "prompt_version_text", None)
+        raw_name = getattr(row, "prompt_name_raw", None)
+        project_id_value = getattr(row, "project_id", None)
+        if not project_id_value:
+            return None, None
+
+        candidates = []
+        if text_value:
+            candidates.append(PromptTemplate.text == text_value)
+        if raw_name:
+            candidates.append(PromptTemplate.name == raw_name)
+            normalized = raw_name.replace("Template:", "", 1).strip()
+            if normalized and normalized != raw_name:
+                candidates.append(PromptTemplate.name == normalized)
+
+        if not candidates:
+            return None, None
+
+        base_query = (
+            db.query(PromptTemplate)
+            .filter(PromptTemplate.project_id == project_id_value)
+            .filter(or_(*candidates))
+            .order_by(PromptTemplate.id.desc())
         )
-        for r in rows
-    ]
+
+        templates = base_query.limit(25).all()
+        if not templates:
+            return None, None
+
+        subproject_id_value = getattr(row, "subproject_id", None)
+
+        def is_exact_text(tpl):
+            return bool(text_value and tpl.text and tpl.text.strip() == text_value.strip())
+
+        def is_exact_name(tpl):
+            if not raw_name:
+                return False
+            normalized = raw_name.replace("Template:", "", 1).strip()
+            tpl_name = (tpl.name or "").strip()
+            return tpl_name == raw_name.strip() or (normalized and tpl_name == normalized)
+
+        best_tpl = None
+        best_score = (-1, -1, -1, -1, -1)
+        for idx, tpl in enumerate(templates):
+            same_sub = 1 if subproject_id_value and tpl.subproject_id == subproject_id_value else 0
+            non_generic = 1 if (tpl.category or "").strip().lower() not in {"geral", "general", ""} else 0
+            exact_text = 1 if is_exact_text(tpl) else 0
+            exact_name = 1 if is_exact_name(tpl) else 0
+            score = (same_sub, non_generic, exact_text, exact_name, -idx)
+            if score > best_score:
+                best_score = score
+                best_tpl = tpl
+
+        if best_tpl:
+            return best_tpl.name, best_tpl.category
+        return None, None
+
+    result: list[RunListItem] = []
+    for r in rows:
+        template_name, template_category = resolve_template_meta(r)
+        result.append(
+            RunListItem(
+                id=r.id,
+                engine=r.engine,
+                status=r.status,
+                started_at=r.started_at,
+                finished_at=r.finished_at,
+                zcrs=r.zcrs,
+                amr_flag=r.amr_flag,
+                dcr_flag=r.dcr_flag,
+                template_name=template_name,
+                template_category=template_category,
+                subproject_name=getattr(r, "subproject_name", None),
+                cost_usd=getattr(r, "cost_usd", None),
+                tokens_total=getattr(r, "tokens_total", None),
+                cycles_total=getattr(r, "cycles_total", None),
+                cycle_delay_seconds=getattr(r, "cycle_delay_seconds", None),
+                monitor_id=getattr(r, "monitor_id", None),
+                schedule_date=getattr(r, "schedule_date", None),
+                schedule_slot=getattr(r, "schedule_slot", None),
+                schedule_index_today=getattr(r, "schedule_index_today", None),
+                schedule_total_today=getattr(r, "schedule_total_today", None),
+                schedule_source=getattr(r, "schedule_source", None),
+                monitor_name=getattr(r, "monitor_name", None),
+                response_type=getattr(r, "response_type", None),
+                sufficiency_level=getattr(r, "sufficiency_level", None),
+                actionability_type=getattr(r, "actionability_type", None),
+                trust_source=getattr(r, "trust_source", None),
+                brand_positioning=getattr(r, "brand_positioning", None),
+                classification_confidence=getattr(r, "classification_confidence", None),
+                perceived_value_category=getattr(r, "perceived_value_category", None),
+                semantic_summary=getattr(r, "semantic_summary", None),
+            )
+        )
+
+    return result
 
 # Workaround: forçar registro explícito do GET /runs
 api_router.add_api_route("/runs", list_runs, methods=["GET"], response_model=list[RunListItem])
@@ -1696,20 +1781,92 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run não encontrado")
+
     engine = db.get(Engine, run.engine_id)
-    # recuperar prompt text
+    engine_payload = EngineCreate(
+        name=engine.name if engine else run.engine_id,
+        region=engine.region if engine else None,
+        device=engine.device if engine else None,
+        config_json=engine.config_json if engine else None,
+    )
+
     pv = db.get(PromptVersion, run.prompt_version_id)
     prompt_text = pv.text if pv else None
+    prompt_name = None
+    prompt_category = None
+    prompt_id = None
+    template_category = None
+    template_name = None
+    prompt_template_id = getattr(run, "template_id", None)
+    if pv:
+        prm = db.get(Prompt, pv.prompt_id)
+        if prm:
+            prompt_name = prm.name
+            prompt_category = prm.intent or prm.persona or prm.name or None
+            prompt_id = prm.id
+        template = None
+        if prompt_template_id:
+            template = db.get(PromptTemplate, prompt_template_id)
+        if not template:
+            query = db.query(PromptTemplate).filter(PromptTemplate.project_id == run.project_id)
+            normalized_name = None
+            if prompt_name:
+                normalized_name = prompt_name.replace("Template:", "", 1).strip()
+                query = query.filter(PromptTemplate.name == normalized_name)
+            elif prompt_text:
+                query = query.filter(PromptTemplate.text == prompt_text)
+
+            if run.subproject_id:
+                query = query.order_by(
+                    case((PromptTemplate.subproject_id == run.subproject_id, 0), else_=1),
+                    PromptTemplate.id.desc(),
+                )
+            else:
+                query = query.order_by(PromptTemplate.id.desc())
+
+            template = query.first()
+
+        if not template and prompt_text:
+            template = (
+                db.query(PromptTemplate)
+                .filter(
+                    PromptTemplate.project_id == run.project_id,
+                    PromptTemplate.text == prompt_text,
+                )
+                .order_by(PromptTemplate.id.desc())
+                .first()
+            )
+
+        if template:
+            template_category = template.category
+            template_name = template.name
+
+    project = db.get(Project, run.project_id)
+    project_name = project.name if project else None
+
+    subproject_name = None
+    if run.subproject_id:
+        sub = db.get(SubProject, run.subproject_id)
+        if sub:
+            subproject_name = sub.name
+
     return RunDetailOut(
         id=run.id,
         project_id=run.project_id,
         prompt_version_id=run.prompt_version_id,
-        engine=EngineCreate(name=engine.name, region=engine.region, device=engine.device, config_json=engine.config_json),
+        engine=engine_payload,
         status=run.status,
         started_at=run.started_at,
         finished_at=run.finished_at,
         subproject_id=run.subproject_id,
+        project_name=project_name,
+        subproject_name=subproject_name,
+        prompt_name=prompt_name,
+        prompt_category=prompt_category,
+        prompt_id=prompt_id,
         prompt_text=prompt_text,
+        prompt_template_category=template_category,
+        prompt_template_name=template_name,
         response_type=run.response_type,
         sufficiency_level=run.sufficiency_level,
         actionability_type=run.actionability_type,
@@ -1766,12 +1923,12 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         has_faqs=run.has_faqs,
         has_tables=run.has_tables,
         has_step_by_step=run.has_step_by_step,
-        irzc_score=run.irzc_score,
-        ctr_expected=run.ctr_expected,
-        ctr_real=run.ctr_real,
-        ctr_ratio=run.ctr_ratio,
-        organic_position=run.organic_position,
-        competitors_top10=run.competitors_in_top10,
+        irzc_score=getattr(run, "irzc_score", None),
+        ctr_expected=getattr(run, "ctr_expected", None),
+        ctr_real=getattr(run, "ctr_real", None),
+        ctr_ratio=getattr(run, "ctr_ratio", None),
+        organic_position=getattr(run, "organic_position", None),
+        competitors_top10=getattr(run, "competitors_in_top10", None),
     )
 
 

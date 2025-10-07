@@ -155,7 +155,10 @@ class RunListItem(BaseModel):
 
 
 class RunDetailOut(BaseModel):
-    model_config = {"from_attributes": True}
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+    }
     
     id: str
     project_id: str
@@ -165,6 +168,13 @@ class RunDetailOut(BaseModel):
     started_at: Optional[datetime]
     finished_at: Optional[datetime]
     subproject_id: Optional[str] = None
+    project_name: Optional[str] = None
+    subproject_name: Optional[str] = None
+    prompt_name: Optional[str] = None
+    prompt_category: Optional[str] = None
+    prompt_template_category: Optional[str] = None
+    prompt_template_name: Optional[str] = None
+    prompt_id: Optional[str] = None
     # prompt
     prompt_text: Optional[str] = None
     # observabilidade

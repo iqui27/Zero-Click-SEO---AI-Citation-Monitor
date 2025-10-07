@@ -445,23 +445,73 @@ export default function RunDetail() {
 
   const semanticPayload = semantic?.payload || null
   const semanticPerception = semanticPayload?.perception || {}
+  const normalizeName = (value?: string | null) =>
+    (value || '')
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .replace(/[^\w\s-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+
+  const primaryProjectName = (() => {
+    if (!detail?.project_name) return null
+    const [left] = detail.project_name.split('–')
+    const cleaned = left.replace(/^projeto\s+/i, '').trim()
+    return cleaned || detail.project_name
+  })()
+
   const semanticSummaryText = semantic?.semantic_summary || semanticPayload?.summary?.headline || ''
+  const semanticPerceptionPrimary = semanticPerception?.primary_category || semantic?.perceived_value_category || null
+  const semanticPerceptionSecondary = Array.isArray(semanticPerception?.secondary_categories)
+    ? semanticPerception.secondary_categories.filter(Boolean)
+    : []
   const semanticSummaryBullets = Array.isArray(semanticPayload?.summary?.bullets)
     ? semanticPayload.summary.bullets.slice(0, 4)
     : []
-  const semanticBrandEntities = Array.isArray(semanticPayload?.entities)
-    ? semanticPayload.entities
-        .filter((entity: any) => Array.isArray(entity?.roles) && entity.roles.some((role: string) => role.toLowerCase() === 'brand'))
-        .slice(0, 5)
-    : []
+  const semanticEntities = Array.isArray(semanticPayload?.entities) ? semanticPayload?.entities : []
+  const brandNameSet = new Set<string>(
+    semanticEntities
+      .filter((entity: any) => Array.isArray(entity?.roles) && entity.roles.some((role: string) => role.toLowerCase() === 'brand'))
+      .map((entity: any) => normalizeName(entity?.name))
+      .filter(Boolean)
+  )
+  if (primaryProjectName) {
+    brandNameSet.add(normalizeName(primaryProjectName))
+  }
+
+  const brandAliases = Array.from(brandNameSet).filter(Boolean)
+  const isPrimaryBrand = (value?: string | null) => {
+    const normalized = normalizeName(value || '')
+    if (!normalized) return false
+    if (brandNameSet.has(normalized)) return true
+    return brandAliases.some((brand) => {
+      if (!brand) return false
+      return normalized.includes(brand) || brand.includes(normalized)
+    })
+  }
+
+  const semanticBrandEntities = semanticEntities
+    .filter((entity: any) => {
+      const roles = Array.isArray(entity?.roles) ? entity.roles.map((r: string) => (r || '').toLowerCase()) : []
+      const category = (entity?.category || '').toLowerCase()
+      return roles.includes('brand') || roles.includes('competitor') || category === 'brand'
+    })
+    .slice(0, 6)
+
   const semanticCompetitorsList = Array.isArray(semanticPayload?.competitors)
-    ? semanticPayload.competitors.slice(0, 6)
-    : []
-  const derivedCompetitors = Array.isArray(semanticPayload?.entities)
-    ? semanticPayload.entities
-        .filter((entity: any) => Array.isArray(entity?.roles) && entity.roles.some((role: string) => role.toLowerCase() === 'competitor'))
+    ? semanticPayload.competitors
+        .filter((item: any) => !isPrimaryBrand(item?.name))
         .slice(0, 6)
     : []
+  const derivedCompetitors = semanticEntities
+    .filter((entity: any) => {
+      if (!Array.isArray(entity?.roles)) return false
+      const rolesLower = entity.roles.map((role: string) => (role || '').toLowerCase())
+      if (!rolesLower.includes('competitor')) return false
+      return !isPrimaryBrand(entity?.name)
+    })
+    .slice(0, 6)
   const semanticKeywords = Array.isArray(semanticPayload?.keywords)
     ? semanticPayload.keywords.slice(0, 12)
     : []
@@ -479,6 +529,22 @@ export default function RunDetail() {
         : detail?.status === 'post_processing'
           ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300 animate-pulse'
           : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
+
+  const categoryValue = detail?.prompt_template_category || detail?.prompt_category || detail?.prompt_intent || null
+  const headerChips = [
+    detail?.project_name ? { label: 'Projeto', value: detail.project_name } : null,
+    detail?.subproject_name ? { label: 'Tema', value: detail.subproject_name } : null,
+    categoryValue ? { label: 'Categoria', value: categoryValue } : null,
+  ].filter(Boolean)
+
+  const quickStats = [
+    typeof report?.amr === 'number' ? { label: 'AMR', value: report.amr.toFixed(2) } : null,
+    typeof report?.dcr === 'number' ? { label: 'DCR', value: report.dcr.toFixed(2) } : null,
+    typeof report?.zcrs === 'number' ? { label: 'ZCRS', value: report.zcrs.toFixed(1) } : null,
+    typeof detail?.cost_usd === 'number' ? { label: 'Custo', value: `$${detail.cost_usd.toFixed(4)}` } : null,
+    typeof detail?.tokens_total === 'number' ? { label: 'Tokens', value: formatNumberCompact(detail.tokens_total) } : null,
+    typeof detail?.cycles_total === 'number' ? { label: 'Ciclos', value: String(detail.cycles_total) } : null,
+  ].filter(Boolean)
 
   const timeline = useMemo(() => {
     const sorted = [...events].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -516,83 +582,126 @@ export default function RunDetail() {
   return (
     <div className="space-y-6">
       <Toaster richColors position="top-right" />
-      <div className="flex items-center gap-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Run {id}</h1>
-        {detail?.status && (
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadgeTone}`}>
-            {statusBadgeLabel}
-          </span>
-        )}
-        {detail?.status === 'post_processing' && !detail?.finished_at && (
-          <span className="text-xs flex items-center gap-1 text-amber-600 dark:text-amber-300">
-            <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" aria-hidden />
-            Aguardando insights semânticos
-          </span>
-        )}
-        {(detail?.cycles_total || 1) > 1 && (
-          <div className="ml-4 flex items-center gap-2 text-sm">
-            <span className="opacity-70">Ciclo:</span>
-            {/* Segmented control moderno com highlight deslizante */}
-            <div className="relative">
-              <div
-                role="tablist"
-                aria-label="Selecionar ciclo"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowRight') {
-                    setSelectedCycle((c) => Math.min(c + 1, detail?.cycles_total || 1))
-                  } else if (e.key === 'ArrowLeft') {
-                    setSelectedCycle((c) => Math.max(1, c - 1))
-                  }
-                }}
-                className="relative isolate grid h-8 rounded-md overflow-hidden border border-neutral-300 dark:border-neutral-700"
-                style={{ gridTemplateColumns: `repeat(${detail?.cycles_total || 1}, minmax(0, 1fr))` }}
-              >
-                {/* Fundo leve */}
-                <div aria-hidden className="absolute inset-0 bg-neutral-50/60 dark:bg-neutral-900/40" />
-                {/* Destaque móvel */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-3xl font-semibold tracking-tight">{id}</h1>
+            {detail?.status && (
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadgeTone}`}>
+                {statusBadgeLabel}
+              </span>
+            )}
+            {detail?.status === 'post_processing' && !detail?.finished_at && (
+              <span className="text-xs flex items-center gap-1 text-amber-600 dark:text-amber-300">
+                <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" aria-hidden />
+                Aguardando insights semânticos
+              </span>
+            )}
+          </div>
+
+          {headerChips.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {headerChips.map((chip, idx) => (
+                <span
+                  key={`${chip.label}-${chip.value}-${idx}`}
+                  className="inline-flex flex-col justify-center gap-0.5 px-3 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 text-xs"
+                >
+                  <span className="uppercase tracking-wide text-[10px] text-neutral-500">{chip.label}</span>
+                  <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{chip.value}</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {quickStats.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {quickStats.map((stat, idx) => (
+                <span
+                  key={`${stat.label}-${idx}`}
+                  className="px-2 py-0.5 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/50 flex items-center gap-1"
+                >
+                  <span className="uppercase tracking-wide text-[10px] text-neutral-500">{stat.label}</span>
+                  <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{stat.value}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {(detail?.cycles_total || 1) > 1 && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="opacity-70">Ciclo:</span>
+              <div className="relative">
                 <div
-                  aria-hidden
-                  className="absolute inset-y-0 left-0 pointer-events-none rounded-md bg-gradient-to-r from-red-500 to-red-600 dark:from-red-600 dark:to-red-700 shadow-md transition-transform duration-300"
-                  style={{ width: `calc(100% / ${(detail?.cycles_total || 1)})`, transform: `translateX(${(selectedCycle - 1) * 100}%)` }}
-                />
-                {Array.from({ length: detail?.cycles_total || 1 }, (_, i) => i + 1).map((n) => {
-                  const active = selectedCycle === n
-                  return (
-                    <button
-                      key={n}
-                      role="tab"
-                      aria-selected={active}
-                      className={`relative z-10 text-xs sm:text-sm px-3 text-center font-medium transition-colors duration-200 ${active ? 'text-white' : 'text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-neutral-100'}`}
-                      onClick={() => setSelectedCycle(n)}
-                    >
-                      #{n}
-                    </button>
-                  )
-                })}
+                  role="tablist"
+                  aria-label="Selecionar ciclo"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight') {
+                      setSelectedCycle((c) => Math.min(c + 1, detail?.cycles_total || 1))
+                    } else if (e.key === 'ArrowLeft') {
+                      setSelectedCycle((c) => Math.max(1, c - 1))
+                    }
+                  }}
+                  className="relative isolate grid h-8 rounded-md overflow-hidden border border-neutral-300 dark:border-neutral-700"
+                  style={{ gridTemplateColumns: `repeat(${detail?.cycles_total || 1}, minmax(0, 1fr))` }}
+                >
+                  <div aria-hidden className="absolute inset-0 bg-neutral-50/60 dark:bg-neutral-900/40" />
+                  <div
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 pointer-events-none rounded-md bg-gradient-to-r from-red-500 to-red-600 dark:from-red-600 dark:to-red-700 shadow-md transition-transform duration-300"
+                    style={{ width: `calc(100% / ${(detail?.cycles_total || 1)})`, transform: `translateX(${(selectedCycle - 1) * 100}%)` }}
+                  />
+                  {Array.from({ length: detail?.cycles_total || 1 }, (_, i) => i + 1).map((n) => {
+                    const active = selectedCycle === n
+                    return (
+                      <button
+                        key={n}
+                        role="tab"
+                        aria-selected={active}
+                        className={`relative z-10 text-xs sm:text-sm px-3 text-center font-medium transition-colors duration-200 ${active ? 'text-white' : 'text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-neutral-100'}`}
+                        onClick={() => setSelectedCycle(n)}
+                      >
+                        #{n}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        {detail?.engine?.name?.startsWith('gemini') && (
-          <label className="flex items-center gap-2 text-sm ml-auto">
-            <input type="checkbox" checked={useSearch} onChange={(e) => setUseSearch(e.target.checked)} />
-            Usar web search (experimental)
-          </label>
-        )}
-        <Button onClick={reprocess} disabled={reprocessing || !detail} variant="secondary">{reprocessing ? 'Reprocessando…' : 'Reprocessar'}</Button>
+          )}
+          {detail?.engine?.name?.startsWith('gemini') && (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={useSearch} onChange={(e) => setUseSearch(e.target.checked)} />
+              Usar web search (experimental)
+            </label>
+          )}
+          <Button onClick={reprocess} disabled={reprocessing || !detail} variant="secondary">{reprocessing ? 'Reprocessando…' : 'Reprocessar'}</Button>
+        </div>
       </div>
 
-      {(report || detail) && (
-        <div className="grid lg:grid-cols-5 gap-3">
-          {report && <Card title="AMR" value={report.amr.toFixed(2)} />}
-          {report && <Card title="DCR" value={report.dcr.toFixed(2)} />}
-          {report && <Card title="ZCRS" value={report.zcrs.toFixed(1)} />}
-          {typeof detail?.cost_usd === 'number' && <Card title="Custo" value={`$${detail.cost_usd.toFixed(4)}`} />}
-          {typeof detail?.tokens_total === 'number' && <Card title="Tokens" value={formatNumberCompact(detail.tokens_total)} />}        
-          {typeof detail?.cycles_total === 'number' && <Card title="Ciclos" value={detail.cycles_total} />}
+      <section className="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-neutral-50/60 dark:bg-neutral-900/60 p-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-300">Prompt utilizado</h2>
+            {detail?.prompt_name && (
+              <p className="text-base font-medium text-neutral-900 dark:text-neutral-50">{detail.prompt_name}</p>
+            )}
+            {detail?.prompt_category && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Geral: {detail.prompt_category}</p>
+            )}
+          </div>
+          {detail?.prompt_id && (
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 bg-white/70 dark:bg-neutral-900/50">
+              {detail.prompt_id}
+            </span>
+          )}
         </div>
-      )}
+        <pre className="whitespace-pre-wrap text-sm leading-relaxed bg-white/70 dark:bg-neutral-950/60 border border-neutral-200 dark:border-neutral-800 rounded-md p-3">
+          {detail?.prompt_text || 'Prompt não disponível.'}
+        </pre>
+      </section>
 
       {/* Badges de meta */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -644,7 +753,7 @@ export default function RunDetail() {
                 )}
               </div>
               {semanticSummaryText ? (
-                <p className="text-sm leading-relaxed">{semanticSummaryText}</p>
+                <p className="text-sm leading-relaxed whitespace-pre-wrap">{semanticSummaryText}</p>
               ) : (
                 <p className="text-sm opacity-70">Sem resumo disponível.</p>
               )}
@@ -657,27 +766,40 @@ export default function RunDetail() {
               )}
             </div>
             <div className="border rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 space-y-3">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Marcas &amp; percepção</h3>
-                {semanticPerception?.primary_category && (
-                  <Badge variant="outline" className="capitalize text-xs">
-                    {perceptionLabels[semanticPerception.primary_category] || semanticPerception.primary_category}
-                  </Badge>
+              <div className="flex items-center gap-2 justify-between">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold">Marcas &amp; percepção</h3>
+                  {semanticPerceptionPrimary && (
+                    <Badge variant="outline" className="capitalize text-xs">
+                      {perceptionLabels[semanticPerceptionPrimary] || semanticPerceptionPrimary}
+                    </Badge>
+                  )}
+                </div>
+                {semanticPerceptionSecondary.length > 0 && (
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    +{semanticPerceptionSecondary.length} categorias
+                  </span>
                 )}
               </div>
               {semanticBrandEntities.length ? (
-                <ul className="space-y-1 text-sm">
-                  {semanticBrandEntities.map((entity: any) => (
-                    <li key={entity.name} className="flex items-center justify-between gap-2">
-                      <span>{entity.name}</span>
-                      {typeof entity.confidence === 'number' && (
-                        <span className="text-xs text-muted-foreground">conf {(entity.confidence * 100).toFixed(0)}%</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <div className="flex flex-wrap gap-2">
+                  {semanticBrandEntities.map((entity: any, idx: number) => {
+                    const roles = Array.isArray(entity?.roles) ? entity.roles.filter(Boolean).slice(0, 2) : []
+                    return (
+                      <span
+                        key={`${entity.name || idx}`}
+                        className="px-2.5 py-1 rounded-full border border-neutral-300 dark:border-neutral-700 text-xs bg-white/80 dark:bg-neutral-900/70 flex items-center gap-1"
+                      >
+                        <span>{entity.name || '—'}</span>
+                        {roles.length > 0 && (
+                          <span className="text-[10px] uppercase tracking-wide opacity-60">{roles.join('/')}</span>
+                        )}
+                      </span>
+                    )
+                  })}
+                </div>
               ) : (
-                <div className="text-sm opacity-70">Nenhuma marca destacada.</div>
+                <div className="text-sm opacity-70">Nenhuma entidade reconhecida como marca ou concorrente.</div>
               )}
               {competitorsToShow.length > 0 && (
                 <div>
@@ -810,18 +932,7 @@ export default function RunDetail() {
         )}
       </section>
 
-      {/* Progresso detalhado removido (mantido apenas o bloco minimalista colapsável acima) */}
-
-      {detail?.prompt_text && (
-        <section>
-          <h2 className="text-lg font-medium">Prompt usado</h2>
-          <pre className="whitespace-pre-wrap text-sm p-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900">
-            {detail.prompt_text}
-          </pre>
-        </section>
-      )}
-
-      {/* AI Overview / Orgânicos (modo Google) — posicionado logo abaixo do Prompt usado */}
+      {/* AI Overview / Orgânicos (modo Google) — posicionado logo abaixo do Prompt */}
       <section>
         {(() => {
           const raw = evidences?.[0]?.parsed_json?.raw || {}
