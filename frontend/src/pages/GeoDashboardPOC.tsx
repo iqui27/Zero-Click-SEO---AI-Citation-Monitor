@@ -1177,158 +1177,123 @@ export default function GeoDashboardPOC() {
       </Card>
 
       {/* SWOT */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Análise SWOT</CardTitle>
-          <CardDescription>
-            Análise estratégica calculada a partir de métricas de performance e posicionamento
+      <Card className="border border-slate-200">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-xl font-semibold text-slate-900">Análise SWOT</CardTitle>
+          <CardDescription className="text-slate-500">
+            Métricas de performance e posicionamento
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {/* Resumo quantitativo */}
-          <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="text-center p-3 rounded-lg bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800">
-              <div className="text-2xl font-bold text-green-700 dark:text-green-400">
-                {dashboard.swot.strengths.length}
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            {[
+              {
+                label: 'Forças',
+                count: dashboard.swot.strengths.length,
+                color: 'text-emerald-600',
+                border: 'border-l-4 border-emerald-500',
+                description: 'Vantagens competitivas'
+              },
+              {
+                label: 'Fraquezas',
+                count: dashboard.swot.weaknesses.length,
+                color: 'text-rose-600',
+                border: 'border-l-4 border-rose-500',
+                description: 'Pontos de melhoria'
+              },
+              {
+                label: 'Oportunidades',
+                count: dashboard.swot.opportunities.length,
+                color: 'text-blue-600',
+                border: 'border-l-4 border-blue-500',
+                description: 'Potenciais de crescimento'
+              },
+              {
+                label: 'Ameaças',
+                count: dashboard.swot.threats.length,
+                color: 'text-amber-600',
+                border: 'border-l-4 border-amber-500',
+                description: 'Riscos a mitigar'
+              },
+            ].map((item, idx) => (
+              <div key={idx} className={`rounded-lg bg-white shadow-sm px-4 py-5 ${item.border}`}>
+                <div className="text-sm uppercase tracking-wide text-slate-500">{item.label}</div>
+                <div className={`text-2xl font-semibold mt-1 ${item.color}`}>{item.count}</div>
+                <div className="text-xs text-slate-500 mt-2">{item.description}</div>
               </div>
-              <div className="text-xs text-green-600 dark:text-green-500 mt-1">Forças</div>
-            </div>
-            <div className="text-center p-3 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800">
-              <div className="text-2xl font-bold text-red-700 dark:text-red-400">
-                {dashboard.swot.weaknesses.length}
-              </div>
-              <div className="text-xs text-red-600 dark:text-red-500 mt-1">Fraquezas</div>
-            </div>
-            <div className="text-center p-3 rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800">
-              <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">
-                {dashboard.swot.opportunities.length}
-              </div>
-              <div className="text-xs text-blue-600 dark:text-blue-500 mt-1">Oportunidades</div>
-            </div>
-            <div className="text-center p-3 rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800">
-              <div className="text-2xl font-bold text-orange-700 dark:text-orange-400">
-                {dashboard.swot.threats.length}
-              </div>
-              <div className="text-xs text-orange-600 dark:text-orange-500 mt-1">Ameaças</div>
-            </div>
+            ))}
           </div>
 
-          {/* Score de equilíbrio SWOT */}
-          <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center justify-between">
+          <div className="border-t border-slate-200 pt-4">
+            <div className="flex items-center justify-between text-sm">
               <div>
-                <h4 className="font-semibold text-sm text-gray-900 dark:text-white">Score de Equilíbrio SWOT</h4>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  Calculado como: (Forças + Oportunidades) - (Fraquezas + Ameaças)
-                </p>
+                <div className="font-semibold text-slate-700">Score de Equilíbrio SWOT</div>
+                <div className="text-xs text-slate-500">(Forças + Oportunidades) - (Fraquezas + Ameaças)</div>
               </div>
               <div className="text-right">
-                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
-                  {(() => {
-                    const score = (dashboard.swot.strengths.length + dashboard.swot.opportunities.length) - 
-                                  (dashboard.swot.weaknesses.length + dashboard.swot.threats.length)
-                    return score > 0 ? `+${score}` : score
-                  })()}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {(() => {
-                    const score = (dashboard.swot.strengths.length + dashboard.swot.opportunities.length) - 
-                                  (dashboard.swot.weaknesses.length + dashboard.swot.threats.length)
-                    return score > 0 ? 'Posição Favorável' : score < 0 ? 'Requer Atenção' : 'Neutro'
-                  })()}
-                </div>
+                {(() => {
+                  const score = (dashboard.swot.strengths.length + dashboard.swot.opportunities.length) - (dashboard.swot.weaknesses.length + dashboard.swot.threats.length)
+                  const label = score > 0 ? 'Positivo' : score < 0 ? 'Requer Atenção' : 'Neutro'
+                  const color = score > 0 ? 'text-emerald-600' : score < 0 ? 'text-rose-600' : 'text-slate-500'
+                  return (
+                    <>
+                      <div className={`text-2xl font-bold ${color}`}>{score > 0 ? `+${score}` : score}</div>
+                      <div className={`text-xs font-medium ${color}`}>{label}</div>
+                    </>
+                  )
+                })()}
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="border-2 border-green-300 dark:border-green-700 rounded-lg p-4 bg-green-50 dark:bg-green-900/10">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-green-800 dark:text-green-300">Forças (Strengths)</h4>
-                <Badge className="bg-green-600 text-white">{dashboard.swot.strengths.length}</Badge>
-              </div>
-              <p className="text-xs text-green-700 dark:text-green-400 mb-3 italic">
-                Vantagens competitivas e pontos fortes identificados
-              </p>
-              <ul className="space-y-2">
-                {dashboard.swot.strengths.length > 0 ? (
-                  dashboard.swot.strengths.map((item, i) => (
-                    <li key={i} className="text-sm flex items-start gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-                      <span>{item}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-sm text-gray-500 italic">Nenhuma força identificada</li>
-                )}
-              </ul>
-            </div>
-
-            <div className="border-2 border-red-300 dark:border-red-700 rounded-lg p-4 bg-red-50 dark:bg-red-900/10">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-red-800 dark:text-red-300">Fraquezas (Weaknesses)</h4>
-                <Badge className="bg-red-600 text-white">{dashboard.swot.weaknesses.length}</Badge>
-              </div>
-              <p className="text-xs text-red-700 dark:text-red-400 mb-3 italic">
-                Vulnerabilidades e pontos de melhoria necessários
-              </p>
-              <ul className="space-y-2">
-                {dashboard.swot.weaknesses.length > 0 ? (
-                  dashboard.swot.weaknesses.map((item, i) => (
-                    <li key={i} className="text-sm flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                      <span>{item}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-sm text-gray-500 italic">Nenhuma fraqueza identificada</li>
-                )}
-              </ul>
-            </div>
-
-            <div className="border-2 border-blue-300 dark:border-blue-700 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/10">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-blue-800 dark:text-blue-300">Oportunidades (Opportunities)</h4>
-                <Badge className="bg-blue-600 text-white">{dashboard.swot.opportunities.length}</Badge>
-              </div>
-              <p className="text-xs text-blue-700 dark:text-blue-400 mb-3 italic">
-                Potenciais de crescimento e expansão estratégica
-              </p>
-              <ul className="space-y-2">
-                {dashboard.swot.opportunities.length > 0 ? (
-                  dashboard.swot.opportunities.map((item, i) => (
-                    <li key={i} className="text-sm flex items-start gap-2">
-                      <TrendingUp className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                      <span>{item}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-sm text-gray-500 italic">Nenhuma oportunidade identificada</li>
-                )}
-              </ul>
-            </div>
-
-            <div className="border-2 border-orange-300 dark:border-orange-700 rounded-lg p-4 bg-orange-50 dark:bg-orange-900/10">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-orange-800 dark:text-orange-300">Ameaças (Threats)</h4>
-                <Badge className="bg-orange-600 text-white">{dashboard.swot.threats.length}</Badge>
-              </div>
-              <p className="text-xs text-orange-700 dark:text-orange-400 mb-3 italic">
-                Riscos externos e desafios competitivos a mitigar
-              </p>
-              <ul className="space-y-2">
-                {dashboard.swot.threats.length > 0 ? (
-                  dashboard.swot.threats.map((item, i) => (
-                    <li key={i} className="text-sm flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-orange-600 flex-shrink-0 mt-0.5" />
-                      <span>{item}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-sm text-gray-500 italic">Nenhuma ameaça identificada</li>
-                )}
-              </ul>
-            </div>
+            {[
+              {
+                title: 'Forças',
+                items: dashboard.swot.strengths,
+                icon: CheckCircle2,
+                iconColor: 'text-emerald-500'
+              },
+              {
+                title: 'Fraquezas',
+                items: dashboard.swot.weaknesses,
+                icon: AlertCircle,
+                iconColor: 'text-rose-500'
+              },
+              {
+                title: 'Oportunidades',
+                items: dashboard.swot.opportunities,
+                icon: TrendingUp,
+                iconColor: 'text-blue-500'
+              },
+              {
+                title: 'Ameaças',
+                items: dashboard.swot.threats,
+                icon: AlertTriangle,
+                iconColor: 'text-amber-500'
+              },
+            ].map((section, idx) => {
+              const Icon = section.icon
+              return (
+                <div key={idx} className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icon className={`w-4 h-4 ${section.iconColor}`} />
+                    <h4 className="font-semibold text-slate-700">{section.title}</h4>
+                  </div>
+                  <ul className="space-y-2">
+                    {section.items.length > 0 ? (
+                      section.items.map((item, i) => (
+                        <li key={i} className="text-sm text-slate-600">
+                          {item}
+                        </li>
+                      ))
+                    ) : (
+                      <li className="text-sm text-slate-400 italic">Nenhum item identificado</li>
+                    )}
+                  </ul>
+                </div>
+              )
+            })}
           </div>
         </CardContent>
       </Card>

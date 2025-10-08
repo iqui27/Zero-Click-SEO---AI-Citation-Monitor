@@ -8,14 +8,26 @@ from app.schemas.schemas import RunReport, CitationOut
 from app.services.normalization import normalize_domain, normalize_url_for_dedupe
 
 
+def _matches_our_domain(domain: str, our_domains: set[str]) -> bool:
+    if not domain or not our_domains:
+        return False
+    dom = normalize_domain(domain)
+    if dom in our_domains:
+        return True
+    return any(dom.endswith(f".{base}") for base in our_domains)
+
+
 def compute_amr(citations: List[Citation], our_domains: set[str]) -> float:
-    # AMR: existe menção (link ou textual) a pelo menos um domínio nosso
-    has_mention = any(c.domain in our_domains for c in citations)
+    # AMR: existe menção (link ou textual) a pelo menos um domínio nosso (qualquer subdomínio incluso)
+    has_mention = any(_matches_our_domain(c.domain, our_domains) for c in citations)
     return 1.0 if has_mention else 0.0
 
 
 def compute_dcr(citations: List[Citation], our_domains: set[str]) -> float:
-    has_link = any(c.domain in our_domains and (c.type or "").lower() == "link" for c in citations)
+    has_link = any(
+        _matches_our_domain(c.domain, our_domains) and (c.type or "").lower() == "link"
+        for c in citations
+    )
     return 1.0 if has_link else 0.0
 
 
@@ -53,6 +65,10 @@ def compute_run_report(db: Session, run_id: str) -> RunReport:
     domains = db.query(Domain).filter(Domain.project_id == project.id).all()
     # Normalizar domínios do projeto para compatibilizar com Citation.domain normalizado
     our_domains = {normalize_domain(d.domain) for d in domains if d.domain}
+
+    # Atualizar flag is_ours nas citações (considerando subdomínios)
+    for cit in citations:
+        cit.is_ours = _matches_our_domain(cit.domain, our_domains)
 
     amr = compute_amr(citations, our_domains)
     dcr = compute_dcr(citations, our_domains)

@@ -580,33 +580,6 @@ class GeminiSemanticService:
             if kw.get("token")
         ]
 
-        # Preencher competidores por citações/domínios se vier vazio
-        if not payload["competitors"] and payload["citations"]:
-            competitor_map: Dict[str, Dict[str, Any]] = {}
-            for cite in payload["citations"]:
-                if not isinstance(cite, dict):
-                    continue
-                domain = cite.get("domain")
-                if cite.get("is_ours") or not domain:
-                    continue
-                entry = competitor_map.setdefault(
-                    domain,
-                    {"name": domain, "mentions": 0, "categories": {"domain"}, "urls": set()},
-                )
-                entry["mentions"] += 1
-                if cite.get("url"):
-                    entry["urls"].add(cite["url"])
-            if competitor_map:
-                payload["competitors"] = [
-                    {
-                        "name": val["name"],
-                        "mentions": val["mentions"],
-                        "categories": sorted(val["categories"]),
-                        "urls": sorted(val["urls"]),
-                    }
-                    for val in competitor_map.values()
-                ]
-
         # Defaults para meta
         defaults = {k: v for k, v in (meta_defaults or {}).items() if v not in (None, "", [])}
         if defaults:
@@ -644,7 +617,8 @@ class GeminiSemanticService:
             "- Não alucine: use apenas o que aparece na resposta ou nas citações.\n"
             "- Categorias: brand|product|feature|competitor|other.\n"
             "- perception.primary_category: inovacao|tradicao|custo|atendimento.\n"
-            "- Se não houver dados, use arrays vazios ou valores neutros."
+            "- Se não houver dados, use arrays vazios ou valores neutros.\n"
+            "- Concorrentes tem que ser relacionado ao setor bancario e tem que ser o nome da entidade e nao a url"
         )
 
         if simplified:
@@ -653,7 +627,6 @@ class GeminiSemanticService:
                 "- JSON puro. Sem texto extra.\n"
                 "- snake_case. Máx 10 itens em entities/keywords.\n"
                 "- confidence/weight 0..1 (2 casas). Sem alucinação."
-                "- Concorrentes tem que ser relacionado ao setor bancario e tem que ser o nome da entidade e nao a url"
             )
 
         return f"""
