@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { getGeoDashboard, type GeoDashboard, getSubprojects, getProjects, type Project } from '../lib/api'
+import { getGeoDashboard, type GeoDashboard, getSubprojects, getProjects, type Project, getMonitors, getTemplates, type Template } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -14,7 +14,7 @@ import {
   TableRow,
 } from '../components/ui/table'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
-import { AlertTriangle, TrendingUp, AlertCircle, CheckCircle2, Filter, Calendar, Building2, XCircle, Info } from 'lucide-react'
+import { AlertTriangle, TrendingUp, AlertCircle, CheckCircle2, Filter, Calendar, Building2, Info, Sparkles, Target, Layers, XCircle } from 'lucide-react'
 import { formatNumberCompact } from '../lib/utils'
 
 export default function GeoDashboardPOC() {
@@ -32,15 +32,18 @@ export default function GeoDashboardPOC() {
   const [dateFrom, setDateFrom] = useState(searchParams.get('date_from') || '')
   const [dateTo, setDateTo] = useState(searchParams.get('date_to') || '')
   const [subprojectId, setSubprojectId] = useState(searchParams.get('subproject_id') || '')
+  const [category, setCategory] = useState(searchParams.get('category') || '')
+  const [monitorId, setMonitorId] = useState(searchParams.get('monitor_id') || '')
 
   const [subprojects, setSubprojects] = useState<any[]>([])
+  const [monitors, setMonitors] = useState<any[]>([])
+  const [categories, setCategories] = useState<string[]>([])
   const [showMethodology, setShowMethodology] = useState<boolean>(false)
   
   // Filtro de categoria para Entidades Detectadas
   const [selectedEntityCategory, setSelectedEntityCategory] = useState<string>('all')
   
-  // Filtro de bancos e expansão de checklist
-  const [selectedBankIds, setSelectedBankIds] = useState<string[]>([])
+  // Flag de expansão da checklist
   const [showAllChecklist, setShowAllChecklist] = useState<boolean>(false)
   const [metadataModal, setMetadataModal] = useState<{open: boolean; domain: string; column: string; details: any}>({open: false, domain: '', column: '', details: null})
   const [isCrawling, setIsCrawling] = useState<boolean>(false)
@@ -50,9 +53,16 @@ export default function GeoDashboardPOC() {
   }, [])
 
   useEffect(() => {
-    if (selectedProjectId) {
-      getSubprojects(selectedProjectId).then(setSubprojects).catch(console.error)
-    }
+    if (!selectedProjectId) return
+
+    getSubprojects(selectedProjectId).then(setSubprojects).catch(console.error)
+    getMonitors(selectedProjectId).then(setMonitors).catch(console.error)
+    getTemplates(selectedProjectId)
+      .then((templates: Template[]) => {
+        const unique = Array.from(new Set((templates || []).map((tpl) => tpl.category).filter(Boolean))) as string[]
+        setCategories(unique)
+      })
+      .catch(console.error)
   }, [selectedProjectId])
 
   const loadDashboard = async () => {
@@ -69,7 +79,8 @@ export default function GeoDashboardPOC() {
       if (dateFrom) filters.date_from = dateFrom
       if (dateTo) filters.date_to = dateTo
       if (subprojectId) filters.subproject_id = subprojectId
-      if (selectedBankIds.length > 0) filters.bank_ids = selectedBankIds
+      if (category) filters.category = category
+      if (monitorId) filters.monitor_id = monitorId
 
       const data = await getGeoDashboard(selectedProjectId, filters)
       setDashboard(data)
@@ -92,6 +103,8 @@ export default function GeoDashboardPOC() {
     if (dateFrom) params.set('date_from', dateFrom)
     if (dateTo) params.set('date_to', dateTo)
     if (subprojectId) params.set('subproject_id', subprojectId)
+    if (category) params.set('category', category)
+    if (monitorId) params.set('monitor_id', monitorId)
     setSearchParams(params)
     loadDashboard()
   }
@@ -167,105 +180,149 @@ export default function GeoDashboardPOC() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard POC - GEO</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Análise agregada de {dashboard.total_runs} runs
-          </p>
-        </div>
-        <Button onClick={loadDashboard} variant="outline" size="sm">
-          Atualizar
-        </Button>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Filter className="w-5 h-5" />
-            Filtros
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block">Data Início</label>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-              />
+    <div className="min-h-screen bg-white text-slate-900">
+      <div className="container mx-auto px-6 py-10 space-y-8">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+          <div>
+            <div className="flex items-center gap-2 text-blue-500 uppercase text-xs tracking-[0.35em] font-semibold">
+              <Sparkles className="w-4 h-4" /> SERP Radar POC
             </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Data Fim</label>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Produto</label>
-              <select
-                value={subprojectId}
-                onChange={(e) => setSubprojectId(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
-              >
-                <option value="">Todos</option>
-                {subprojects.map((sp) => (
-                  <option key={sp.id} value={sp.id}>
-                    {sp.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Bancos</label>
-              <select
-                multiple
-                value={selectedBankIds}
-                onChange={(e) => {
-                  const options = Array.from(e.target.selectedOptions, option => option.value)
-                  setSelectedBankIds(options)
-                }}
-                className="w-full px-3 py-2 border rounded-md dark:bg-gray-800 dark:border-gray-700 h-[42px] overflow-y-auto"
-                size={1}
-              >
-                <option value="">Todos os bancos</option>
-                {(dashboard?.positioning?.brand_ranking || []).slice(0, 15).map((brand) => (
-                  <option key={brand.brand} value={brand.brand}>
-                    {brand.brand}
-                  </option>
-                ))}
-              </select>
-              {selectedBankIds.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {selectedBankIds.map((bankId) => (
-                    <Badge
-                      key={bankId}
-                      variant="secondary"
-                      className="text-[10px] cursor-pointer"
-                      onClick={() => setSelectedBankIds(selectedBankIds.filter(id => id !== bankId))}
-                    >
-                      {bankId} ×
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="flex items-end">
-              <Button onClick={applyFilters} className="w-full">
-                Aplicar Filtros
-              </Button>
-            </div>
+            <h1 className="text-3xl md:text-4xl font-semibold mt-2 text-slate-900">Visão Multidimensional de SERP</h1>
+            <p className="text-sm text-slate-500 mt-3">
+              Monitoramento agregador das experiências SERP e Zero-Click em {dashboard.total_runs} runs.
+            </p>
           </div>
-        </CardContent>
-      </Card>
+          <div className="flex gap-3">
+            <Button variant="ghost" onClick={loadDashboard} className="border border-slate-300 text-slate-600 hover:bg-slate-100">
+              Atualizar dados
+            </Button>
+            <Button onClick={loadDashboard} className="bg-blue-500 hover:bg-blue-600 text-white">
+              Reprocessar SERP
+            </Button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <Card className="bg-white/90 border border-slate-200 shadow-lg shadow-slate-900/10 dark:bg-slate-900/60 dark:border-slate-800 dark:shadow-slate-900/40 transition-colors">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                  <Filter className="w-5 h-5 text-blue-500 dark:text-blue-300" />
+                  Painel de Filtros
+                </CardTitle>
+                <CardDescription className="text-slate-500 dark:text-slate-400 mt-1">
+                  Ajuste o contexto por período, produto (tema), categoria do prompt e monitor.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+              <div className="rounded-xl px-4 py-3 bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900/40 dark:border-slate-800 dark:text-slate-300">
+                <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                  <Calendar className="w-3.5 h-3.5" /> Data inicial
+                </label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 text-slate-900 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-100"
+                />
+              </div>
+              <div className="rounded-xl px-4 py-3 bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900/40 dark:border-slate-800 dark:text-slate-300">
+                <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                  <Calendar className="w-3.5 h-3.5" /> Data final
+                </label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 text-slate-900 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-100"
+                />
+              </div>
+              <div className="rounded-xl px-4 py-3 bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900/40 dark:border-slate-800 dark:text-slate-300">
+                <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                  <Layers className="w-3.5 h-3.5" /> Produto / Tema
+                </label>
+                <select
+                  value={subprojectId}
+                  onChange={(e) => setSubprojectId(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 text-slate-900 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-100"
+                >
+                  <option value="">Todos</option>
+                  {subprojects.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="rounded-xl px-4 py-3 bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900/40 dark:border-slate-800 dark:text-slate-300">
+                <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                  <Target className="w-3.5 h-3.5" /> Categoria (Prompt)
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 text-slate-900 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-100"
+                >
+                  <option value="">Todas</option>
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="rounded-xl px-4 py-3 bg-slate-100 border border-slate-200 text-slate-700 dark:bg-slate-900/40 dark:border-slate-800 dark:text-slate-300">
+                <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                  <Building2 className="w-3.5 h-3.5" /> Monitor
+                </label>
+                <select
+                  value={monitorId}
+                  onChange={(e) => setMonitorId(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 text-slate-900 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-100"
+                >
+                  <option value="">Todos</option>
+                  {monitors.map((monitor) => (
+                    <option key={monitor.id} value={monitor.id}>
+                      {monitor.name || monitor.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Última atualização capturada: {new Date().toLocaleString()}
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setDateFrom('')
+                    setDateTo('')
+                    setSubprojectId('')
+                    setCategory('')
+                    setMonitorId('')
+                    setSearchParams(new URLSearchParams())
+                    loadDashboard()
+                  }}
+                  className="border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Limpar
+                </Button>
+                <Button onClick={applyFilters} className="bg-blue-500 hover:bg-blue-600 text-white px-6">
+                  Aplicar filtros
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -748,29 +805,35 @@ export default function GeoDashboardPOC() {
                   </div>
                 )}
               </div>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={dashboard.panorama.chart}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    dataKey="bank"
-                    tick={{ fill: '#6b7280', fontSize: 12 }}
-                  />
-                  <YAxis
-                    tick={{ fill: '#6b7280', fontSize: 12 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'rgba(255,255,255,0.95)',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '6px'
-                    }}
-                  />
-                  <Legend wrapperStyle={{ paddingTop: '12px' }} />
-                  <Bar dataKey="ai_overview_count" name="AI Overview" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="paa_count" name="PAA" fill="#10b981" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="kp_count" name="Knowledge Panel" fill="#f59e0b" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-[340px] md:h-[380px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={dashboard.panorama.chart}
+                    barCategoryGap="58%"
+                    barGap={12}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis
+                      dataKey="bank"
+                      tick={{ fill: '#6b7280', fontSize: 12 }}
+                    />
+                    <YAxis
+                      tick={{ fill: '#6b7280', fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'rgba(255,255,255,0.95)',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '6px'
+                      }}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: '12px' }} />
+                    <Bar dataKey="ai_overview_count" name="AI Overview" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                    <Bar dataKey="paa_count" name="PAA" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                    <Bar dataKey="kp_count" name="Knowledge Panel" fill="#f59e0b" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
         </CardContent>
@@ -820,7 +883,7 @@ export default function GeoDashboardPOC() {
                 }
               }}
             >
-              {isCrawling ? '⏳ Crawling...' : '🔄 Atualizar Metadados'}
+              {isCrawling ? '⏳ Crawling...' : 'Atualizar Metadados'}
             </Button>
           </div>
         </CardHeader>
@@ -1481,6 +1544,7 @@ export default function GeoDashboardPOC() {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
