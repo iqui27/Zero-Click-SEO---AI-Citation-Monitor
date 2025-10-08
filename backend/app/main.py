@@ -12,6 +12,7 @@ from app.api.routes import api_router
 from app.api.search_console_routes import router as search_console_router
 from app.api.analytics_routes import router as analytics_router
 from app.api.export_routes import router as export_router
+from app.api.geo_routes import router as geo_router
 from app.services.scheduler import start_scheduler
 
 app = FastAPI(title="Zero-Click SEO & AI Citation Monitor", version="0.1.0")
@@ -87,6 +88,49 @@ async def on_startup() -> None:
 
                 for col_name, col_type in im_columns:
                     add_column_if_not_exists("runs", col_name, col_type)
+                
+                # Adicionar colunas GEO (Generative Engine Optimization)
+                print("[MIGRATION] Adding GEO columns...")
+                geo_columns = [
+                    # Brand Presence
+                    ("brand_mention_count", "INTEGER"),
+                    ("brand_first_mention_position", "INTEGER"),
+                    ("brand_mention_density", "FLOAT"),
+                    ("brand_prominence_score", "FLOAT"),
+                    # Citation Quality & Rate
+                    ("citation_quality_score", "FLOAT"),
+                    ("first_citation_position", "INTEGER"),
+                    ("citation_rate_observed", "FLOAT"),
+                    ("citation_rate_corrected", "FLOAT"),
+                    # Competitive Intelligence
+                    ("competitor_mention_ratio", "FLOAT"),
+                    ("share_of_voice_llm", "FLOAT"),
+                    ("cocitation_competitors", "TEXT"),
+                    # Engagement
+                    ("conversational_trigger_count", "INTEGER"),
+                    ("engagement_score", "FLOAT"),
+                ]
+                
+                for col_name, col_type in geo_columns:
+                    add_column_if_not_exists("runs", col_name, col_type)
+                
+                print("[MIGRATION] GEO columns added successfully.")
+                
+                # Adicionar colunas GEO avançadas (Phase 2+)
+                print("[MIGRATION] Adding advanced GEO columns...")
+                geo_advanced_columns = [
+                    ("zero_click_presence", "FLOAT"),
+                    ("authority_score", "FLOAT"),
+                    ("relevance_score", "FLOAT"),
+                    ("clarity_score", "FLOAT"),
+                    ("product_category", "VARCHAR(100)"),
+                    ("conversion_potential_score", "FLOAT"),
+                ]
+                
+                for col_name, col_type in geo_advanced_columns:
+                    add_column_if_not_exists("runs", col_name, col_type)
+                
+                print("[MIGRATION] Advanced GEO columns added successfully.")
 
                 serp_columns = [
                     ("paa_items", "TEXT"),
@@ -499,3 +543,4 @@ app.include_router(api_router, prefix="/api")
 app.include_router(search_console_router)
 app.include_router(analytics_router, prefix="/api/analytics")
 app.include_router(export_router, prefix="/api")
+app.include_router(geo_router)  # GEO routes (Generative Engine Optimization)

@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from app.db.session import SessionLocal
 from app.models.models import Run, Citation, Evidence, Domain, Project
 from app.services.im_metrics_simple import SimpleIMMetrics
+from app.services.kpis import compute_run_report
 from sqlalchemy import func
 
 
@@ -181,19 +182,25 @@ def recalculate_all_metrics(limit: int = None, project_id: str = None):
                 
                 # Entidades
                 entities = im_metrics["entities"]
-                run.entities_detected = entities["detected"]
                 run.entities_relevance_score = entities["relevance_score"]
                 run.entity_connection_score = entities["connection_score"]
                 
                 db.commit()
                 success_count += 1
                 
+                # Atualizar KPIs de citações (AMR/DCR/ZCRS)
+                try:
+                    compute_run_report(db, run.id)
+                except Exception as e:
+                    print(f"\n   ⚠️  Erro ao recalcular KPIs (AMR/DCR) da run {run.id}: {e}")
+                    db.rollback()
+                    continue
+
             except Exception as e:
                 print(f"\n   ❌ Erro na run {run.id}: {e}")
                 error_count += 1
                 db.rollback()
         
-        print("\n" + "=" * 60)
         print("✅ Recálculo concluído!")
         print("=" * 60)
         print(f"\n📊 Resumo:")

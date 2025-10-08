@@ -242,6 +242,39 @@ class Run(Base):
     response_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     semantic_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # === MÉTRICAS GEO (Generative Engine Optimization) ===
+    # IMPORTANTE: Campos GEO são EXCLUSIVOS para LLMs (ChatGPT, Gemini, Perplexity)
+    # NÃO devem ser populados para runs de SERP tradicional
+    
+    # GEO - Brand Presence
+    brand_mention_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # quantas vezes marca aparece
+    brand_first_mention_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # posição em caracteres
+    brand_mention_density: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # menções / 1000 chars
+    brand_prominence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    
+    # GEO - Citation Quality & Rate
+    citation_quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    first_citation_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # posição ordinal (1-N)
+    citation_rate_observed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % (our_citations / total)
+    citation_rate_corrected: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % ajustado por variantes de domínio
+    
+    # GEO - Competitive Intelligence
+    competitor_mention_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1
+    share_of_voice_llm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (nossa presença vs concorrentes)
+    cocitation_competitors: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array de concorrentes co-citados
+    
+    # GEO - Engagement & Conversion
+    conversational_trigger_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # CTAs, perguntas, etc
+    engagement_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100
+    
+    # GEO - Advanced Metrics (Phase 2+)
+    zero_click_presence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (resposta completa sem clique)
+    authority_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (percepção de autoridade)
+    relevance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (adequação ao contexto)
+    clarity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (clareza da informação)
+    product_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Categoria de produto mencionada
+    conversion_potential_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-100 (potencial de conversão numérico)
+
     citations: Mapped[list["Citation"]] = relationship("Citation", back_populates="run")
     entities: Mapped[list["Entity"]] = relationship("Entity", back_populates="run")
     serp_features: Mapped[list["SerpFeature"]] = relationship("SerpFeature", back_populates="run")
@@ -497,6 +530,74 @@ class RunSemanticInsight(Base):
     )
 
     run: Mapped[Run] = relationship("Run", back_populates="semantic_insights")
+
+
+class DomainVariant(Base):
+    """
+    Mapeamento de variantes de domínio para domínio canônico.
+    Usado para consolidar citações de domínios relacionados (ex: bb.com.br, bancodobrasil.com.br → BB).
+    """
+    __tablename__ = "domain_variants"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("dmv"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    
+    # Domínio variante (ex: ourocard.com.br)
+    variant_domain: Mapped[str] = mapped_column(FixedVarchar(255), nullable=False)
+    
+    # Domínio canônico (ex: bb.com.br)
+    canonical_domain: Mapped[str] = mapped_column(FixedVarchar(255), nullable=False)
+    
+    # Nome de exibição (ex: "Banco do Brasil")
+    display_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        UniqueConstraint("project_id", "variant_domain", name="uq_project_variant_domain"),
+        Index("ix_domain_variants_project_variant", "project_id", "variant_domain"),
+    )
+
+
+class ContentGap(Base):
+    """
+    Lacunas de conteúdo detectadas automaticamente.
+    Orienta criação/atualização de conteúdo para melhorar citabilidade em LLMs.
+    """
+    __tablename__ = "content_gaps"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("cgp"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    
+    # URL ou tópico afetado
+    url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    topic: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Tipo de lacuna
+    gap_type: Mapped[str] = mapped_column(String, nullable=False)  # missing_faq|outdated_content|no_comparison|missing_table|no_tldr
+    
+    # Descrição e sugestão
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    suggestion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Prioridade e status
+    priority: Mapped[str] = mapped_column(String, default="medium")  # low|medium|high|critical
+    status: Mapped[str] = mapped_column(String, default="open")  # open|in_progress|completed|dismissed
+    
+    # Impacto estimado (se disponível)
+    estimated_impact: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # ex: +5% CR
+    
+    # Responsável
+    assignee: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Datas
+    detected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        Index("ix_content_gaps_project_status", "project_id", "status"),
+        Index("ix_content_gaps_priority", "priority"),
+    )
 
 
 class UrlMetadata(Base):

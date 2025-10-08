@@ -33,7 +33,6 @@ from app.services.normalization import normalize_domain, normalize_url_for_dedup
 from app.services.engine_runner import run_engine
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
 from app.services.gemini_semantic import GeminiSemanticService
-from app.services.geo_metrics import calculate_all_geo_metrics
 
 celery = Celery(
     "seo_monitor",
@@ -490,11 +489,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             
             # Salvar response_text se disponível
             response_text = (last_parsed or {}).get("text") if last_parsed else None
-            print(f"[DEBUG] response_text length: {len(response_text) if response_text else 0}, last_parsed exists: {last_parsed is not None}")
             if response_text:
                 run.response_text = response_text[:50000]
                 db.commit()
-                print(f"[DEBUG] response_text saved to run: {len(run.response_text)} chars")
             
             # Enfileirar semantic insights (que inclui GEO)
             if settings.semantic_insights_enabled and response_text:
@@ -524,167 +521,167 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 # Salvar response_text na run para análises futuras
                 if response_text:
                     run.response_text = response_text[:50000]  # Limitar tamanho
+            
+            # Classificar etapa do funil
+            try:
+                from app.services.funnel_classifier import FunnelClassifier
+                prompt_version = db.get(PromptVersion, run.prompt_version_id)
+                prompt_text = prompt_version.text if prompt_version else ""
                 
-                # Classificar etapa do funil
-                try:
-                    from app.services.funnel_classifier import FunnelClassifier
-                    prompt_version = db.get(PromptVersion, run.prompt_version_id)
-                    prompt_text = prompt_version.text if prompt_version else ""
-                    
-                    funnel_stage, confidence = FunnelClassifier.classify_with_confidence(
-                        prompt_text=prompt_text,
-                        response_text=response_text
-                    )
-                    run.funnel_stage = funnel_stage
-                    print(f"[FUNNEL] Classificado como '{funnel_stage}' (confiança: {confidence:.2f})")
-                except Exception as e:
-                    print(f"[FUNNEL] Erro ao classificar: {e}")
-                
-                # Buscar citações da run
-                citations_list = db.query(Citation).filter(Citation.run_id == run.id).all()
-                citations_data = [
-                    {
-                        "domain": c.domain,
-                        "url": c.url,
-                        "is_ours": c.is_ours,
-                    }
-                    for c in citations_list
-                ]
-                
-                # Preparar dados da run
-                run_data = {
-                    "amr_flag": run.amr_flag,
-                    "dcr_flag": run.dcr_flag,
-                    "zcrs": run.zcrs,
-                }
-                
-                # Buscar dados do SerpAPI se disponíveis
-                serp_data = None
-                project_domains = []
-                target_url = None
-                try:
-                    # Buscar evidence para extrair dados SERP
-                    evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
-                    if evidence and evidence.parsed_json:
-                        # Passar o payload completo para o SerpAnalyzer, que espera a estrutura
-                        # com as chaves `raw.serpapi_search` e `raw.serpapi_ai`.
-                        serp_data = evidence.parsed_json
-                    
-                    # Buscar domínios do projeto
-                    project = db.query(Project).filter(Project.id == run.project_id).first()
-                    if project:
-                        domains_list = db.query(Domain).filter(Domain.project_id == project.id).all()
-                        project_domains = [d.domain for d in domains_list]
-                    
-                    # Tentar extrair URL alvo das citações (primeira citação nossa)
-                    for cit in citations_data:
-                        if cit.get("is_ours"):
-                            target_url = cit.get("url")
-                            break
-                    
-                    # Se não houver citação nossa, usar domínio primário do projeto como fallback
-                    if not target_url and project_domains:
-                        primary_domain = db.query(Domain).filter(
-                            Domain.project_id == project.id,
-                            Domain.is_primary == True
-                        ).first()
-                        if primary_domain:
-                            target_url = f"https://{primary_domain.domain}"
-                            print(f"[IM_METRICS] Usando domínio primário como fallback: {target_url}")
-                        elif project_domains:
-                            # Se não tiver primário, usar o primeiro domínio
-                            target_url = f"https://{project_domains[0]}"
-                            print(f"[IM_METRICS] Usando primeiro domínio como fallback: {target_url}")
-                except Exception as e:
-                    print(f"[IM_METRICS] Erro ao buscar dados SERP: {e}")
-                
-                # Calcular todas as métricas (com SerpAPI e PageSpeed se disponíveis)
-                print(f"[DEBUG] Chamando SimpleIMMetrics.calculate_all...")
-                im_metrics = SimpleIMMetrics.calculate_all(
-                    run_data, 
-                    citations_data, 
-                    response_text,
-                    serp_data=serp_data,
-                    project_domains=project_domains,
-                    target_url=target_url
+                funnel_stage, confidence = FunnelClassifier.classify_with_confidence(
+                    prompt_text=prompt_text,
+                    response_text=response_text
                 )
-                print(f"[DEBUG] Métricas calculadas: IM-SEO={im_metrics.get('im_seo_score')}, IM-SEOIA={im_metrics.get('im_seoia_score')}")
-                
-                # Atualizar run com métricas calculadas
-                run.im_seo_score = im_metrics["im_seo_score"]
-                run.im_seoia_score = im_metrics["im_seoia_score"]
-                run.core_web_vitals_score = im_metrics["core_web_vitals_score"]
-                run.lcp_score = im_metrics.get("lcp_score")
-                run.fid_score = im_metrics.get("fid_score")
-                run.cls_score = im_metrics.get("cls_score")
-                run.share_of_voice_serp = im_metrics["share_of_voice_serp"]
-                
-                # E-E-A-T
-                eeat = im_metrics["eeat"]
-                run.eeat_score = eeat["overall"]
-                run.eeat_expertise = eeat["expertise"]
-                run.eeat_experience = eeat["experience"]
-                run.eeat_authoritativeness = eeat["authoritativeness"]
-                run.eeat_trustworthiness = eeat["trustworthiness"]
-                
-                # IA-Ready Blocks
-                ia_ready = im_metrics["ia_ready"]
-                run.ia_ready_score = ia_ready["score"]
-                run.ia_ready_blocks_count = ia_ready["blocks_count"]
-                run.has_lists = ia_ready["has_lists"]
-                run.has_faqs = ia_ready["has_faqs"]
-                run.has_tables = ia_ready["has_tables"]
-                run.has_step_by_step = ia_ready["has_step_by_step"]
-                
-                # IRZC
-                irzc = im_metrics["irzc"]
-                run.irzc_score = irzc["score"]
-                run.ctr_expected = irzc["ctr_expected"]
-                
-                # Entidades
-                entities = im_metrics["entities"]
-                run.entities_detected = entities["detected"]
-                run.entities_relevance_score = entities["relevance_score"]
-                run.entity_connection_score = entities["connection_score"]
-                
-                # Métricas do SerpAPI (se disponíveis)
-                run.serp_features_presence = im_metrics.get("serp_features_presence")
-                run.ia_resources_detected = im_metrics.get("ia_resources_detected")
-                run.ia_serp_presence_score = im_metrics.get("ia_serp_presence_score")
-                run.long_tail_terms_top10 = im_metrics.get("longtail_terms_top10")
-                run.long_tail_terms_top20 = im_metrics.get("longtail_terms_top20")
-                run.long_tail_coverage_score = im_metrics.get("longtail_coverage_score")
-                run.schema_types_detected = im_metrics.get("schema_types_detected")
-                run.schema_coverage_score = im_metrics.get("schema_coverage_score")
-                
-                # Posição orgânica e competidores
-                run.organic_position = im_metrics.get("organic_position")
-                run.competitors_in_top10 = im_metrics.get("competitors_top10") or 0
-
-                # Persistir SERP features detalhadas
-                serp_metrics_data = im_metrics.get("serp_metrics") or {}
-                print(f"[DEBUG] serp_metrics keys: {list(serp_metrics_data.keys())}")
-                print(f"[DEBUG] PAA items: {len(serp_metrics_data.get('paa_items', []))}")
-                _persist_serp_feature_details(db, run.id, serp_metrics_data)
-
-                db.commit()
-                print(f"[DEBUG] Métricas salvas no banco com sucesso!")
-                
-                _log(db, run.id, "im_metrics", "ok", f"IM-SEO: {run.im_seo_score}, IM-SEOIA: {run.im_seoia_score}")
-
-                if settings.semantic_insights_enabled:
-                    try:
-                        process_semantic_insights.delay(run.id)
-                        semantic_pending = True
-                        _log(db, run.id, "semantic_insights", "queued", "Gemini semantic insights enqueued")
-                    except Exception as queue_err:
-                        print(f"[SEMANTIC] Falha ao enfileirar insights para run {run.id}: {queue_err}")
-                        _log(db, run.id, "semantic_insights", "fail", f"queue error: {queue_err}")
+                run.funnel_stage = funnel_stage
+                print(f"[FUNNEL] Classificado como '{funnel_stage}' (confiança: {confidence:.2f})")
             except Exception as e:
-                print(f"[DEBUG] ERRO no cálculo de métricas: {e}")
-                import traceback
-                traceback.print_exc()
-                _log(db, run.id, "im_metrics", "fail", f"IM metrics calculation error: {str(e)}")
+                print(f"[FUNNEL] Erro ao classificar: {e}")
+            
+            # Buscar citações da run
+            citations_list = db.query(Citation).filter(Citation.run_id == run.id).all()
+            citations_data = [
+                {
+                    "domain": c.domain,
+                    "url": c.url,
+                    "is_ours": c.is_ours,
+                }
+                for c in citations_list
+            ]
+            
+            # Preparar dados da run
+            run_data = {
+                "amr_flag": run.amr_flag,
+                "dcr_flag": run.dcr_flag,
+                "zcrs": run.zcrs,
+            }
+            
+            # Buscar dados do SerpAPI se disponíveis
+            serp_data = None
+            project_domains = []
+            target_url = None
+            try:
+                # Buscar evidence para extrair dados SERP
+                evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
+                if evidence and evidence.parsed_json:
+                    # Passar o payload completo para o SerpAnalyzer, que espera a estrutura
+                    # com as chaves `raw.serpapi_search` e `raw.serpapi_ai`.
+                    serp_data = evidence.parsed_json
+                
+                # Buscar domínios do projeto
+                project = db.query(Project).filter(Project.id == run.project_id).first()
+                if project:
+                    domains_list = db.query(Domain).filter(Domain.project_id == project.id).all()
+                    project_domains = [d.domain for d in domains_list]
+                
+                # Tentar extrair URL alvo das citações (primeira citação nossa)
+                for cit in citations_data:
+                    if cit.get("is_ours"):
+                        target_url = cit.get("url")
+                        break
+                
+                # Se não houver citação nossa, usar domínio primário do projeto como fallback
+                if not target_url and project_domains:
+                    primary_domain = db.query(Domain).filter(
+                        Domain.project_id == project.id,
+                        Domain.is_primary == True
+                    ).first()
+                    if primary_domain:
+                        target_url = f"https://{primary_domain.domain}"
+                        print(f"[IM_METRICS] Usando domínio primário como fallback: {target_url}")
+                    elif project_domains:
+                        # Se não tiver primário, usar o primeiro domínio
+                        target_url = f"https://{project_domains[0]}"
+                        print(f"[IM_METRICS] Usando primeiro domínio como fallback: {target_url}")
+            except Exception as e:
+                print(f"[IM_METRICS] Erro ao buscar dados SERP: {e}")
+            
+            # Calcular todas as métricas (com SerpAPI e PageSpeed se disponíveis)
+            print(f"[DEBUG] Chamando SimpleIMMetrics.calculate_all...")
+            im_metrics = SimpleIMMetrics.calculate_all(
+                run_data, 
+                citations_data, 
+                response_text,
+                serp_data=serp_data,
+                project_domains=project_domains,
+                target_url=target_url
+            )
+            print(f"[DEBUG] Métricas calculadas: IM-SEO={im_metrics.get('im_seo_score')}, IM-SEOIA={im_metrics.get('im_seoia_score')}")
+            
+            # Atualizar run com métricas calculadas
+            run.im_seo_score = im_metrics["im_seo_score"]
+            run.im_seoia_score = im_metrics["im_seoia_score"]
+            run.core_web_vitals_score = im_metrics["core_web_vitals_score"]
+            run.lcp_score = im_metrics.get("lcp_score")
+            run.fid_score = im_metrics.get("fid_score")
+            run.cls_score = im_metrics.get("cls_score")
+            run.share_of_voice_serp = im_metrics["share_of_voice_serp"]
+            
+            # E-E-A-T
+            eeat = im_metrics["eeat"]
+            run.eeat_score = eeat["overall"]
+            run.eeat_expertise = eeat["expertise"]
+            run.eeat_experience = eeat["experience"]
+            run.eeat_authoritativeness = eeat["authoritativeness"]
+            run.eeat_trustworthiness = eeat["trustworthiness"]
+            
+            # IA-Ready Blocks
+            ia_ready = im_metrics["ia_ready"]
+            run.ia_ready_score = ia_ready["score"]
+            run.ia_ready_blocks_count = ia_ready["blocks_count"]
+            run.has_lists = ia_ready["has_lists"]
+            run.has_faqs = ia_ready["has_faqs"]
+            run.has_tables = ia_ready["has_tables"]
+            run.has_step_by_step = ia_ready["has_step_by_step"]
+            
+            # IRZC
+            irzc = im_metrics["irzc"]
+            run.irzc_score = irzc["score"]
+            run.ctr_expected = irzc["ctr_expected"]
+            
+            # Entidades
+            entities = im_metrics["entities"]
+            run.entities_detected = entities["detected"]
+            run.entities_relevance_score = entities["relevance_score"]
+            run.entity_connection_score = entities["connection_score"]
+            
+            # Métricas do SerpAPI (se disponíveis)
+            run.serp_features_presence = im_metrics.get("serp_features_presence")
+            run.ia_resources_detected = im_metrics.get("ia_resources_detected")
+            run.ia_serp_presence_score = im_metrics.get("ia_serp_presence_score")
+            run.long_tail_terms_top10 = im_metrics.get("longtail_terms_top10")
+            run.long_tail_terms_top20 = im_metrics.get("longtail_terms_top20")
+            run.long_tail_coverage_score = im_metrics.get("longtail_coverage_score")
+            run.schema_types_detected = im_metrics.get("schema_types_detected")
+            run.schema_coverage_score = im_metrics.get("schema_coverage_score")
+            
+            # Posição orgânica e competidores
+            run.organic_position = im_metrics.get("organic_position")
+            run.competitors_in_top10 = im_metrics.get("competitors_top10") or 0
+
+            # Persistir SERP features detalhadas
+            serp_metrics_data = im_metrics.get("serp_metrics") or {}
+            print(f"[DEBUG] serp_metrics keys: {list(serp_metrics_data.keys())}")
+            print(f"[DEBUG] PAA items: {len(serp_metrics_data.get('paa_items', []))}")
+            _persist_serp_feature_details(db, run.id, serp_metrics_data)
+
+            db.commit()
+            print(f"[DEBUG] Métricas salvas no banco com sucesso!")
+            
+            _log(db, run.id, "im_metrics", "ok", f"IM-SEO: {run.im_seo_score}, IM-SEOIA: {run.im_seoia_score}")
+
+            if settings.semantic_insights_enabled:
+                try:
+                    process_semantic_insights.delay(run.id)
+                    semantic_pending = True
+                    _log(db, run.id, "semantic_insights", "queued", "Gemini semantic insights enqueued")
+                except Exception as queue_err:
+                    print(f"[SEMANTIC] Falha ao enfileirar insights para run {run.id}: {queue_err}")
+                    _log(db, run.id, "semantic_insights", "fail", f"queue error: {queue_err}")
+        except Exception as e:
+            print(f"[DEBUG] ERRO no cálculo de métricas: {e}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "im_metrics", "fail", f"IM metrics calculation error: {str(e)}")
         
         # === BUSCAR DADOS DO GOOGLE SEARCH CONSOLE ===
         try:
@@ -863,106 +860,6 @@ def process_semantic_insights(run_id: str) -> None:
             run.entities_relevance_score = round(avg_conf, 3)
         if avg_weight:
             run.entity_connection_score = round(avg_weight * 100, 2)
-
-        # === MÉTRICAS GEO (Generative Engine Optimization) ===
-        # IMPORTANTE: Só calcular para runs de LLMs (ChatGPT, Gemini, Perplexity)
-        # NÃO calcular para SERP tradicional
-        engine = db.get(Engine, run.engine_id) if run.engine_id else None
-        engine_name = engine.name.lower() if engine else ""
-        is_llm = any(llm in engine_name for llm in ["chatgpt", "gemini", "perplexity", "claude", "gpt", "openai"])
-        
-        if is_llm and response_text and project_name:
-            try:
-                print(f"[GEO] Calculando métricas GEO para run {run_id}")
-                
-                # Preparar citations para GEO
-                citations_for_geo = [
-                    {
-                        "domain": cite.domain,
-                        "url": cite.url,
-                        "anchor": cite.anchor,
-                        "position": cite.position,
-                        "is_ours": cite.is_ours,
-                    }
-                    for cite in citations
-                ]
-                
-                # Buscar variantes de domínio (se existirem)
-                # TODO: Implementar query para DomainVariant quando tabela estiver criada
-                domain_variants_map = {}  # Placeholder
-                
-                # Buscar competitors do payload Gemini
-                competitors_from_gemini = payload.get("competitors", [])
-                
-                # Detectar nome da marca a partir dos domínios ou usar nome do projeto
-                # Ex: bb.com.br -> "Banco do Brasil" ou "BB"
-                brand_name = project_name
-                brand_variations = []
-                
-                if project and project.domains:
-                    # Tentar inferir nome da marca a partir do domínio principal
-                    main_domain = project.domains[0].domain if project.domains else None
-                    if main_domain:
-                        domain_lower = main_domain.lower()
-                        # Mapeamento de domínios conhecidos para nomes de marca
-                        brand_map = {
-                            "bb.com.br": ("Banco do Brasil", ["BB", "Banco do Brasil", "bancodobrasil"]),
-                            "nubank.com.br": ("Nubank", ["Nu", "Nubank"]),
-                            "itau.com.br": ("Itaú", ["Itau", "Itaú"]),
-                            "bradesco.com.br": ("Bradesco", ["Bradesco"]),
-                            "santander.com.br": ("Santander", ["Santander"]),
-                        }
-                        
-                        if domain_lower in brand_map:
-                            brand_name, brand_variations = brand_map[domain_lower]
-                
-                # Calcular todas as métricas GEO
-                geo_metrics = calculate_all_geo_metrics(
-                    response_text=response_text,
-                    project_name=brand_name,
-                    citations=citations_for_geo,
-                    competitors_from_gemini=competitors_from_gemini,
-                    project_domains=[d.domain for d in project.domains] if project and project.domains else [],
-                    brand_variations=brand_variations if brand_variations else None,
-                    domain_variants_map=domain_variants_map,
-                )
-                
-                # Atualizar campos GEO no Run
-                run.brand_mention_count = geo_metrics.get("brand_mention_count")
-                run.brand_first_mention_position = geo_metrics.get("brand_first_mention_position")
-                run.brand_mention_density = geo_metrics.get("brand_mention_density")
-                run.brand_prominence_score = geo_metrics.get("brand_prominence_score")
-                
-                run.citation_quality_score = geo_metrics.get("citation_quality_score")
-                run.first_citation_position = geo_metrics.get("first_citation_position")
-                run.citation_rate_observed = geo_metrics.get("citation_rate_observed")
-                run.citation_rate_corrected = geo_metrics.get("citation_rate_corrected")
-                
-                run.competitor_mention_ratio = geo_metrics.get("competitor_mention_ratio")
-                run.share_of_voice_llm = geo_metrics.get("share_of_voice_llm")
-                run.cocitation_competitors = geo_metrics.get("cocitation_competitors")
-                
-                run.conversational_trigger_count = geo_metrics.get("conversational_trigger_count")
-                run.engagement_score = geo_metrics.get("engagement_score")
-                
-                # Advanced Metrics (Phase 2+)
-                run.zero_click_presence = geo_metrics.get("zero_click_presence")
-                run.authority_score = geo_metrics.get("authority_score")
-                run.relevance_score = geo_metrics.get("relevance_score")
-                run.clarity_score = geo_metrics.get("clarity_score")
-                run.conversion_potential = geo_metrics.get("conversion_potential")
-                run.conversion_potential_score = geo_metrics.get("conversion_potential_score")
-                run.product_category = geo_metrics.get("product_category")
-                
-                print(f"[GEO] Métricas calculadas: prominence={geo_metrics.get('brand_prominence_score')}, sov={geo_metrics.get('share_of_voice_llm')}, product={geo_metrics.get('product_category')}")
-                _log(db, run.id, "geo_metrics", "ok", f"prominence={geo_metrics.get('brand_prominence_score')}, sov={geo_metrics.get('share_of_voice_llm')}, zero_click={geo_metrics.get('zero_click_presence')}")
-                
-            except Exception as geo_exc:
-                print(f"[GEO] Erro ao calcular métricas GEO para run {run_id}: {geo_exc}")
-                import traceback
-                traceback.print_exc()
-                _log(db, run.id, "geo_metrics", "fail", str(geo_exc))
-                # Não falhar o processo todo se GEO falhar
 
         db.commit()
         _log(db, run.id, "semantic_insights", "ok", f"entities={entities_count}, perception={primary_category}")

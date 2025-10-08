@@ -105,8 +105,23 @@ class RunOut(BaseModel):
     classification_version: Optional[str] = None
     perceived_value_category: Optional[str] = None
     semantic_summary: Optional[str] = None
-    perceived_value_category: Optional[str] = None
-    semantic_summary: Optional[str] = None
+    
+    # === MÉTRICAS GEO (Generative Engine Optimization) ===
+    # Exclusivo para LLMs (ChatGPT, Gemini, Perplexity)
+    brand_mention_count: Optional[int] = None
+    brand_prominence_score: Optional[float] = None
+    citation_quality_score: Optional[float] = None
+    citation_rate_observed: Optional[float] = None
+    citation_rate_corrected: Optional[float] = None
+    share_of_voice_llm: Optional[float] = None
+    engagement_score: Optional[float] = None
+    
+    # GEO Advanced (Phase 2+)
+    zero_click_presence: Optional[float] = None
+    authority_score: Optional[float] = None
+    relevance_score: Optional[float] = None
+    clarity_score: Optional[float] = None
+    conversion_potential_score: Optional[float] = None
 
 
 class RunListItem(BaseModel):
@@ -152,6 +167,23 @@ class RunListItem(BaseModel):
     conversion_potential: Optional[str] = None
     perceived_value_category: Optional[str] = None
     semantic_summary: Optional[str] = None
+    
+    # === MÉTRICAS GEO (Generative Engine Optimization) ===
+    # Exclusivo para LLMs (ChatGPT, Gemini, Perplexity)
+    brand_mention_count: Optional[int] = None
+    brand_prominence_score: Optional[float] = None
+    citation_quality_score: Optional[float] = None
+    citation_rate_observed: Optional[float] = None
+    citation_rate_corrected: Optional[float] = None
+    share_of_voice_llm: Optional[float] = None
+    engagement_score: Optional[float] = None
+    
+    # GEO Advanced (Phase 2+)
+    zero_click_presence: Optional[float] = None
+    authority_score: Optional[float] = None
+    relevance_score: Optional[float] = None
+    clarity_score: Optional[float] = None
+    conversion_potential_score: Optional[float] = None
 
 
 class RunDetailOut(BaseModel):
@@ -178,6 +210,8 @@ class RunDetailOut(BaseModel):
     prompt_id: Optional[str] = None
     # prompt
     prompt_text: Optional[str] = None
+    # response
+    response_text: Optional[str] = None
     # observabilidade
     model_name: Optional[str] = None
     tokens_input: Optional[int] = None
@@ -270,6 +304,39 @@ class RunDetailOut(BaseModel):
     # Posição Orgânica (do SerpAPI)
     organic_position: Optional[int] = None
     competitors_top10: Optional[int] = None
+    
+    # === MÉTRICAS GEO (Generative Engine Optimization) ===
+    # IMPORTANTE: Exclusivo para LLMs (ChatGPT, Gemini, Perplexity)
+    # NÃO deve ser populado para SERP tradicional
+    
+    # Brand Presence
+    brand_mention_count: Optional[int] = None
+    brand_first_mention_position: Optional[int] = None
+    brand_mention_density: Optional[float] = None
+    brand_prominence_score: Optional[float] = None
+    
+    # Citation Quality & Rate
+    citation_quality_score: Optional[float] = None
+    first_citation_position: Optional[int] = None
+    citation_rate_observed: Optional[float] = None
+    citation_rate_corrected: Optional[float] = None
+    
+    # Competitive Intelligence
+    competitor_mention_ratio: Optional[float] = None
+    share_of_voice_llm: Optional[float] = None
+    cocitation_competitors: Optional[str] = None  # JSON array
+    
+    # Engagement
+    conversational_trigger_count: Optional[int] = None
+    engagement_score: Optional[float] = None
+    
+    # GEO Advanced (Phase 2+)
+    zero_click_presence: Optional[float] = None
+    authority_score: Optional[float] = None
+    relevance_score: Optional[float] = None
+    clarity_score: Optional[float] = None
+    product_category: Optional[str] = None
+    conversion_potential_score: Optional[float] = None
 
 
 class RunSemanticInsightOut(BaseModel):
@@ -429,6 +496,85 @@ class GeoWebStructureItem(BaseModel):
     ai_ready_blocks: bool
     details: Optional[Dict[str, Any]] = None
     matches_filter: Optional[bool] = None
+
+
+# === SCHEMAS GEO (Generative Engine Optimization) ===
+
+class DomainVariantCreate(BaseModel):
+    """Criar variante de domínio."""
+    variant_domain: str
+    canonical_domain: str
+    display_name: Optional[str] = None
+
+
+class DomainVariantOut(BaseModel):
+    """Retorno de variante de domínio."""
+    id: str
+    project_id: str
+    variant_domain: str
+    canonical_domain: str
+    display_name: Optional[str] = None
+    created_at: datetime
+
+
+class ContentGapCreate(BaseModel):
+    """Criar lacuna de conteúdo."""
+    url: Optional[str] = None
+    topic: Optional[str] = None
+    gap_type: str  # missing_faq|outdated_content|no_comparison|missing_table|no_tldr
+    description: str
+    suggestion: Optional[str] = None
+    priority: str = "medium"  # low|medium|high|critical
+    assignee: Optional[str] = None
+
+
+class ContentGapUpdate(BaseModel):
+    """Atualizar lacuna de conteúdo."""
+    status: Optional[str] = None  # open|in_progress|completed|dismissed
+    priority: Optional[str] = None
+    assignee: Optional[str] = None
+    suggestion: Optional[str] = None
+
+
+class ContentGapOut(BaseModel):
+    """Retorno de lacuna de conteúdo."""
+    id: str
+    project_id: str
+    url: Optional[str] = None
+    topic: Optional[str] = None
+    gap_type: str
+    description: str
+    suggestion: Optional[str] = None
+    priority: str
+    status: str
+    estimated_impact: Optional[float] = None
+    assignee: Optional[str] = None
+    detected_at: datetime
+    resolved_at: Optional[datetime] = None
+
+
+class GeoCitationRateStats(BaseModel):
+    """Estatísticas de Citation Rate agregadas."""
+    period_start: datetime
+    period_end: datetime
+    total_runs: int
+    llm_runs: int  # Apenas LLMs
+    cr_observed_avg: float
+    cr_corrected_avg: float
+    cr_trend: str  # "up"|"down"|"stable"
+    by_engine: Dict[str, Dict[str, float]]  # {"chatgpt": {"cr_obs": 45.2, "cr_corr": 52.1}}
+    by_funnel: Optional[Dict[str, float]] = None
+    by_product: Optional[Dict[str, float]] = None
+
+
+class GeoCoCitationAnalysis(BaseModel):
+    """Análise de co-citação com concorrentes."""
+    competitor_domain: str
+    competitor_name: str
+    cocitation_count: int
+    cocitation_percentage: float
+    contexts: List[str]  # ["comparacao", "reputacao", "produto"]
+    avg_prominence_when_together: Optional[float] = None
 
 
 class GeoAlert(BaseModel):

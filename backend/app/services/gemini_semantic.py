@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 try:
     import google.generativeai as genai
@@ -152,6 +153,168 @@ MAX_ENTITIES = 10
 MAX_KEYWORDS = 10
 ENTITY_SORT_KEY = lambda e: float(e.get("confidence") or 0.0)
 KEYWORD_SORT_KEY = lambda k: float(k.get("weight") or 0.0)
+
+
+FINANCIAL_BASE_DOMAINS: Set[str] = {
+    "bb.com.br",
+    "bancodobrasil.com.br",
+    "itau.com.br",
+    "itauuniclass.com.br",
+    "bradesco.com.br",
+    "caixa.gov.br",
+    "santander.com.br",
+    "btgpactual.com.br",
+    "safra.com.br",
+    "sicredi.com.br",
+    "sicoob.com.br",
+    "inter.com.br",
+    "inter.co",
+    "nubank.com.br",
+    "nubank.com",
+    "pagbank.com.br",
+    "pagseguro.uol.com.br",
+    "blog.pagseguro.uol.com.br",
+    "mercadopago.com.br",
+    "c6bank.com.br",
+    "banrisul.com.br",
+    "original.com.br",
+    "digio.com.br",
+    "willbank.com.br",
+    "next.me",
+    "agibank.com.br",
+    "neon.com.br",
+    "modalmais.com.br",
+}
+
+FINANCIAL_KEYWORDS: Tuple[str, ...] = (
+    "banco",
+    "bank",
+    "finance",
+    "finança",
+    "financas",
+    "fintech",
+    "crédito",
+    "credito",
+    "cartão",
+    "cartao",
+    "credi",
+    "pagbank",
+    "pagseguro",
+    "nubank",
+    "santander",
+    "itau",
+    "bradesco",
+    "caixa",
+    "sicredi",
+    "sicoob",
+    "inter",
+    "btg",
+    "safra",
+    "banrisul",
+    "c6",
+    "agibank",
+    "modalmais",
+    "neon",
+    "original",
+    "mercado pago",
+)
+
+
+FINANCIAL_DOMAIN_LABELS: Dict[str, str] = {
+    "bb.com.br": "Banco do Brasil",
+    "bancodobrasil.com.br": "Banco do Brasil",
+    "itau.com.br": "Itaú",
+    "itauuniclass.com.br": "Itaú Uniclass",
+    "bradesco.com.br": "Bradesco",
+    "caixa.gov.br": "Caixa Econômica Federal",
+    "santander.com.br": "Santander",
+    "btgpactual.com.br": "BTG Pactual",
+    "safra.com.br": "Banco Safra",
+    "sicredi.com.br": "Sicredi",
+    "sicoob.com.br": "Sicoob",
+    "inter.com.br": "Banco Inter",
+    "inter.co": "Banco Inter",
+    "nubank.com.br": "Nubank",
+    "nubank.com": "Nubank",
+    "pagbank.com.br": "PagBank",
+    "pagseguro.uol.com.br": "PagBank",
+    "blog.pagseguro.uol.com.br": "PagBank",
+    "mercadopago.com.br": "Mercado Pago",
+    "c6bank.com.br": "C6 Bank",
+    "banrisul.com.br": "Banrisul",
+    "original.com.br": "Banco Original",
+    "digio.com.br": "Digio",
+    "willbank.com.br": "Will Bank",
+    "next.me": "Next",
+    "agibank.com.br": "Agibank",
+    "neon.com.br": "Banco Neon",
+    "modalmais.com.br": "Banco Modalmais",
+    "empresta.com.br": "Empresta",
+    "serasa.com.br": "Serasa",
+}
+
+
+def _beautify_competitor_label(label: str) -> str:
+    label = (label or "").strip()
+    if not label:
+        return label
+
+    clean = re.sub(r"[-_]+", " ", label).strip()
+    lower = clean.lower()
+
+    if lower.startswith("www "):
+        clean = clean[4:]
+        lower = clean.lower()
+
+    if lower.startswith("banco "):
+        rest = clean[6:]
+        return f"Banco {rest.strip().title()}" if rest else "Banco"
+
+    if lower.startswith("banco"):
+        rest = clean[5:]
+        rest = rest.strip()
+        if rest:
+            return f"Banco {rest.title()}"
+
+    if lower.endswith(" bank"):
+        return clean.title()
+
+    return clean.title()
+
+
+def _format_competitor_name(raw_name: str, urls: List[str]) -> Optional[str]:
+    candidate = (raw_name or "").strip()
+    urls = urls or []
+
+    domains: List[str] = []
+    if candidate:
+        domain = normalize_domain(candidate)
+        if domain:
+            domains.append(domain)
+
+    for url in urls:
+        domain = normalize_domain(url)
+        if domain:
+            domains.append(domain)
+
+    for domain in domains:
+        if domain in FINANCIAL_DOMAIN_LABELS:
+            return FINANCIAL_DOMAIN_LABELS[domain]
+
+    for domain in domains:
+        if domain in FINANCIAL_BASE_DOMAINS:
+            base = domain.split(".")[0]
+            return _beautify_competitor_label(base)
+
+    if candidate:
+        domain = normalize_domain(candidate)
+        if domain and domain != candidate.lower():
+            return _beautify_competitor_label(domain.split(".")[0])
+
+    if candidate:
+        return _beautify_competitor_label(candidate)
+
+    return None
 
 
 class GeminiSemanticService:
@@ -485,14 +648,35 @@ class GeminiSemanticService:
         # KEYWORDS
         kws: List[Dict[str, Any]] = []
         for item in as_list(data.get("keywords")):
+            if isinstance(item, str):
+                token = item.strip()
+                if not token:
+                    continue
+                kw = {
+                    "token": token.lower(),
+                    "weight": 0.0,
+                    "brands": [],
+                    "products": [],
+                    "competitors": [],
+                    "context": None,
+                }
+                kws.append(kw)
+                continue
+
             if not isinstance(item, dict):
                 continue
-            token = item.get("token") or item.get("keyword")
+
+            token = (
+                item.get("token")
+                or item.get("keyword")
+                or item.get("text")
+                or item.get("term")
+            )
             if not token:
                 continue
             kw = {
                 "token": str(token).strip().lower(),
-                "weight": GeminiSemanticService._round01(item.get("weight", item.get("score", 0.0))),
+                "weight": GeminiSemanticService._round01(item.get("weight", item.get("score", item.get("relevance", 0.0)))),
                 "brands": clean_str_list(item.get("brands")),
                 "products": clean_str_list(item.get("products")),
                 "competitors": clean_str_list(item.get("competitors")),
@@ -521,11 +705,26 @@ class GeminiSemanticService:
         # SUMMARY
         summary = as_dict(data.get("summary"))
         if summary:
+            bullet_sources: List[str] = []
             summary["bullets"] = [
                 str(item).strip()
                 for item in as_list(summary.get("bullets"))
                 if str(item).strip()
             ]
+            # Coletar alternativas para pontos-chave
+            key_candidates: List[Any] = [
+                summary.get("key_points"),
+                summary.get("key_findings"),
+                summary.get("highlights"),
+                summary.get("insights"),
+            ]
+            for candidate in key_candidates:
+                for item in as_list(candidate):
+                    text_val = str(item).strip()
+                    if text_val:
+                        bullet_sources.append(text_val)
+            if not summary["bullets"] and bullet_sources:
+                summary["bullets"] = bullet_sources
             # opportunities
             opportunities = []
             for opp in as_list(summary.get("opportunities")):
@@ -552,6 +751,12 @@ class GeminiSemanticService:
                         risks_clean.append({"text": text_val})
             if risks_clean:
                 summary["risks"] = risks_clean
+            if not summary.get("headline"):
+                headline_source = summary.get("main_topic") or bullet_sources
+                if isinstance(headline_source, list) and headline_source:
+                    summary["headline"] = headline_source[0]
+                elif isinstance(headline_source, str) and headline_source.strip():
+                    summary["headline"] = headline_source.strip()
         payload["summary"] = summary
 
         # COMPETITORS
@@ -571,7 +776,40 @@ class GeminiSemanticService:
                 "urls": clean_str_list(comp.get("urls")),
             }
             comps.append(entry)
-        payload["competitors"] = [c for c in comps if c.get("name")]
+        filtered_comps: List[Dict[str, Any]] = []
+        seen_names: Set[str] = set()
+        for comp in comps:
+            name = (comp.get("name") or "").strip()
+            if not name:
+                continue
+
+            normalized_name = name.lower()
+            is_financial = any(keyword in normalized_name for keyword in FINANCIAL_KEYWORDS)
+
+            if not is_financial:
+                urls = comp.get("urls") or []
+                for raw_url in urls:
+                    domain = normalize_domain(raw_url)
+                    if domain in FINANCIAL_BASE_DOMAINS:
+                        is_financial = True
+                        break
+
+            if not is_financial:
+                continue
+
+            display_name = _format_competitor_name(name, comp.get("urls") or [])
+            if not display_name:
+                continue
+
+            if display_name in seen_names:
+                continue
+
+            seen_names.add(display_name)
+            clean_comp = comp.copy()
+            clean_comp["name"] = display_name
+            filtered_comps.append(clean_comp)
+
+        payload["competitors"] = filtered_comps
 
         # WORDCLOUD derivado
         payload["wordcloud"] = [
@@ -617,7 +855,7 @@ class GeminiSemanticService:
             "- Categorias: brand|product|feature|competitor|other.\n"
             "- perception.primary_category: inovacao|tradicao|custo|atendimento.\n"
             "- Se não houver dados, use arrays vazios ou valores neutros.\n"
-            "- Concorrentes tem que ser relacionado ao setor bancario, apenas empresas relacionadas a financas, ex de nao concorrenter: app store e youtube e tem que ser o nome da entidade e nao a url"
+            "- Concorrentes tem que ser relacionado ao setor bancario, apenas empresas relacionadas a financas. Empresas que nao sao concorrentes: app store e youtube."
         )
 
         return f"""
@@ -688,7 +926,6 @@ Você é um analista de SEO/IA. Extraia **apenas JSON** restrito ao esquema conh
                 response_text=response_text,
                 citations_text=citations_text,
                 project_name=project_name,
-                simplified=use_simplified,
             )
             try:
                 print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini (JSON mode)...")
