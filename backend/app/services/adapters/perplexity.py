@@ -226,16 +226,25 @@ class PerplexityAdapter:
 
     async def extract_citations(self, parsed: ParsedAnswer) -> List[Citation]:
         citations: List[Citation] = []
+        position_counter = 0
         for link in parsed.get("links", []):
             url = link.get("url")
             if not url:
                 continue
+            link_position = link.get("position")
+            if isinstance(link_position, (int, float)):
+                position_value = str(int(link_position))
+            elif isinstance(link_position, str) and link_position.strip().isdigit():
+                position_value = link_position.strip()
+            else:
+                position_counter += 1
+                position_value = str(position_counter)
             citations.append(
                 {
                     "domain": url,
                     "url": url,
                     "anchor": link.get("title") or None,
-                    "position": None,
+                    "position": position_value,
                     "type": "link",
                 }
             )

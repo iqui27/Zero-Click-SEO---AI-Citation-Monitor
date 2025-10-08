@@ -4,6 +4,8 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Select } from '../components/ui/select'
 import { sandboxTest, SandboxResponse, listOpenAIModels } from '../lib/api'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
+import SemanticFlowVisualizer from './Sandbox_flow'
 
 export default function SandboxPage() {
   const [engine, setEngine] = useState<'openai'|'gemini'|'perplexity'|'google_serp'|'sandbox'>('openai')
@@ -178,7 +180,14 @@ export default function SandboxPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-semibold tracking-tight">Sandbox de Engines</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">Sandbox</h1>
+      <Tabs defaultValue="engines" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+          <TabsTrigger value="engines">Engines</TabsTrigger>
+          <TabsTrigger value="semantic">Insights Simples</TabsTrigger>
+          <TabsTrigger value="flow">Pipeline Completo</TabsTrigger>
+        </TabsList>
+        <TabsContent value="engines" className="space-y-4">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-4 p-4 border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm backdrop-blur-sm transition-colors">
           <div className="grid gap-2">
@@ -445,6 +454,163 @@ export default function SandboxPage() {
           )}
         </div>
       </div>
+        </TabsContent>
+        <TabsContent value="semantic" className="space-y-4">
+          <SemanticDebugger />
+        </TabsContent>
+        <TabsContent value="flow" className="space-y-4">
+          <SemanticFlowVisualizer />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function SemanticDebugger() {
+  const [question, setQuestion] = useState('Como abrir conta digital no BB?')
+  const [responseText, setResponseText] = useState('O Banco do Brasil oferece a conta digital com facilidade. Nubank e Inter também têm opções digitais.')
+  const [citationsRaw, setCitationsRaw] = useState(`bb.com.br|https://bb.com.br/conta|true
+nubank.com.br|https://nubank.com.br/conta|false
+inter.com.br|https://inter.com.br|false`)
+  const [projectName, setProjectName] = useState('Banco do Brasil')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const analyze = async () => {
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      const citations = citationsRaw.split('\n').map(line => {
+        const parts = line.split('|')
+        return {
+          domain: parts[0]?.trim() || '',
+          url: parts[1]?.trim() || '',
+          is_ours: parts[2]?.trim().toLowerCase() === 'true'
+        }
+      }).filter(c => c.domain)
+
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const res = await fetch(`${apiUrl}/api/debug/semantic-insights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, response_text: responseText, citations, project_name: projectName })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.detail || 'Erro ao analisar')
+      } else {
+        setResult(data)
+      }
+    } catch (e: any) {
+      setError(e?.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-4 p-4 border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm">
+        <h2 className="font-semibold text-lg">Input</h2>
+        <div className="grid gap-3">
+          <div className="grid gap-2">
+            <Label>Pergunta</Label>
+            <Input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Pergunta/query do usuário" />
+          </div>
+          <div className="grid gap-2">
+            <Label>Resposta (texto plano)</Label>
+            <textarea 
+              className="border border-neutral-300 dark:border-neutral-700 rounded-md p-2 min-h-[120px] bg-white dark:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+              value={responseText}
+              onChange={e => setResponseText(e.target.value)}
+              placeholder="Texto da resposta da IA"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Citações (domain|url|is_ours, uma por linha)</Label>
+            <textarea 
+              className="border border-neutral-300 dark:border-neutral-700 rounded-md p-2 min-h-[100px] bg-white dark:bg-neutral-900 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+              value={citationsRaw}
+              onChange={e => setCitationsRaw(e.target.value)}
+              placeholder="bb.com.br|https://bb.com.br|true"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Nome do Projeto (marca principal)</Label>
+            <Input value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="Banco do Brasil" />
+          </div>
+        </div>
+        <Button onClick={analyze} disabled={busy}>{busy ? 'Analisando...' : 'Analisar'}</Button>
+      </div>
+      <div className="space-y-4 p-4 border rounded-xl bg-neutral-50/60 dark:bg-neutral-900/60 shadow-sm md:sticky md:top-16 h-fit max-h-[calc(100vh-120px)] overflow-auto">
+        <h2 className="font-semibold text-lg">Resultado</h2>
+        {error && <div className="text-sm text-red-600 whitespace-pre-wrap">{error}</div>}
+        {result && (
+          <div className="space-y-3">
+            <JsonViewer data={result} />
+          </div>
+        )}
+        {!result && !error && (
+          <p className="text-sm opacity-70">Preencha os campos e clique em "Analisar" para ver o JSON estruturado.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function JsonViewer({ data }: { data: any }) {
+  const renderValue = (value: any, depth: number = 0): React.ReactNode => {
+    if (value === null || value === undefined) {
+      return <span className="text-neutral-400">null</span>
+    }
+    if (typeof value === 'boolean') {
+      return <span className="text-purple-600 dark:text-purple-400">{String(value)}</span>
+    }
+    if (typeof value === 'number') {
+      return <span className="text-blue-600 dark:text-blue-400">{value}</span>
+    }
+    if (typeof value === 'string') {
+      return <span className="text-green-700 dark:text-green-400">"{value}"</span>
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) return <span className="text-neutral-400">[]</span>
+      return (
+        <div className="ml-4 space-y-1">
+          {value.slice(0, 10).map((item, idx) => (
+            <div key={idx} className="flex gap-2">
+              <span className="text-neutral-500">{idx}:</span>
+              {renderValue(item, depth + 1)}
+            </div>
+          ))}
+          {value.length > 10 && <div className="text-xs opacity-60">... e mais {value.length - 10} itens</div>}
+        </div>
+      )
+    }
+    if (typeof value === 'object') {
+      const entries = Object.entries(value).slice(0, 50)
+      if (!entries.length) return <span className="text-neutral-400">{'{}'}</span>
+      return (
+        <div className="ml-4 space-y-1 border-l-2 border-neutral-200 dark:border-neutral-700 pl-3">
+          {entries.map(([key, val]) => (
+            <div key={key} className="flex flex-col gap-0.5">
+              <div className="flex items-start gap-2">
+                <span className="text-xs font-mono font-semibold text-neutral-600 dark:text-neutral-300 min-w-[120px]">{key}:</span>
+                <div className="flex-1">{renderValue(val, depth + 1)}</div>
+              </div>
+            </div>
+          ))}
+          {Object.keys(value).length > 50 && <div className="text-xs opacity-60">... e mais {Object.keys(value).length - 50} campos</div>}
+        </div>
+      )
+    }
+    return <span>{String(value)}</span>
+  }
+
+  return (
+    <div className="text-xs font-mono bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-3 overflow-x-auto">
+      {renderValue(data)}
     </div>
   )
 }

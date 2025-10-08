@@ -96,6 +96,15 @@ async def on_startup() -> None:
 
                 for col_name, col_type in serp_columns:
                     add_column_if_not_exists("serp_features", col_name, col_type)
+                
+                # Adicionar colunas para arquivos especiais LLM/AI na tabela url_metadata
+                url_metadata_columns = [
+                    ("llms_txt", "TEXT"),
+                    ("ai_txt", "TEXT"),
+                    ("robots_txt_full", "TEXT"),
+                ]
+                for col_name, col_type in url_metadata_columns:
+                    add_column_if_not_exists("url_metadata", col_name, col_type)
 
                 print("[MIGRATION] SQLite migration completed for IM metrics.")
         

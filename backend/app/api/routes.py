@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, literal_column, and_, or_, Date, select, case
@@ -56,6 +57,7 @@ from app.schemas.schemas import (
     OverviewAnalytics,
     RunsBySubprojectGroup,
     GroupedRunWithEvidences,
+    GeoDashboardOut,
 )
 from app.services.tasks import enqueue_run
 from app.services.scheduler import stop_scheduler, start_scheduler
@@ -1947,6 +1949,471 @@ def get_run_semantic_insights(run_id: str, db: Session = Depends(get_db)):
         payload=insight.payload if insight else None,
         updated_at=insight.updated_at if insight else None,
     )
+
+
+@api_router.post("/debug/semantic-insights")
+def debug_semantic_insights(payload: Dict[str, Any] = Body(...)):
+    """Debug endpoint para testar análise semântica sem persistir dados."""
+    if not settings.semantic_insights_enabled:
+        raise HTTPException(status_code=503, detail="Semantic insights desabilitado")
+    
+    try:
+        from app.services.gemini_semantic import GeminiSemanticService
+        
+        question = payload.get("question", "")
+        response_text = payload.get("response_text", "")
+        citations = payload.get("citations", [])
+        project_name = payload.get("project_name")
+        
+        service = GeminiSemanticService()
+        result = service.analyze(
+            question=question,
+            response_text=response_text,
+            citations=citations,
+            project_name=project_name,
+        )
+        
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro ao analisar: {str(e)}")
+
+
+@api_router.post("/debug/full-pipeline")
+def debug_full_pipeline(payload: Dict[str, Any] = Body(...)):
+    """Debug endpoint que executa pipeline COMPLETO: SERP → Extração → Análise Semântica."""
+    import time
+    from app.services.engine_runner import run_engine
+    from app.services.gemini_semantic import GeminiSemanticService
+    from app.services.kpis import compute_run_report
+    
+    flow_log: List[Dict[str, Any]] = []
+    db: Session = SessionLocal()
+    
+    try:
+        # Step 1: Input
+        question = payload.get("question", "")
+        project_name = payload.get("project_name")
+        engine_config = payload.get("engine", "google_serp")
+        language = payload.get("language", "pt-BR")
+        region = payload.get("region", "BR")
+        device = payload.get("device", "mobile")
+        
+        flow_log.append({
+            "stage": "input",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "question": question,
+                "engine": engine_config,
+                "language": language,
+                "region": region,
+                "device": device,
+                "project_name": project_name,
+            }
+        })
+        
+        # Step 2: Call SERP/Engine
+        t0 = time.time()
+        fetch_input = {
+            "query": question,
+            "language": language,
+            "region": region,
+            "device": device,
+            "config": {
+                "use_serpapi": True,
+                "serpapi_ai_overview": True,
+                "serpapi_no_cache": False,
+            }
+        }
+        
+        try:
+            raw, parsed, citations_raw = run_engine(
+                name=engine_config,
+                fetch_input=fetch_input,
+                timeout_seconds=30,
+            )
+            engine_time = time.time() - t0
+            
+            response_text = parsed.get("text", "")
+            links = parsed.get("links", [])
+            
+            # Extrai SERP features se disponível  
+            serp_features = {}
+            knowledge_panel = None
+            
+            if engine_config == "google_serp":
+                try:
+                    from app.services.serp_analyzer import SerpAnalyzer
+                    # raw tem estrutura: {"raw_url": "...", "raw": {"serpapi": {...}, "source": "..."}}
+                    if raw and isinstance(raw, dict):
+                        raw_data = raw.get("raw", {})
+                        
+                        # serpapi_data pode estar em "serpapi" (modo normal) ou "serpapi_search" (modo AI)
+                        serpapi_data = raw_data.get("serpapi") or raw_data.get("serpapi_search", {})
+                        
+                        if serpapi_data:
+                            # _detect_serp_features espera (raw_data_dict, serpapi_data_dict)
+                            serp_features = SerpAnalyzer._detect_serp_features(raw, serpapi_data)
+                            knowledge_panel = SerpAnalyzer._extract_knowledge_panel(serpapi_data)
+                except Exception as e:
+                    pass  # Silenciosamente ignora erros de extração
+            
+            flow_log.append({
+                "stage": "engine_call",
+                "status": "completed",
+                "timestamp": time.time(),
+                "duration_ms": int(engine_time * 1000),
+                "data": {
+                    "engine": engine_config,
+                    "text_length": len(response_text),
+                    "text_preview": response_text[:500],
+                    "full_text": response_text,
+                    "links_count": len(links),
+                    "links": links,
+                    "raw_keys": list(parsed.keys()),
+                    "serp_features": serp_features if serp_features else None,
+                    "knowledge_panel": knowledge_panel,
+                }
+            })
+        except Exception as e:
+            flow_log.append({
+                "stage": "engine_call",
+                "status": "error",
+                "timestamp": time.time(),
+                "data": {"error": str(e)}
+            })
+            raise
+        
+        # Step 3: Extract citations
+        # Get project domains
+        project_domains = []
+        if project_name:
+            projects = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).all()
+            if projects:
+                project_id = projects[0].id
+                domains = db.query(Domain).filter(Domain.project_id == project_id).all()
+                project_domains = [d.domain.lower() for d in domains]
+        
+        citations = []
+        for link in links:
+            url = link.get("url", "")
+            if not url:
+                continue
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc.replace("www.", "")
+                is_ours = any(pd in domain.lower() for pd in project_domains) if project_domains else False
+                citations.append({
+                    "domain": domain,
+                    "url": url,
+                    "is_ours": is_ours,
+                    "title": link.get("title"),
+                })
+            except:
+                pass
+        
+        flow_log.append({
+            "stage": "extract_citations",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "citations_count": len(citations),
+                "our_citations": sum(1 for c in citations if c.get("is_ours")),
+                "citations": citations,
+            }
+        })
+        
+        # Step 4-7: Semantic analysis (same as before)
+        if settings.semantic_insights_enabled:
+            service = GeminiSemanticService()
+            flow_log.append({
+                "stage": "service_init",
+                "status": "completed",
+                "timestamp": time.time(),
+                "data": {"service": "GeminiSemanticService"}
+            })
+            
+            normalized_citations = service._prepare_citations(citations)
+            flow_log.append({
+                "stage": "prepare_citations",
+                "status": "completed",
+                "timestamp": time.time(),
+                "data": {
+                    "input_count": len(citations),
+                    "output_count": len(normalized_citations),
+                    "normalized": normalized_citations,
+                }
+            })
+            
+            citations_text = service._format_citations(normalized_citations)
+            prompt = service.build_prompt(
+                question=question,
+                response_text=response_text,
+                citations_text=citations_text,
+                project_name=project_name,
+            )
+            flow_log.append({
+                "stage": "build_prompt",
+                "status": "completed",
+                "timestamp": time.time(),
+                "data": {
+                    "prompt_length": len(prompt),
+                    "prompt_preview": prompt[:1000] + ("..." if len(prompt) > 1000 else ""),
+                    "full_prompt": prompt,
+                }
+            })
+            
+            t0 = time.time()
+            try:
+                gemini_response = service.model.generate_content(prompt)
+                gemini_time = time.time() - t0
+                
+                raw_text = None
+                finish_reason = None
+                if gemini_response.candidates:
+                    candidate = gemini_response.candidates[0]
+                    finish_reason = getattr(candidate, "finish_reason", None)
+                    try:
+                        raw_text = gemini_response.text
+                    except (ValueError, AttributeError) as e:
+                        raw_text = f"Error accessing response.text: {e}"
+                
+                flow_log.append({
+                    "stage": "gemini_call",
+                    "status": "completed",
+                    "timestamp": time.time(),
+                    "duration_ms": int(gemini_time * 1000),
+                    "data": {
+                        "finish_reason": finish_reason,
+                        "raw_response_length": len(raw_text) if raw_text else 0,
+                        "raw_response": raw_text,
+                    }
+                })
+            except Exception as e:
+                flow_log.append({
+                    "stage": "gemini_call",
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "data": {"error": str(e)}
+                })
+                raise
+            
+            parsed_json = service._safe_json_loads(raw_text or "")
+            flow_log.append({
+                "stage": "parse_json",
+                "status": "completed",
+                "timestamp": time.time(),
+                "data": {
+                    "parsed_keys": list(parsed_json.keys()) if parsed_json else [],
+                    "parsed": parsed_json,
+                }
+            })
+            
+            normalized = service._normalize_payload(
+                parsed_json,
+                response_text=response_text,
+                project_name=project_name,
+                normalized_citations=normalized_citations,
+            )
+            flow_log.append({
+                "stage": "normalize_payload",
+                "status": "completed",
+                "timestamp": time.time(),
+                "data": {
+                    "output_keys": list(normalized.keys()),
+                    "entities_count": len(normalized.get("entities", [])),
+                    "keywords_count": len(normalized.get("keywords", [])),
+                    "competitors_count": len(normalized.get("competitors", [])),
+                    "normalized": normalized,
+                }
+            })
+        
+        return {
+            "ok": True,
+            "flow": flow_log,
+            "final_output": normalized if settings.semantic_insights_enabled else None,
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        flow_log.append({
+            "stage": "error",
+            "status": "error",
+            "timestamp": time.time(),
+            "data": {"error": str(e), "traceback": traceback.format_exc()}
+        })
+        return {
+            "ok": False,
+            "flow": flow_log,
+            "error": str(e),
+        }
+    finally:
+        db.close()
+
+
+@api_router.post("/debug/semantic-flow")
+def debug_semantic_flow(payload: Dict[str, Any] = Body(...)):
+    """Debug endpoint que retorna TODO o fluxo de análise semântica com dados intermediários."""
+    if not settings.semantic_insights_enabled:
+        raise HTTPException(status_code=503, detail="Semantic insights desabilitado")
+    
+    import time
+    from app.services.gemini_semantic import GeminiSemanticService
+    
+    flow_log: List[Dict[str, Any]] = []
+    
+    try:
+        # Step 1: Input
+        question = payload.get("question", "")
+        response_text = payload.get("response_text", "")
+        citations = payload.get("citations", [])
+        project_name = payload.get("project_name")
+        
+        flow_log.append({
+            "stage": "input",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "question": question,
+                "response_text": response_text[:500] + ("..." if len(response_text) > 500 else ""),
+                "citations_count": len(citations),
+                "project_name": project_name,
+            }
+        })
+        
+        # Step 2: Service initialization
+        service = GeminiSemanticService()
+        flow_log.append({
+            "stage": "service_init",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {"service": "GeminiSemanticService"}
+        })
+        
+        # Step 3: Prepare citations
+        normalized_citations = service._prepare_citations(citations)
+        flow_log.append({
+            "stage": "prepare_citations",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "input_count": len(citations),
+                "output_count": len(normalized_citations),
+                "normalized": normalized_citations,
+            }
+        })
+        
+        # Step 4: Build prompt
+        citations_text = service._format_citations(normalized_citations)
+        prompt = service.build_prompt(
+            question=question,
+            response_text=response_text,
+            citations_text=citations_text,
+            project_name=project_name,
+        )
+        flow_log.append({
+            "stage": "build_prompt",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "prompt_length": len(prompt),
+                "prompt_preview": prompt[:1000] + ("..." if len(prompt) > 1000 else ""),
+                "full_prompt": prompt,
+            }
+        })
+        
+        # Step 5: Call Gemini
+        t0 = time.time()
+        try:
+            response = service.model.generate_content(prompt)
+            gemini_time = time.time() - t0
+            
+            # Extract raw text
+            raw_text = None
+            finish_reason = None
+            if response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = getattr(candidate, "finish_reason", None)
+                try:
+                    raw_text = response.text
+                except (ValueError, AttributeError) as e:
+                    raw_text = f"Error accessing response.text: {e}"
+            
+            flow_log.append({
+                "stage": "gemini_call",
+                "status": "completed",
+                "timestamp": time.time(),
+                "duration_ms": int(gemini_time * 1000),
+                "data": {
+                    "finish_reason": finish_reason,
+                    "raw_response_length": len(raw_text) if raw_text else 0,
+                    "raw_response": raw_text,
+                }
+            })
+        except Exception as e:
+            flow_log.append({
+                "stage": "gemini_call",
+                "status": "error",
+                "timestamp": time.time(),
+                "data": {"error": str(e)}
+            })
+            raise
+        
+        # Step 6: Parse JSON
+        parsed_json = service._safe_json_loads(raw_text or "")
+        flow_log.append({
+            "stage": "parse_json",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "parsed_keys": list(parsed_json.keys()) if parsed_json else [],
+                "parsed": parsed_json,
+            }
+        })
+        
+        # Step 7: Normalize payload
+        normalized = service._normalize_payload(
+            parsed_json,
+            response_text=response_text,
+            project_name=project_name,
+            normalized_citations=normalized_citations,
+        )
+        flow_log.append({
+            "stage": "normalize_payload",
+            "status": "completed",
+            "timestamp": time.time(),
+            "data": {
+                "output_keys": list(normalized.keys()),
+                "entities_count": len(normalized.get("entities", [])),
+                "keywords_count": len(normalized.get("keywords", [])),
+                "competitors_count": len(normalized.get("competitors", [])),
+                "normalized": normalized,
+            }
+        })
+        
+        return {
+            "ok": True,
+            "flow": flow_log,
+            "final_output": normalized,
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        flow_log.append({
+            "stage": "error",
+            "status": "error",
+            "timestamp": time.time(),
+            "data": {"error": str(e), "traceback": traceback.format_exc()}
+        })
+        return {
+            "ok": False,
+            "flow": flow_log,
+            "error": str(e),
+        }
 
 
 @api_router.delete("/runs/{run_id}")
@@ -4700,12 +5167,126 @@ def recalculate_run_metrics(run_id: str, db: Session = Depends(get_db)):
     run.entities_detected = entities["detected"]
     run.entities_relevance_score = entities["relevance_score"]
     run.entity_connection_score = entities["connection_score"]
-    
+
     db.commit()
-    
+
     return {
         "run_id": run.id,
         "im_seo_score": run.im_seo_score,
         "im_seoia_score": run.im_seoia_score,
         "recalculated_at": datetime.utcnow().isoformat()
     }
+
+
+@api_router.get("/projects/{project_id}/geo-dashboard", response_model=GeoDashboardOut)
+def get_geo_dashboard(
+    project_id: str,
+    prompt_id: Optional[str] = None,
+    prompt_version_id: Optional[str] = None,
+    subproject_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    bank_ids: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> GeoDashboardOut:
+    """
+    Get GEO Dashboard POC data with aggregated metrics.
+
+    Query params:
+    - prompt_id: Filter by prompt
+    - prompt_version_id: Filter by prompt version
+    - subproject_id: Filter by subproject/product
+    - date_from: Start date (YYYY-MM-DD)
+    - date_to: End date (YYYY-MM-DD)
+    - bank_ids: Comma-separated bank domain/names to compare
+    """
+    from app.services.geo_dashboard import compute_geo_dashboard
+    from datetime import date as date_type
+
+    # Parse date filters
+    date_from_parsed = None
+    date_to_parsed = None
+
+    if date_from:
+        try:
+            date_from_parsed = date_type.fromisoformat(date_from)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_from format. Use YYYY-MM-DD")
+
+    if date_to:
+        try:
+            date_to_parsed = date_type.fromisoformat(date_to)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_to format. Use YYYY-MM-DD")
+
+    # Parse bank_ids
+    bank_ids_list = None
+    if bank_ids:
+        bank_ids_list = [b.strip() for b in bank_ids.split(",") if b.strip()]
+
+    # Compute dashboard data
+    result = compute_geo_dashboard(
+        db=db,
+        project_id=project_id,
+        prompt_id=prompt_id,
+        prompt_version_id=prompt_version_id,
+        subproject_id=subproject_id,
+        date_from=date_from_parsed,
+        date_to=date_to_parsed,
+        bank_ids=bank_ids_list,
+    )
+
+    return result
+
+
+@api_router.post("/crawl-urls")
+def crawl_urls_endpoint(
+    urls: List[str],
+    db: Session = Depends(get_db)
+):
+    """
+    Crawl URLs to extract metadata (title, meta tags, Open Graph, AI-ready structures).
+    
+    Body: { "urls": ["https://example.com", ...] }
+    Max 50 URLs per request.
+    """
+    from app.services.url_crawler import crawl_urls_batch
+    
+    if not urls:
+        raise HTTPException(status_code=400, detail="No URLs provided")
+    
+    if len(urls) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 URLs per request")
+    
+    result = crawl_urls_batch(db, urls, max_urls=50)
+    
+    return result
+
+
+@api_router.post("/projects/{project_id}/crawl-citations")
+def crawl_project_citations(
+    project_id: str,
+    max_urls: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Crawl URLs from citations of a specific project.
+    Useful for populating metadata for the web structure checklist.
+    """
+    from app.services.url_crawler import crawl_urls_batch
+    from app.models.models import Citation, Run
+    
+    # Get all unique URLs from citations in this project
+    citations = db.query(Citation.url).join(Run).filter(
+        Run.project_id == project_id,
+        Citation.url.isnot(None)
+    ).distinct().limit(max_urls).all()
+    
+    urls = [c.url for c in citations if c.url]
+    
+    if not urls:
+        return {"total": 0, "success": 0, "error": 0, "message": "No URLs found in project citations"}
+    
+    result = crawl_urls_batch(db, urls, max_urls=max_urls)
+    
+    return result

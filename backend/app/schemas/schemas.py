@@ -158,6 +158,7 @@ class RunDetailOut(BaseModel):
     model_config = {
         "from_attributes": True,
         "populate_by_name": True,
+        "protected_namespaces": (),
     }
     
     id: str
@@ -325,3 +326,160 @@ class RunsBySubprojectGroup(BaseModel):
     subproject_id: Optional[str]
     subproject_name: str
     runs: List[GroupedRunWithEvidences]
+
+
+# === GEO Dashboard Schemas ===
+
+class GeoKPI(BaseModel):
+    """KPI metric for hero cards."""
+    label: str
+    value: Any
+    total: Optional[int] = None
+    unit: Optional[str] = None
+    delta: Optional[float] = None
+    trend: Optional[str] = None  # "up"|"down"|"stable"
+
+
+class GeoRadarDimension(BaseModel):
+    """Single dimension in radar chart."""
+    name: str
+    value: float
+
+
+class GeoRadarSeries(BaseModel):
+    """Radar chart series for a single bank/entity."""
+    bank: str
+    dimensions: List[GeoRadarDimension]
+
+
+class GeoBrandRanking(BaseModel):
+    """Brand ranking entry."""
+    rank: int
+    brand: str
+    mentions: int
+    sample_url: Optional[str] = None
+
+
+class GeoPerceptionBreakdown(BaseModel):
+    """Perception breakdown per dimension."""
+    dimension: str
+    bank_a: Optional[float] = None
+    bank_b: Optional[float] = None
+
+
+class GeoPositioning(BaseModel):
+    """Positioning section data."""
+    brand_ranking: List[GeoBrandRanking]
+    perception_breakdown: List[GeoPerceptionBreakdown]
+
+
+class GeoWordCloudItem(BaseModel):
+    """Word cloud item."""
+    text: str
+    frequency: int
+    weight: float
+
+
+class GeoEntityItem(BaseModel):
+    """Entity table item."""
+    entity: str
+    type: str
+    mentions: int
+    runs: int
+
+
+class GeoKeywordsEntities(BaseModel):
+    """Keywords and entities section."""
+    word_cloud: List[GeoWordCloudItem]
+    entities: List[GeoEntityItem]
+
+
+class GeoPanoramaCard(BaseModel):
+    """Panorama summary card."""
+    label: str
+    value: Any
+    delta: Optional[float] = None
+    supporting: Optional[str] = None
+
+
+class GeoPanoramaChart(BaseModel):
+    """Panorama comparison chart data."""
+    bank: str
+    ai_overview_count: int
+    paa_count: int
+    kp_count: int
+
+
+class GeoPanorama(BaseModel):
+    """Panorama section data."""
+    cards: List[GeoPanoramaCard]
+    chart: List[GeoPanoramaChart]
+
+
+class GeoWebStructureItem(BaseModel):
+    """Web structure checklist item."""
+    domain: Optional[str] = None
+    primary_url: Optional[str] = None
+    url: Optional[str] = None  # Deprecated, use primary_url
+    title: bool
+    meta_description: bool
+    keywords: bool
+    robots: bool
+    open_graph: bool
+    ai_ready_blocks: bool
+    details: Optional[Dict[str, Any]] = None
+    matches_filter: Optional[bool] = None
+
+
+class GeoAlert(BaseModel):
+    """Alert item (Crítico/Atenção/Oportunidade)."""
+    severity: str  # "critico"|"atencao"|"oportunidade"
+    title: str
+    description: str
+    supporting_runs: List[str]
+
+
+class GeoSWOT(BaseModel):
+    """SWOT analysis."""
+    strengths: List[str]
+    weaknesses: List[str]
+    opportunities: List[str]
+    threats: List[str]
+
+
+class GeoRawSample(BaseModel):
+    """Raw analysis sample."""
+    run_id: str
+    started_at: Optional[str]
+    engine: str
+    status: str
+    im_seo_score: Optional[float]
+    eeat_score: Optional[float]
+    citations_count: Optional[int]
+    response_snippet: Optional[str]
+
+
+class GeoDashboardFilters(BaseModel):
+    """Filters applied to dashboard."""
+    prompt_id: Optional[str] = None
+    prompt_version_id: Optional[str] = None
+    subproject_id: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    bank_ids: Optional[List[str]] = None
+
+
+class GeoDashboardOut(BaseModel):
+    """Complete GEO dashboard response."""
+    project_id: Optional[str]
+    filters_applied: GeoDashboardFilters
+    total_runs: int
+    kpis: List[GeoKPI]
+    radar: List[GeoRadarSeries]
+    positioning: GeoPositioning
+    keywords_entities: GeoKeywordsEntities
+    panorama: GeoPanorama
+    web_structure: List[GeoWebStructureItem]
+    alerts: List[GeoAlert]
+    swot: GeoSWOT
+    raw_samples: List[GeoRawSample]

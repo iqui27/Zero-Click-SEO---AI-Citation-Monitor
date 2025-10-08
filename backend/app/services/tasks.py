@@ -29,7 +29,7 @@ from app.models.models import (
 )
 from app.services.insights import generate_basic_insights
 from app.services.kpis import compute_run_report
-from app.services.normalization import normalize_domain
+from app.services.normalization import normalize_domain, normalize_url_for_dedupe
 from app.services.engine_runner import run_engine
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
 from app.services.gemini_semantic import GeminiSemanticService
@@ -224,6 +224,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
         total_cycles = max(1, int(cycles or 1))
         aggregated_extracted: list[dict[str, Any]] = []
+        seen_citation_keys: set[str] = set()
         semantic_pending = False
         project_domains = {normalize_domain(d.domain) for d in db.query(Domain).filter(Domain.project_id == run.project_id).all()}
         t0_all = time.perf_counter()
@@ -326,24 +327,78 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             # extract citations
             _log(db, run.id, "extract", "started")
             t_extract0 = time.perf_counter()
+            unique_before_cycle = len(aggregated_extracted)
+            processed_links_cycle = 0
             for c in extracted:
-                aggregated_extracted.append(c)
-                domain_norm = normalize_domain(c.get("url") or c.get("domain") or "")
-                is_ours = domain_norm in project_domains
+                raw_url = c.get("url") or c.get("domain") or ""
+                if not raw_url:
+                    continue
+                processed_links_cycle += 1
+
+                normalized_url = normalize_url_for_dedupe(raw_url)
+                domain_norm = normalize_domain(raw_url or c.get("domain") or "")
+                if not domain_norm and normalized_url:
+                    domain_norm = normalize_domain(normalized_url)
+                if not normalized_url and raw_url:
+                    normalized_url = raw_url.strip()
+
+                key_base = normalized_url or domain_norm
+                if not key_base:
+                    key_base = (c.get("anchor") or raw_url or "").strip()
+                if not key_base:
+                    continue
+
+                if key_base in seen_citation_keys:
+                    continue
+                seen_citation_keys.add(key_base)
+
+                position_raw = c.get("position")
+                if isinstance(position_raw, (int, float)):
+                    position_value_int = int(position_raw)
+                elif isinstance(position_raw, str):
+                    try:
+                        position_value_int = int(position_raw.strip())
+                    except ValueError:
+                        position_value_int = len(seen_citation_keys)
+                else:
+                    position_value_int = len(seen_citation_keys)
+                position_value = str(position_value_int)
+
+                is_ours = bool(domain_norm and domain_norm in project_domains)
+
+                aggregated_extracted.append(
+                    {
+                        "url": raw_url,
+                        "domain": domain_norm,
+                        "type": c.get("type"),
+                        "anchor": c.get("anchor"),
+                        "position": position_value_int,
+                        "is_ours": is_ours,
+                    }
+                )
+
                 db.add(
                     Citation(
                         run_id=run.id,
                         domain=domain_norm,
-                        url=c.get("url"),
+                        url=raw_url,
                         anchor=c.get("anchor"),
-                        position=c.get("position"),
+                        position=position_value,
                         type=c.get("type"),
                         is_ours=is_ours,
                     )
                 )
             db.commit()
             t_extract1 = time.perf_counter()
-            _log(db, run.id, "extract", "ok", f"{len(extracted)} items in {int((t_extract1 - t_extract0)*1000)} ms")
+            unique_after_cycle = len(aggregated_extracted)
+            unique_added = max(0, unique_after_cycle - unique_before_cycle)
+            _log(
+                db,
+                run.id,
+                "extract",
+                "ok",
+                f"{unique_added}/{processed_links_cycle or len(extracted)} unique citations in {int((t_extract1 - t_extract0)*1000)} ms",
+            )
 
         if aborted_due_timeout:
             run.status = "failed"
@@ -377,8 +432,8 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 tokens_total = int(tokens_input) + int(tokens_output or 0)
 
             citations_count = len(aggregated_extracted)
-            extracted_domains = [normalize_domain(c.get("url") or c.get("domain") or "") for c in aggregated_extracted]
-            our_citations_count = sum(1 for d in extracted_domains if d and d in project_domains)
+            extracted_domains = [c["domain"] for c in aggregated_extracted if c.get("domain")]
+            our_citations_count = sum(1 for item in aggregated_extracted if item.get("is_ours"))
             unique_domains_count = len({d for d in extracted_domains if d})
             # Pricing: mesclar defaults por (engine, model) com config_json
             base_cfg = dict(engine.config_json or {})

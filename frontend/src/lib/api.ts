@@ -424,3 +424,164 @@ export const migrateToGemini = (projectId?: string, limit = 200) =>
   }>(`/classification/migrate-to-gemini`, null, {
     params: { project_id: projectId, limit }
   }).then(r => r.data)
+
+// ---------- GEO Dashboard Types ----------
+
+export type GeoKPI = {
+  label: string
+  value: any
+  total?: number
+  unit?: string
+  delta?: number
+  trend?: 'up' | 'down' | 'stable'
+}
+
+export type GeoRadarDimension = {
+  name: string
+  value: number
+}
+
+export type GeoRadarSeries = {
+  bank: string
+  dimensions: GeoRadarDimension[]
+}
+
+export type GeoBrandRanking = {
+  rank: number
+  brand: string
+  mentions: number
+  sample_url?: string
+}
+
+export type GeoPerceptionBreakdown = {
+  dimension: string
+  bank_a?: number
+  bank_b?: number
+}
+
+export type GeoPositioning = {
+  brand_ranking: GeoBrandRanking[]
+  perception_breakdown: GeoPerceptionBreakdown[]
+}
+
+export type GeoWordCloudItem = {
+  text: string
+  frequency: number
+  weight: number
+}
+
+export type GeoEntityItem = {
+  entity: string
+  type: string
+  mentions: number
+  runs: number
+}
+
+export type GeoKeywordsEntities = {
+  word_cloud: GeoWordCloudItem[]
+  entities: GeoEntityItem[]
+}
+
+export type GeoPanoramaCard = {
+  label: string
+  value: any
+  delta?: number
+  supporting?: string
+}
+
+export type GeoPanoramaChart = {
+  bank: string
+  ai_overview_count: number
+  paa_count: number
+  kp_count: number
+}
+
+export type GeoPanorama = {
+  cards: GeoPanoramaCard[]
+  chart: GeoPanoramaChart[]
+}
+
+export type GeoWebStructureItem = {
+  url?: string
+  title: boolean
+  meta_description: boolean
+  keywords: boolean
+  robots: boolean
+  open_graph: boolean
+  ai_ready_blocks: boolean
+  details?: Record<string, any>
+}
+
+export type GeoAlert = {
+  severity: 'critico' | 'atencao' | 'oportunidade'
+  title: string
+  description: string
+  supporting_runs: string[]
+}
+
+export type GeoSWOT = {
+  strengths: string[]
+  weaknesses: string[]
+  opportunities: string[]
+  threats: string[]
+}
+
+export type GeoRawSample = {
+  run_id: string
+  started_at?: string
+  engine: string
+  status: string
+  im_seo_score?: number
+  eeat_score?: number
+  citations_count?: number
+  response_snippet?: string
+}
+
+export type GeoDashboardFilters = {
+  prompt_id?: string
+  prompt_version_id?: string
+  subproject_id?: string
+  date_from?: string
+  date_to?: string
+  bank_ids?: string[]
+}
+
+export type GeoDashboard = {
+  project_id?: string
+  filters_applied: GeoDashboardFilters
+  total_runs: number
+  kpis: GeoKPI[]
+  radar: GeoRadarSeries[]
+  positioning: GeoPositioning
+  keywords_entities: GeoKeywordsEntities
+  panorama: GeoPanorama
+  web_structure: GeoWebStructureItem[]
+  alerts: GeoAlert[]
+  swot: GeoSWOT
+  raw_samples: GeoRawSample[]
+}
+
+export const getGeoDashboard = (
+  projectId: string,
+  filters?: {
+    prompt_id?: string
+    prompt_version_id?: string
+    subproject_id?: string
+    date_from?: string
+    date_to?: string
+    bank_ids?: string[]
+  }
+) => {
+  const params = new URLSearchParams()
+
+  if (filters?.prompt_id) params.set('prompt_id', filters.prompt_id)
+  if (filters?.prompt_version_id) params.set('prompt_version_id', filters.prompt_version_id)
+  if (filters?.subproject_id) params.set('subproject_id', filters.subproject_id)
+  if (filters?.date_from) params.set('date_from', filters.date_from)
+  if (filters?.date_to) params.set('date_to', filters.date_to)
+  if (filters?.bank_ids && filters.bank_ids.length > 0) {
+    params.set('bank_ids', filters.bank_ids.join(','))
+  }
+
+  return http.get<GeoDashboard>(`/projects/${projectId}/geo-dashboard?${params.toString()}`).then(r => r.data)
+}

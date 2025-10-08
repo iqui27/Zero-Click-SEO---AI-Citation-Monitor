@@ -469,6 +469,15 @@ export default function RunDetail() {
   const semanticSummaryBullets = Array.isArray(semanticPayload?.summary?.bullets)
     ? semanticPayload.summary.bullets.slice(0, 4)
     : []
+  const semanticOpportunities = Array.isArray(semanticPayload?.summary?.opportunities)
+    ? semanticPayload.summary.opportunities.slice(0, 5)
+    : []
+  const semanticRisks = Array.isArray(semanticPayload?.summary?.risks)
+    ? semanticPayload.summary.risks.slice(0, 5)
+    : []
+  const semanticMeta = semanticPayload?.meta || {}
+  const semanticSeoMetrics = semanticPayload?.seo_metrics || {}
+  const semanticPerceptionScores = semanticPerception?.scores || {}
   const semanticEntities = Array.isArray(semanticPayload?.entities) ? semanticPayload?.entities : []
   const brandNameSet = new Set<string>(
     semanticEntities
@@ -764,6 +773,33 @@ export default function RunDetail() {
                   ))}
                 </ul>
               )}
+              {semanticOpportunities.length > 0 && (
+                <div className="border-t pt-2 mt-2">
+                  <h4 className="text-xs font-semibold mb-1 text-green-700 dark:text-green-300">Oportunidades</h4>
+                  <ul className="space-y-1 text-xs">
+                    {semanticOpportunities.map((opp: any, idx: number) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span className="flex-1">{typeof opp === 'string' ? opp : opp?.text || '-'}</span>
+                        {opp?.impact && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30">
+                            {opp.impact}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {semanticRisks.length > 0 && (
+                <div className="border-t pt-2 mt-2">
+                  <h4 className="text-xs font-semibold mb-1 text-red-700 dark:text-red-300">Riscos</h4>
+                  <ul className="space-y-1 text-xs">
+                    {semanticRisks.map((risk: any, idx: number) => (
+                      <li key={idx}>{typeof risk === 'string' ? risk : risk?.text || '-'}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
             <div className="border rounded-lg p-4 bg-neutral-50/60 dark:bg-neutral-900/60 space-y-3">
               <div className="flex items-center gap-2 justify-between">
@@ -806,14 +842,38 @@ export default function RunDetail() {
                   <h4 className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Concorrentes</h4>
                   <ul className="space-y-1 text-xs">
                     {competitorsToShow.map((competitor: any, idx: number) => (
-                      <li key={`${competitor.name || idx}`} className="flex items-center justify-between">
-                        <span>{competitor.name || '—'}</span>
-                        {competitor.mentions && (
-                          <span className="text-muted-foreground">{competitor.mentions} menc.</span>
+                      <li key={`${competitor.name || idx}`} className="flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{competitor.name || '—'}</span>
+                          {competitor.mentions && (
+                            <span className="text-muted-foreground">{competitor.mentions} menc.</span>
+                          )}
+                        </div>
+                        {Array.isArray(competitor.presence) && competitor.presence.length > 0 && (
+                          <div className="flex gap-1 flex-wrap">
+                            {competitor.presence.map((channel: string, i: number) => (
+                              <span key={i} className="text-[9px] px-1.5 py-0.5 rounded border bg-neutral-100 dark:bg-neutral-800">
+                                {channel}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {Object.keys(semanticPerceptionScores).length > 0 && (
+                <div className="border-t pt-2 mt-2">
+                  <h4 className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Scores de percepção</h4>
+                  <div className="grid grid-cols-2 gap-1 text-[11px]">
+                    {Object.entries(semanticPerceptionScores).map(([key, value]: [string, any]) => (
+                      <div key={key} className="flex justify-between">
+                        <span className="capitalize opacity-70">{perceptionLabels[key] || key}:</span>
+                        <span className="font-medium">{typeof value === 'number' ? value.toFixed(1) : value}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -844,6 +904,40 @@ export default function RunDetail() {
         ) : (
           <div className="text-sm opacity-70 border rounded-lg p-6 text-center">
             Insights semânticos ainda não disponíveis para esta run.
+          </div>
+        )}
+        {/* Meta & SEO Metrics */}
+        {semanticPayload && (Object.keys(semanticMeta).length > 0 || Object.keys(semanticSeoMetrics).length > 0) && (
+          <div className="grid gap-3 md:grid-cols-2 mt-4">
+            {Object.keys(semanticMeta).length > 0 && (
+              <div className="border rounded-lg p-3 bg-neutral-50/40 dark:bg-neutral-900/40">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Meta</h3>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                  {Object.entries(semanticMeta).map(([key, value]: [string, any]) => (
+                    <React.Fragment key={key}>
+                      <dt className="opacity-70 capitalize">{key}:</dt>
+                      <dd className="font-medium truncate">{String(value || '-')}</dd>
+                    </React.Fragment>
+                  ))}
+                </dl>
+              </div>
+            )}
+            {Object.keys(semanticSeoMetrics).length > 0 && (
+              <div className="border rounded-lg p-3 bg-neutral-50/40 dark:bg-neutral-900/40">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">SEO Metrics</h3>
+                <dl className="space-y-1 text-[11px]">
+                  {Object.entries(semanticSeoMetrics).map(([key, value]: [string, any]) => {
+                    const displayValue = Array.isArray(value) ? value.join(', ') : (typeof value === 'boolean' ? (value ? 'Sim' : 'Não') : String(value || '-'))
+                    return (
+                      <div key={key} className="flex justify-between gap-2">
+                        <dt className="opacity-70">{key.replace(/_/g, ' ')}:</dt>
+                        <dd className="font-medium text-right">{displayValue}</dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+              </div>
+            )}
           </div>
         )}
       </section>

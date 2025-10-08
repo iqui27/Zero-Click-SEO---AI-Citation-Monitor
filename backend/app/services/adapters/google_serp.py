@@ -204,6 +204,7 @@ class GoogleSerpAdapter:
             ai = (raw.get("raw") or {}).get("serpapi_ai") or {}
             text_blocks = ai.get("text_blocks") or []
             references = ai.get("references") or []
+            position_counter = 0
 
             # links a partir das referências do AI Overview
             for ref in references[:100]:
@@ -214,7 +215,8 @@ class GoogleSerpAdapter:
                 parsed_url = urlparse(url)
                 if parsed_url.netloc in BLOCKED_HOSTS:
                     continue
-                links.append({"url": url, "title": title})
+                position_counter += 1
+                links.append({"url": url, "title": title, "position": position_counter})
 
             # Fallback: se AI Overview não trouxe 'references', usar organic_results da busca normal
             used_fallback = False
@@ -228,7 +230,8 @@ class GoogleSerpAdapter:
                     parsed_url = urlparse(url)
                     if parsed_url.netloc in BLOCKED_HOSTS:
                         continue
-                    links.append({"url": url, "title": title})
+                    position_counter += 1
+                    links.append({"url": url, "title": title, "position": position_counter})
                 used_fallback = len(links) > 0
 
             # texto consolidado dos text_blocks
@@ -266,12 +269,12 @@ class GoogleSerpAdapter:
         # 2) Resultados orgânicos via SerpApi (engine=google)
         if src == "serpapi":
             data = (raw.get("raw") or {}).get("serpapi") or {}
-            for item in data.get("organic_results", [])[:20]:
+            for idx, item in enumerate(data.get("organic_results", [])[:20], start=1):
                 url = item.get("link")
                 title = item.get("title")
                 if url:
                     url = resolve_known_redirects(url)
-                    links.append({"url": url, "title": title})
+                    links.append({"url": url, "title": title, "position": idx})
             text_content = (data.get("search_metadata") or {}).get("id", "")
             return {
                 "text": text_content,
@@ -284,6 +287,7 @@ class GoogleSerpAdapter:
         html = (raw.get("raw") or {}).get("html") or ""
         soup = BeautifulSoup(html, "lxml")
         seen = set()
+        position_counter = 0
         for a in soup.select("#search a"):
             href = a.get("href")
             if not href or self._should_skip(href):
@@ -305,7 +309,8 @@ class GoogleSerpAdapter:
                 continue
             seen.add(key)
             title = a.get_text(strip=True) or (a.select_one("h3").get_text(strip=True) if a.select_one("h3") else "")
-            links.append({"url": url, "title": title})
+            position_counter += 1
+            links.append({"url": url, "title": title, "position": position_counter})
         text_content = soup.get_text(" ", strip=True)[:3000]
         return {"text": text_content, "blocks": [], "links": links, "meta": {"engine": self.name, "source": src or "html"}}
 
@@ -313,16 +318,25 @@ class GoogleSerpAdapter:
         citations: List[Citation] = []
         source = (parsed.get("meta") or {}).get("source")
         ctype = "ai_reference" if source in ("serpapi_ai", "serpapi_ai_embedded", "serpapi_ai_mode") else "link"
+        position_counter = 0
         for link in parsed.get("links", [])[:50]:
             url = link.get("url")
             if not url:
                 continue
+            link_position = link.get("position")
+            if isinstance(link_position, (int, float)):
+                position_value = str(int(link_position))
+            elif isinstance(link_position, str) and link_position.strip().isdigit():
+                position_value = link_position.strip()
+            else:
+                position_counter += 1
+                position_value = str(position_counter)
             citations.append(
                 {
                     "domain": url,
                     "url": url,
                     "anchor": link.get("title") or None,
-                    "position": None,
+                    "position": position_value,
                     "type": ctype,
                 }
             )

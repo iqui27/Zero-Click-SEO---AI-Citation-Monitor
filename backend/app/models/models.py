@@ -497,3 +497,48 @@ class RunSemanticInsight(Base):
     )
 
     run: Mapped[Run] = relationship("Run", back_populates="semantic_insights")
+
+
+class UrlMetadata(Base):
+    """Cached metadata from crawled URLs."""
+
+    __tablename__ = "url_metadata"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("umd"))
+    url: Mapped[str] = mapped_column(String, unique=True, index=True)
+    domain: Mapped[str] = mapped_column(FixedVarchar(255), index=True)
+    
+    # HTML metadata
+    title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta_description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta_keywords: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta_robots: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Open Graph tags (stored as JSON)
+    og_tags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Special files for LLMs/AI
+    llms_txt: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    ai_txt: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    robots_txt_full: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # AI Ready detection
+    has_structured_data: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_faq_schema: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_lists: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_tables: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Crawl status
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending|success|error
+    error_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    http_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    crawled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_url_metadata_domain_status", "domain", "status"),
+    )

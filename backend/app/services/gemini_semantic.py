@@ -1,4 +1,4 @@
-"""Serviço para gerar insights semânticos usando Gemini."""
+"""Serviço para gerar insights semânticos usando Gemini (JSON mode)."""
 
 from __future__ import annotations
 
@@ -9,20 +9,157 @@ try:
     import google.generativeai as genai
     from google.generativeai.types import HarmBlockThreshold, HarmCategory
     GENAI_AVAILABLE = True
-except ImportError:  # pragma: no cover - dependência opcional
+except ImportError:  # pragma: no cover
     GENAI_AVAILABLE = False
 
-from app.core.config import settings
+# Validação opcional
+try:
+    import jsonschema  # pip install jsonschema
+    JSONSCHEMA_AVAILABLE = True
+except Exception:
+    JSONSCHEMA_AVAILABLE = False
 
+from app.core.config import settings
+from app.services.normalization import normalize_domain, normalize_url_for_dedupe
+
+
+# -------------------------
+# JSON Schema (tolerante)
+# -------------------------
+JSON_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["entities", "relationships", "keywords", "perception", "summary", "competitors"],
+    "properties": {
+        "meta": {"type": "object"},
+        "entities": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "required": ["name", "category", "roles", "confidence"],
+                "additionalProperties": True,
+                "properties": {
+                    "name": {"type": "string"},
+                    "category": {"enum": ["brand", "product", "feature", "competitor", "other"]},
+                    "roles": {"type": "array", "items": {"type": "string"}},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "citations": {
+                        "oneOf": [
+                            {"type": "array", "items": {"type": "string"}},
+                            {"type": "array", "items": {"type": "object"}}
+                        ]
+                    },
+                    "description": {"type": ["string", "null"]}
+                }
+            }
+        },
+        "relationships": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["source", "target", "type"],
+                "additionalProperties": True,
+                "properties": {
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string"},
+                    "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                    "explanation": {"type": ["string", "null"]}
+                }
+            }
+        },
+        "keywords": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "required": ["token", "weight"],
+                "additionalProperties": True,
+                "properties": {
+                    "token": {"type": "string"},
+                    "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                    "brands": {"type": "array", "items": {"type": "string"}},
+                    "products": {"type": "array", "items": {"type": "string"}},
+                    "competitors": {"type": "array", "items": {"type": "string"}},
+                    "context": {"type": ["string", "null"]}
+                }
+            }
+        },
+        "perception": {
+            "type": "object",
+            "additionalProperties": True,
+            "required": ["primary_category", "confidence"],
+            "properties": {
+                "primary_category": {"enum": ["inovacao", "tradicao", "custo", "atendimento"]},
+                "secondary_categories": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "rationale": {"type": ["string", "null"]},
+                "scores": {"type": "object"}
+            }
+        },
+        "summary": {
+            "type": "object",
+            "additionalProperties": True,
+            "required": ["headline", "bullets"],
+            "properties": {
+                "headline": {"type": "string"},
+                "bullets": {"type": "array", "items": {"type": "string"}},
+                "opportunities": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "object", "properties": {"text": {"type": "string"}}}
+                        ]
+                    }
+                },
+                "risks": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "object", "properties": {"text": {"type": "string"}}}
+                        ]
+                    }
+                }
+            }
+        },
+        "competitors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": True,
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "mentions": {"type": ["integer", "null"], "minimum": 0},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    "presence": {"type": "array", "items": {"type": "string"}},
+                    "urls": {"type": "array", "items": {"type": "string"}}
+                }
+            }
+        },
+        "seo_metrics": {"type": "object"},
+        "evidence": {"type": "object"},
+        "citations": {"type": "array"}
+    }
+}
+
+# Limites e chaves de ordenação
+MAX_ENTITIES = 10
+MAX_KEYWORDS = 10
+ENTITY_SORT_KEY = lambda e: float(e.get("confidence") or 0.0)
+KEYWORD_SORT_KEY = lambda k: float(k.get("weight") or 0.0)
 
 
 class GeminiSemanticService:
     """Wrapper simples para chamar Gemini e extrair insights estruturados."""
 
-    def __init__(self, model_name: str = "gemini-2.5-flash", api_key: Optional[str] = None) -> None:
+    def __init__(self, model_name: str = "gemini-2.5-pro", api_key: Optional[str] = None) -> None:
         if not settings.semantic_insights_enabled:
             raise RuntimeError("semantic insights disabled by configuration")
-
         if not GENAI_AVAILABLE:
             raise ImportError("google-generativeai não está instalado")
 
@@ -37,8 +174,18 @@ class GeminiSemanticService:
             "temperature": 0.15,
             "top_p": 0.9,
             "top_k": 40,
-            "max_output_tokens": 5500,
+            "max_output_tokens": 9500,
+            # Força o modo JSON
+            "response_mime_type": "application/json",
         }
+
+        # Desabilitamos response_schema porque o Gemini SDK tem problemas com schemas
+        # que contêm type: ["string", "null"], causando erro "unhashable type: 'list'".
+        # Nossa normalização manual já é robusta o suficiente.
+        # try:
+        #     generation_config["response_schema"] = JSON_OUTPUT_SCHEMA
+        # except Exception:
+        #     pass
 
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -52,96 +199,186 @@ class GeminiSemanticService:
             generation_config=generation_config,
             safety_settings=safety_settings,
         )
+        
+        # Cache para hints automáticos
+        self._last_normalized_citations: List[Dict[str, Any]] = []
+
+    # -------------------------
+    # Utils internos
+    # -------------------------
 
     @staticmethod
     def _get_empty_structure() -> Dict[str, Any]:
         """Retorna estrutura vazia válida para quando Gemini falha."""
         return {
+            "meta": {},
             "entities": [],
             "relationships": [],
             "keywords": [],
             "perception": {},
             "summary": {},
             "competitors": [],
-            "wordcloud": []
+            "wordcloud": [],
+            "seo_metrics": {},
+            "evidence": {},
+            "citations": [],
         }
-    
+
     @staticmethod
-    def _format_citations(citations: List[Dict[str, Any]]) -> str:
+    def _prepare_citations(citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        prepared: List[Dict[str, Any]] = []
+        seen: set[str] = set()
         if not citations:
+            return prepared
+
+        for cite in citations[:100]:  # manter prompt enxuto
+            if not isinstance(cite, dict):
+                continue
+
+            raw_url = (cite.get("url") or "").strip()
+            domain_raw = cite.get("domain")
+            domain_raw = domain_raw.strip().lower() if isinstance(domain_raw, str) else ""
+
+            normalized_url = normalize_url_for_dedupe(raw_url) if raw_url else ""
+            domain_norm = normalize_domain(raw_url or domain_raw)
+
+            key = normalized_url or domain_norm or domain_raw
+            if not key:
+                anchor = cite.get("anchor")
+                key = (anchor or raw_url or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+
+            position_raw = cite.get("position")
+            if isinstance(position_raw, (int, float)):
+                position_val = int(position_raw)
+            elif isinstance(position_raw, str) and position_raw.strip().isdigit():
+                position_val = int(position_raw.strip())
+            else:
+                position_val = len(prepared) + 1
+
+            prepared.append(
+                {
+                    "url": raw_url or None,
+                    "normalized_url": normalized_url or None,
+                    "domain": domain_norm or (domain_raw or None),
+                    "position": position_val,
+                    "is_ours": bool(cite.get("is_ours")),
+                    "anchor": cite.get("anchor") or None,
+                }
+            )
+
+        return prepared
+
+    @staticmethod
+    def _format_citations(prepared: List[Dict[str, Any]]) -> str:
+        if not prepared:
             return "Nenhuma citação disponível."
-        lines = []
-        for cite in citations[:12]:
-            domain = cite.get("domain") or cite.get("url") or "desconhecido"
-            url = cite.get("url") or ""
-            lines.append(f"- {domain}: {url}")
+
+        total = len(prepared)
+        ours = sum(1 for cite in prepared if cite.get("is_ours"))
+        competitors = total - ours
+        lines = [f"Total: {total} (nossas: {ours}; concorrentes: {competitors})"]
+
+        for idx, cite in enumerate(prepared[:12], start=1):
+            try:
+                pos_int = int(cite.get("position") or idx)
+            except (TypeError, ValueError):
+                pos_int = idx
+            domain_display = cite.get("domain")
+            if not domain_display:
+                domain_display = normalize_domain(cite.get("normalized_url") or cite.get("url") or "")
+            if not domain_display:
+                domain_display = cite.get("normalized_url") or cite.get("url") or "desconhecido"
+            label = "nossa" if cite.get("is_ours") else "concorrente"
+            anchor = cite.get("anchor")
+            url_display = cite.get("url") or cite.get("normalized_url")
+
+            extras: List[str] = []
+            if anchor:
+                extras.append(anchor)
+            if url_display:
+                extras.append(url_display)
+            extra_text = f" — {'; '.join(extras)}" if extras else ""
+            lines.append(f"{pos_int:02d}. {domain_display} ({label}){extra_text}")
+
         return "\n".join(lines)
 
     @staticmethod
     def _safe_json_loads(raw: str) -> Dict[str, Any]:
-        """Extrai JSON de resposta do Gemini com limpeza agressiva."""
+        """Extrai JSON de resposta do Gemini com limpeza agressiva (fallback)."""
         import re
-        
-        # 1. Remover espaços em branco extras
-        cleaned = raw.strip()
-        
-        # 2. Remover markdown code blocks
+
+        cleaned = (raw or "").strip()
+        if not cleaned:
+            return GeminiSemanticService._get_empty_structure()
+
+        # Remover markdown code blocks, se houver
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")
-            # Remover primeira linha (```json ou ```)
             if lines[0].startswith("```"):
                 lines = lines[1:]
-            # Remover última linha se for ```
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             cleaned = "\n".join(lines).strip()
-        
-        # 3. Tentar parse direto
+
+        # Tenta parse direto
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
-        
-        # 4. Remover texto antes e depois do JSON
-        # Procurar primeiro { e último }
+
+        # Heurística: pega do primeiro '{' ao último '}'
         start = cleaned.find("{")
         end = cleaned.rfind("}")
-        
         if start != -1 and end != -1 and end > start:
-            json_candidate = cleaned[start : end + 1]
-            
-            # 5. Tentar parse do trecho extraído
+            candidate = cleaned[start : end + 1]
             try:
-                return json.loads(json_candidate)
+                return json.loads(candidate)
             except json.JSONDecodeError:
                 pass
-            
-            # 6. Limpeza agressiva: remover linhas que não são JSON
-            lines = json_candidate.split("\n")
-            json_lines = []
-            for line in lines:
-                stripped = line.strip()
-                # Manter apenas linhas que parecem JSON
-                if (stripped.startswith("{") or stripped.startswith("[") or 
-                    stripped.startswith('"') or stripped.startswith("}") or 
-                    stripped.startswith("]") or stripped.endswith(",") or
-                    ":" in stripped or stripped == ""):
-                    json_lines.append(line)
-            
-            cleaned_json = "\n".join(json_lines)
-            
-            # 7. Última tentativa
-            try:
-                return json.loads(cleaned_json)
-            except json.JSONDecodeError:
-                pass
-        
-        # 8. Se tudo falhar, retornar estrutura vazia ao invés de erro
-        print(f"[SEMANTIC] Aviso: Não foi possível parsear JSON. Retornando estrutura vazia.")
-        print(f"[SEMANTIC] Resposta original (primeiros 200 chars): {raw[:200]}")
-        
-        # Retornar estrutura mínima válida ao invés de lançar erro
+
+        print("[SEMANTIC] Aviso: JSON inválido; retornando estrutura vazia.")
         return GeminiSemanticService._get_empty_structure()
+
+    # ---------- NOVO: inferência de brand/domain hints ----------
+    @staticmethod
+    def _infer_brand_domain_hints(project_name: Optional[str], citations: List[Dict[str, Any]]) -> Dict[str, str]:
+        brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
+        domain_hint = ""
+
+        # preferir domínio first-party mais frequente nas citações
+        ours = [c for c in citations if c.get("is_ours") and c.get("domain")]
+        domain = None
+        if ours:
+            # mais frequente
+            from collections import Counter
+            domain = Counter([c["domain"] for c in ours]).most_common(1)[0][0]
+        else:
+            # fallback: primeiro domínio válido
+            for c in citations:
+                if c.get("domain"):
+                    domain = c["domain"]
+                    break
+
+        if domain and project_name:
+            domain_hint = f"Domínio principal: {domain} ({project_name})."
+        elif domain:
+            domain_hint = f"Domínio principal: {domain}."
+        return {"brand_hint": brand_hint, "domain_hint": domain_hint}
+
+    # -------------------------
+    # Normalização + limites
+    # -------------------------
+    @staticmethod
+    def _round01(x: Any) -> float:
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return 0.0
+        v = 0.0 if v < 0 else (1.0 if v > 1 else v)
+        return float(f"{v:.2f}")
 
     @staticmethod
     def _normalize_payload(
@@ -149,6 +386,8 @@ class GeminiSemanticService:
         *,
         response_text: Optional[str] = None,
         project_name: Optional[str] = None,
+        normalized_citations: Optional[List[Dict[str, Any]]] = None,
+        meta_defaults: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         def as_list(value: Any) -> List[Any]:
             if isinstance(value, list):
@@ -157,7 +396,32 @@ class GeminiSemanticService:
                 return []
             return [value]
 
-        payload = {
+        def as_dict(value: Any) -> Dict[str, Any]:
+            return value if isinstance(value, dict) else {}
+
+        def clean_str_list(values: Any) -> List[str]:
+            cleaned: List[str] = []
+            for item in as_list(values):
+                if item is None:
+                    continue
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        cleaned.append(stripped)
+                else:
+                    cleaned.append(item)
+            return cleaned
+
+        def to_int(value: Any) -> Optional[int]:
+            try:
+                if value is None:
+                    return None
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        payload: Dict[str, Any] = {
+            "meta": as_dict(data.get("meta")),
             "entities": [],
             "relationships": [],
             "keywords": [],
@@ -165,135 +429,198 @@ class GeminiSemanticService:
             "summary": {},
             "competitors": [],
             "wordcloud": [],
+            "seo_metrics": as_dict(data.get("seo_metrics")),
+            "evidence": as_dict(data.get("evidence")),
+            "citations": normalized_citations or [],
         }
 
-        payload["entities"] = [
-            {
-                "name": item.get("name"),
-                "category": item.get("category") or item.get("type"),
-                "roles": as_list(item.get("roles")),
-                "confidence": item.get("confidence", 0.0),
+        # ENTITIES
+        entities: List[Dict[str, Any]] = []
+        for item in as_list(data.get("entities")):
+            if not isinstance(item, dict):
+                continue
+            canonical = item.get("canonical_name") or item.get("name")
+            if not canonical:
+                continue
+            entry = {
+                "name": canonical,
+                "canonical_name": canonical,
+                "aliases": clean_str_list(item.get("aliases")),
+                "category": (item.get("category") or item.get("type") or "other").strip().lower(),
+                "roles": clean_str_list(item.get("roles")),
+                "confidence": GeminiSemanticService._round01(item.get("confidence", 0.0)),
                 "citations": as_list(item.get("citations")),
                 "description": item.get("description"),
             }
-            for item in as_list(data.get("entities"))
-            if item and item.get("name")
-        ]
+            if project_name and canonical.strip().lower() == project_name.strip().lower():
+                if "brand" not in [r.lower() for r in entry["roles"]]:
+                    entry.setdefault("roles", []).append("brand")
+            entities.append(entry)
 
-        payload["relationships"] = [
-            {
-                "source": item.get("source") or item.get("from"),
-                "target": item.get("target") or item.get("to"),
-                "type": item.get("type"),
-                "weight": item.get("weight", 0.0),
-                "explanation": item.get("explanation") or item.get("description"),
-            }
-            for item in as_list(data.get("relationships") or data.get("relations"))
-            if item and (item.get("source") or item.get("from")) and (item.get("target") or item.get("to"))
-        ]
+        # Ordena e limita
+        entities.sort(key=ENTITY_SORT_KEY, reverse=True)
+        payload["entities"] = entities[:MAX_ENTITIES]
 
-        payload["keywords"] = [
-            {
-                "token": item.get("token") or item.get("keyword"),
-                "weight": item.get("weight", item.get("score", 0.0)),
-                "brands": as_list(item.get("brands")),
-                "products": as_list(item.get("products")),
-                "competitors": as_list(item.get("competitors")),
+        # RELATIONSHIPS
+        rels = []
+        for item in as_list(data.get("relationships") or data.get("relations")):
+            if not isinstance(item, dict):
+                continue
+            src = item.get("source") or item.get("from")
+            tgt = item.get("target") or item.get("to")
+            if not (src and tgt):
+                continue
+            weight = GeminiSemanticService._round01(item.get("weight", item.get("score", 0.0)))
+            rels.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "type": item.get("type"),
+                    "weight": weight,
+                    "explanation": item.get("explanation") or item.get("description"),
+                }
+            )
+        payload["relationships"] = rels
+
+        # KEYWORDS
+        kws: List[Dict[str, Any]] = []
+        for item in as_list(data.get("keywords")):
+            if not isinstance(item, dict):
+                continue
+            token = item.get("token") or item.get("keyword")
+            if not token:
+                continue
+            kw = {
+                "token": str(token).strip().lower(),
+                "weight": GeminiSemanticService._round01(item.get("weight", item.get("score", 0.0))),
+                "brands": clean_str_list(item.get("brands")),
+                "products": clean_str_list(item.get("products")),
+                "competitors": clean_str_list(item.get("competitors")),
                 "context": item.get("context"),
             }
-            for item in as_list(data.get("keywords"))
-            if item and (item.get("token") or item.get("keyword"))
-        ]
+            kws.append(kw)
+        kws.sort(key=KEYWORD_SORT_KEY, reverse=True)
+        payload["keywords"] = kws[:MAX_KEYWORDS]
 
-        payload["perception"] = data.get("perception") or {}
-        payload["summary"] = data.get("summary") or {}
-        payload["competitors"] = as_list(data.get("competitors"))
-        payload["wordcloud"] = [
-            {
-                "token": kw.get("token") or kw.get("keyword"),
-                "weight": kw.get("weight", kw.get("score", 0.0)),
-                "brands": as_list(kw.get("brands")),
+        # PERCEPTION
+        perception = as_dict(data.get("perception"))
+        if perception:
+            # Normaliza enum
+            prim = (perception.get("primary_category") or "").strip().lower()
+            if prim not in {"inovacao", "tradicao", "custo", "atendimento"}:
+                prim = ""
+            perception["primary_category"] = prim
+            perception["secondary_categories"] = clean_str_list(perception.get("secondary_categories"))
+            # Clamp
+            perception["confidence"] = GeminiSemanticService._round01(perception.get("confidence", 0.0))
+            scores = perception.get("scores")
+            if scores is not None and not isinstance(scores, dict):
+                perception["scores"] = {}
+        payload["perception"] = perception
+
+        # SUMMARY
+        summary = as_dict(data.get("summary"))
+        if summary:
+            summary["bullets"] = [
+                str(item).strip()
+                for item in as_list(summary.get("bullets"))
+                if str(item).strip()
+            ]
+            # opportunities
+            opportunities = []
+            for opp in as_list(summary.get("opportunities")):
+                if isinstance(opp, dict):
+                    opp = {k: v for k, v in opp.items() if v not in (None, "")}
+                    if opp.get("text"):
+                        opportunities.append(opp)
+                else:
+                    text_val = str(opp).strip()
+                    if text_val:
+                        opportunities.append({"text": text_val})
+            if opportunities:
+                summary["opportunities"] = opportunities
+            # risks
+            risks_clean = []
+            for risk in as_list(summary.get("risks")):
+                if isinstance(risk, dict):
+                    risk = {k: v for k, v in risk.items() if v not in (None, "")}
+                    if risk.get("text"):
+                        risks_clean.append(risk)
+                else:
+                    text_val = str(risk).strip()
+                    if text_val:
+                        risks_clean.append({"text": text_val})
+            if risks_clean:
+                summary["risks"] = risks_clean
+        payload["summary"] = summary
+
+        # COMPETITORS
+        comps: List[Dict[str, Any]] = []
+        for comp in as_list(data.get("competitors")):
+            if not isinstance(comp, dict):
+                continue
+            name = comp.get("name")
+            if not name:
+                continue
+            entry = {
+                "name": name,
+                "category": comp.get("category"),
+                "mentions": to_int(comp.get("mentions")),
+                "keywords": clean_str_list(comp.get("keywords")),
+                "presence": clean_str_list(comp.get("presence")),
+                "urls": clean_str_list(comp.get("urls")),
             }
+            comps.append(entry)
+        payload["competitors"] = comps
+
+        # WORDCLOUD derivado
+        payload["wordcloud"] = [
+            {"token": kw["token"], "weight": kw["weight"], "brands": clean_str_list(kw.get("brands"))}
             for kw in payload["keywords"]
             if kw.get("token")
         ]
 
-        # === Fallback: derivar concorrentes se lista vier vazia ===
-        if not payload["competitors"] and payload["entities"]:
-            import re
-
-            response_lower = response_text.lower() if isinstance(response_text, str) else ""
-            project_tokens: List[str] = []
-            if project_name:
-                pn = project_name.strip().lower()
-                if pn:
-                    project_tokens.append(pn)
-                    # também considerar versões sem acentos / abreviações simples
-                    project_tokens.extend({
-                        pn.replace(" banco", "").strip(),
-                        pn.replace(" do brasil", "").strip(),
-                    })
-            fallback: Dict[str, Dict[str, Any]] = {}
-
-            def count_mentions(text: str, term: str) -> int:
-                if not text or not term:
-                    return 0
-                # Escapar termo para regex (respeitando espaços e caracteres especiais)
-                pattern = r"(?<![\w@])" + re.escape(term.lower()) + r"(?![\w@])"
-                return len(re.findall(pattern, text))
-
-            for entity in payload["entities"]:
-                name = (entity.get("name") or "").strip()
-                if not name:
+        # Preencher competidores por citações/domínios se vier vazio
+        if not payload["competitors"] and payload["citations"]:
+            competitor_map: Dict[str, Dict[str, Any]] = {}
+            for cite in payload["citations"]:
+                if not isinstance(cite, dict):
                     continue
-                name_lower = name.lower()
-
-                # Ignorar marca principal do projeto
-                if project_tokens and any(tok and tok in name_lower for tok in project_tokens if tok):
+                domain = cite.get("domain")
+                if cite.get("is_ours") or not domain:
                     continue
-
-                category = (entity.get("category") or "").lower()
-                roles = [r.lower() for r in entity.get("roles") or []]
-
-                looks_like_competitor = (
-                    "competitor" in roles
-                    or category in {"brand", "company", "organization"}
-                    or any(keyword in name_lower for keyword in ["bank", "banco", "fintech", "cartão", "card"])
+                entry = competitor_map.setdefault(
+                    domain,
+                    {"name": domain, "mentions": 0, "categories": {"domain"}, "urls": set()},
                 )
-
-                if not looks_like_competitor:
-                    continue
-
-                entry = fallback.setdefault(
-                    name_lower,
+                entry["mentions"] += 1
+                if cite.get("url"):
+                    entry["urls"].add(cite["url"])
+            if competitor_map:
+                payload["competitors"] = [
                     {
-                        "name": name,
-                        "mentions": 0,
-                        "keywords": set(),
-                        "categories": set(),
-                    },
-                )
-                if category:
-                    entry["categories"].add(category)
+                        "name": val["name"],
+                        "mentions": val["mentions"],
+                        "categories": sorted(val["categories"]),
+                        "urls": sorted(val["urls"]),
+                    }
+                    for val in competitor_map.values()
+                ]
 
-                if response_lower:
-                    entry["mentions"] += count_mentions(response_lower, name_lower)
-
-            if fallback:
-                competitors_list: List[Dict[str, Any]] = []
-                for data_entry in fallback.values():
-                    competitors_list.append(
-                        {
-                            "name": data_entry["name"],
-                            "mentions": data_entry["mentions"] or None,
-                            "categories": sorted({c for c in data_entry["categories"] if c}),
-                        }
-                    )
-                if competitors_list:
-                    payload["competitors"] = competitors_list
+        # Defaults para meta
+        defaults = {k: v for k, v in (meta_defaults or {}).items() if v not in (None, "", [])}
+        if defaults:
+            if not payload["meta"]:
+                payload["meta"] = defaults
+            else:
+                for key, value in defaults.items():
+                    payload["meta"].setdefault(key, value)
 
         return payload
 
+    # -------------------------
+    # PROMPT Builder (curto)
+    # -------------------------
     def build_prompt(
         self,
         *,
@@ -301,122 +628,70 @@ class GeminiSemanticService:
         response_text: str,
         citations_text: str,
         project_name: Optional[str] = None,
+        meta_context: Optional[str] = None,
         simplified: bool = False,
     ) -> str:
-        # Prompt simplificado para retry (mais neutro, menos chance de bloqueio)
+        # Hints automáticos por citações
+        _hints = self._infer_brand_domain_hints(project_name, self._last_normalized_citations or [])
+        brand_hint = _hints.get("brand_hint", "")
+        domain_hint = _hints.get("domain_hint", "")
+
+        rules = (
+            "- Retorne JSON puro (sem markdown).\n"
+            "- Use snake_case nas chaves.\n"
+            "- Máx. 10 entidades e 10 keywords, ordenadas por confiança/peso desc.\n"
+            "- confidence/weight ∈ [0,1], 2 casas decimais.\n"
+            "- Não alucine: use apenas o que aparece na resposta ou nas citações.\n"
+            "- Categorias: brand|product|feature|competitor|other.\n"
+            "- perception.primary_category: inovacao|tradicao|custo|atendimento.\n"
+            "- Se não houver dados, use arrays vazios ou valores neutros."
+        )
+
         if simplified:
-            return f"""
-Analise o seguinte texto e extraia informações estruturadas em formato JSON.
-
-Texto para análise:
-{response_text[:1500]}
-
-Retorne APENAS um objeto JSON com esta estrutura:
-{{
-  "entities": [
-    {{"name": "nome", "category": "brand|product|other", "confidence": 0.8}}
-  ],
-  "keywords": [
-    {{"token": "palavra", "weight": 0.7}}
-  ],
-  "summary": {{
-    "headline": "resumo breve"
-  }}
-}}
-
-Importante: Retorne APENAS o JSON, sem texto adicional.
-"""
-        
-        # Prompt completo normal
-        brand_hint = f"Projeto/Marca principal: {project_name}." if project_name else ""
-        domain_hint = "Domínio principal: banco.com.br (Banco do Brasil)." if project_name and "Brasil" in project_name else ""
+            # versão ainda mais curta quando o modelo bloqueia
+            rules = (
+                "- JSON puro. Sem texto extra.\n"
+                "- snake_case. Máx 10 itens em entities/keywords.\n"
+                "- confidence/weight 0..1 (2 casas). Sem alucinação."
+                "- Concorrentes tem que ser relacionado ao setor bancario e tem que ser o nome da entidade e nao a url"
+            )
 
         return f"""
-Você é um analista de SEO e posicionamento de marcas para respostas de AI Overview em português.
-Extraia insights semânticos estruturados seguindo as instruções abaixo.
+Você é um analista de SEO/IA. Extraia **apenas JSON** restrito ao esquema conhecido.
 
 {brand_hint}
 {domain_hint}
+{(meta_context or '').strip()}
 
-### Pergunta original
+### Pergunta
 {question}
 
-### Resposta da IA (texto plano)
+### Resposta (texto plano)
 {response_text}
 
-### Citações detectadas
+### Citações (resumo)
 {citations_text}
 
-### Instruções CRÍTICAS - SIGA EXATAMENTE
-1. **RETORNE APENAS JSON PURO** - Nada mais, nenhum texto antes ou depois
-2. **NÃO USE MARKDOWN** - Sem ```json, sem ```, sem formatação
-3. **COMECE COM {{** e **TERMINE COM }}** - Primeira e última caractere
-4. **SEM EXPLICAÇÕES** - Não adicione "Aqui está", "Observação", etc.
-5. **SEM COMENTÁRIOS** - Não inclua // ou /* */ no JSON
-6. Identifique entidades relevantes (marcas, produtos, categorias, concorrentes) com confiança 0-1
-7. Relacione marcas com produtos e concorrentes
-8. Extraia as top palavras-chave (token) com peso 0-1, associando a quais marcas/produtos aparecem
-9. Classifique a percepção/valor predominante entre: inovacao, tradicao, custo, atendimento
-10. Gere um resumo (headline + bullets) com oportunidades e riscos
+### Regras
+{rules}
 
-**EXEMPLO DE RESPOSTA CORRETA:**
+### Estrutura esperada (top-level, ordem sugerida)
 {{
-  "entities": [...],
-  "relationships": [...],
-  ...
+  "meta": {{}},
+  "entities": [],
+  "relationships": [],
+  "keywords": [],
+  "perception": {{}},
+  "summary": {{}},
+  "competitors": [],
+  "seo_metrics": {{}},
+  "evidence": {{}}
 }}
+""".strip()
 
-**EXEMPLO DE RESPOSTA INCORRETA (NÃO FAÇA ISSO):**
-Aqui está a análise:
-```json
-{{...}}
-```
-Observação: Alguns dados podem estar incompletos.
-
-### Estrutura esperada
-{{
-  "entities": [{{
-      "name": "Banco do Brasil",
-      "category": "brand|product|feature|competitor|other",
-      "roles": ["brand"],
-      "confidence": 0.92,
-      "citations": ["https://www.bb.com.br"],
-      "description": ""}}
-  ],
-  "relationships": [{{
-      "source": "Banco do Brasil",
-      "target": "Conta Digital",
-      "type": "brand_product",
-      "weight": 0.76,
-      "explanation": "Produto próprio destacado como principal oferta"
-  }}],
-  "keywords": [{{
-      "token": "conta digital",
-      "weight": 0.81,
-      "brands": ["Banco do Brasil"],
-      "products": ["Conta Digital"],
-      "competitors": ["Nubank"],
-      "context": "Termo associado a conta sem tarifa"
-  }}],
-  "perception": {{
-      "primary_category": "inovacao",
-      "secondary_categories": ["custo"],
-      "confidence": 0.74,
-      "rationale": "Resposta destaca experiências digitais e tarifas competitivas"
-  }},
-  "summary": {{
-      "headline": "BB visto como alternativa moderna para contas digitais",
-      "bullets": ["AI Overview prioriza apps móveis", "Concorrentes Nubank e Inter citados"],
-      "opportunities": ["Reforçar diferenciais em atendimento humano"]
-  }},
-  "competitors": [{{
-      "name": "Nubank",
-      "mentions": 2,
-      "keywords": ["cartão sem anuidade"]
-  }}]
-}}
-"""
-
+    # -------------------------
+    # Execução principal
+    # -------------------------
     def analyze(
         self,
         *,
@@ -427,13 +702,23 @@ Observação: Alguns dados podem estar incompletos.
         max_retries: int = 2,
     ) -> Dict[str, Any]:
         citations = citations or []
-        citations_text = self._format_citations(citations)
-        
-        # Tentar com prompt normal primeiro, depois com prompt simplificado
+        normalized_citations = self._prepare_citations(citations)
+        # guarda para hints automáticos dentro do prompt
+        self._last_normalized_citations = normalized_citations[:]  # type: ignore[attr-defined]
+        citations_text = self._format_citations(normalized_citations)
+
+        meta_defaults = {
+            "query": question,
+            "locale": "pt-BR",
+            "country": "BR",
+            "device": "unknown",
+            "source": "google",
+        }
+
+        # Tentar com prompt normal, depois simplificado se bloquear
+        response = None
         for attempt in range(max_retries):
-            # No retry, usar prompt mais neutro/simplificado
             use_simplified = attempt > 0
-            
             prompt = self.build_prompt(
                 question=question,
                 response_text=response_text,
@@ -441,85 +726,66 @@ Observação: Alguns dados podem estar incompletos.
                 project_name=project_name,
                 simplified=use_simplified,
             )
-
             try:
-                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Chamando Gemini API...")
+                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini (JSON mode)...")
                 response = self.model.generate_content(prompt)
-                print(f"[SEMANTIC] Gemini respondeu. Verificando resposta...")
+                print("[SEMANTIC] Gemini respondeu.")
             except Exception as e:
-                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Erro ao chamar Gemini API: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[SEMANTIC] Erro na chamada Gemini: {e}")
                 if attempt < max_retries - 1:
-                    continue  # Tentar novamente
-                print(f"[SEMANTIC] Todas as tentativas falharam. Retornando estrutura vazia.")
+                    continue
                 return self._get_empty_structure()
-            
-            # Verificar finish_reason para detectar bloqueios
-            if response.candidates:
+
+            # Se bloqueou por safety/other, tenta novamente simplificado
+            if getattr(response, "candidates", None):
                 candidate = response.candidates[0]
                 finish_reason = getattr(candidate, "finish_reason", None)
-                
-                reason_names = {2: "SAFETY", 3: "RECITATION", 4: "OTHER"}
-                reason_name = reason_names.get(finish_reason, str(finish_reason))
-                print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: finish_reason={reason_name}")
-                
-                # finish_reason 2 = SAFETY (bloqueado por filtro de segurança)
-                # finish_reason 3 = RECITATION (bloqueado por recitação)
-                # finish_reason 4 = OTHER (outros bloqueios)
-                if finish_reason in [2, 3, 4]:
-                    print(f"[SEMANTIC] Tentativa {attempt + 1}/{max_retries}: Gemini bloqueou resposta (reason={reason_name}).")
-                    
+                if finish_reason in [2, 3, 4]:  # SAFETY/RECITATION/OTHER (nomes variam por SDK)
+                    print(f"[SEMANTIC] Bloqueado (finish_reason={finish_reason}); retry simples.")
                     if attempt < max_retries - 1:
-                        print(f"[SEMANTIC] Tentando novamente com prompt simplificado...")
-                        continue  # Tentar com prompt simplificado
-                    
-                    print(f"[SEMANTIC] Todas as tentativas bloqueadas. Retornando estrutura vazia.")
+                        continue
                     return self._get_empty_structure()
-            
-            # Se chegou aqui, não foi bloqueado - continuar processamento
             break
-        
-        # Tentar obter texto da resposta
-        raw_text = None
+
+        # Obter texto cru (JSON esperado)
+        raw_text: Optional[str] = None
         try:
-            raw_text = response.text
-        except (ValueError, AttributeError) as e:
-            # response.text pode lançar erro se não houver partes válidas
-            print(f"[SEMANTIC] Erro ao acessar response.text: {e}")
-            
-            # Fallback: tentar concatenar partes manualmente
-            if response.candidates:
-                raw_parts = []
-                for candidate in response.candidates:
-                    content = getattr(candidate, "content", None)
+            raw_text = response.text  # type: ignore[assignment]
+        except Exception:
+            # fallback: juntar parts
+            if getattr(response, "candidates", None):
+                parts: List[str] = []
+                for cand in response.candidates:
+                    content = getattr(cand, "content", None)
                     if content:
-                        parts = getattr(content, "parts", []) or []
-                        for part in parts:
-                            text = getattr(part, "text", None)
-                            if text:
-                                raw_parts.append(text)
-                if raw_parts:
-                    raw_text = "\n".join(raw_parts)
-        
+                        for part in getattr(content, "parts", []) or []:
+                            t = getattr(part, "text", None)
+                            if t:
+                                parts.append(t)
+                raw_text = "\n".join(parts) if parts else None
+
         if not raw_text:
-            print(f"[SEMANTIC] Gemini retornou resposta vazia")
-            print(f"[SEMANTIC] Retornando estrutura vazia")
+            print("[SEMANTIC] Resposta vazia; retornando estrutura vazia.")
             return self._get_empty_structure()
 
-        print(f"[SEMANTIC] Raw text length: {len(raw_text)}")
-        print(f"[SEMANTIC] Raw text preview: {raw_text[:500]}")
-        
+        print(f"[SEMANTIC] Raw length: {len(raw_text)}")
         data = self._safe_json_loads(raw_text)
-        print(f"[SEMANTIC] JSON parsed. Keys: {list(data.keys()) if data else 'None'}")
-        
+
+        # Validação por schema (opcional)
+        if JSONSCHEMA_AVAILABLE:
+            try:
+                jsonschema.validate(instance=data, schema=JSON_OUTPUT_SCHEMA)
+            except Exception as e:
+                print(f"[SEMANTIC] JSON não validou no schema: {e}")
+                # Segue com normalização mesmo assim, para não perder dados
+
         normalized = self._normalize_payload(
             data,
             response_text=response_text,
             project_name=project_name,
+            normalized_citations=normalized_citations,
+            meta_defaults=meta_defaults,
         )
-        print(f"[SEMANTIC] Normalized payload keys: {list(normalized.keys())}")
-        print(f"[SEMANTIC] Entities count: {len(normalized.get('entities', []))}")
 
         usage = getattr(response, "usage_metadata", None)
         if usage:
