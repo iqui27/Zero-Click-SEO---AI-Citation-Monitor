@@ -571,7 +571,7 @@ class GeminiSemanticService:
                 "urls": clean_str_list(comp.get("urls")),
             }
             comps.append(entry)
-        payload["competitors"] = comps
+        payload["competitors"] = [c for c in comps if c.get("name")]
 
         # WORDCLOUD derivado
         payload["wordcloud"] = [
@@ -602,7 +602,6 @@ class GeminiSemanticService:
         citations_text: str,
         project_name: Optional[str] = None,
         meta_context: Optional[str] = None,
-        simplified: bool = False,
     ) -> str:
         # Hints automáticos por citações
         _hints = self._infer_brand_domain_hints(project_name, self._last_normalized_citations or [])
@@ -618,16 +617,8 @@ class GeminiSemanticService:
             "- Categorias: brand|product|feature|competitor|other.\n"
             "- perception.primary_category: inovacao|tradicao|custo|atendimento.\n"
             "- Se não houver dados, use arrays vazios ou valores neutros.\n"
-            "- Concorrentes tem que ser relacionado ao setor bancario e tem que ser o nome da entidade e nao a url"
+            "- Concorrentes tem que ser relacionado ao setor bancario, apenas empresas relacionadas a financas, ex de nao concorrenter: app store e youtube e tem que ser o nome da entidade e nao a url"
         )
-
-        if simplified:
-            # versão ainda mais curta quando o modelo bloqueia
-            rules = (
-                "- JSON puro. Sem texto extra.\n"
-                "- snake_case. Máx 10 itens em entities/keywords.\n"
-                "- confidence/weight 0..1 (2 casas). Sem alucinação."
-            )
 
         return f"""
 Você é um analista de SEO/IA. Extraia **apenas JSON** restrito ao esquema conhecido.

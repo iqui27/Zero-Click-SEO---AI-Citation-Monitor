@@ -795,12 +795,18 @@ def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
     threats = []
 
     # Strengths
-    if avg_eeat > 70:
-        strengths.append(f"E-E-A-T forte (média {round(avg_eeat, 1)})")
-    if dcr_rate > 0.5:
-        strengths.append(f"Alta presença em citações ({round(dcr_rate*100, 1)}% DCR)")
-    if avg_ia_ready > 70:
-        strengths.append(f"Conteúdo bem estruturado para IA (score {round(avg_ia_ready, 1)})")
+    if avg_eeat >= 60:
+        strengths.append(f"E-E-A-T consistente (média {round(avg_eeat, 1)})")
+    if dcr_rate >= 0.4:
+        strengths.append(f"Boa presença em citações ({round(dcr_rate*100, 1)}% DCR)")
+    if avg_ia_ready >= 65:
+        strengths.append(f"Bases IA-Ready estruturadas (score {round(avg_ia_ready, 1)})")
+    positive_irzc = sum(1 for r in runs if r.irzc_score is not None and r.irzc_score < 40)
+    if runs and positive_irzc / len(runs) >= 0.4:
+        strengths.append("Baixo risco de experiências zero-click")
+    high_im_seo = [r for r in runs if r.im_seo_score is not None and r.im_seo_score >= 70]
+    if high_im_seo:
+        strengths.append(f"{len(high_im_seo)} runs com IM-SEO ≥ 70")
 
     # Weaknesses
     if avg_eeat < 50:
@@ -821,10 +827,10 @@ def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
         threats.append("Risco de perda de visibilidade por baixo E-E-A-T")
 
     return {
-        "strengths": strengths or ["Análise em andamento"],
-        "weaknesses": weaknesses or ["Nenhuma fraqueza crítica detectada"],
-        "opportunities": opportunities or ["Análise em andamento"],
-        "threats": threats or ["Nenhuma ameaça crítica detectada"],
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "opportunities": opportunities,
+        "threats": threats,
     }
 
 
