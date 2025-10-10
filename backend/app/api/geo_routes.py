@@ -669,7 +669,7 @@ def get_geo_stats_by_product(
 ) -> Dict[str, Any]:
     """
     Retorna estatísticas GEO agregadas por categoria de produto.
-    
+
     Returns:
         {
             "cartoes": {"runs": 8, "avg_citation_rate": 42.5, ...},
@@ -681,10 +681,10 @@ def get_geo_stats_by_product(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
+
     # Data de corte
     cutoff_date = datetime.utcnow() - timedelta(days=days)
-    
+
     # Query base: runs LLM do projeto
     base_query = db.query(Run).filter(
         Run.project_id == project_id,
@@ -699,16 +699,16 @@ def get_geo_stats_by_product(
             Engine.name.ilike("%claude%"),
         )
     )
-    
+
     # Agrupar por product_category
     stats_by_product: Dict[str, Dict[str, Any]] = {}
-    
+
     # Categorias possíveis
     categories = ["cartoes", "credito", "investimentos", "conta", "seguros", "empresarial", "digital", "multiproduto"]
-    
+
     for category in categories:
         runs = base_query.filter(Run.product_category == category).all()
-        
+
         if not runs:
             stats_by_product[category] = {
                 "runs_count": 0,
@@ -719,14 +719,14 @@ def get_geo_stats_by_product(
                 "avg_conversion_potential": None,
             }
             continue
-        
+
         # Calcular médias
         citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
         prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
         sovs = [r.share_of_voice_llm for r in runs if r.share_of_voice_llm is not None]
         engagements = [r.engagement_score for r in runs if r.engagement_score is not None]
         conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
-        
+
         stats_by_product[category] = {
             "runs_count": len(runs),
             "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
@@ -735,5 +735,265 @@ def get_geo_stats_by_product(
             "avg_engagement": round(sum(engagements) / len(engagements), 2) if engagements else None,
             "avg_conversion_potential": round(sum(conversions) / len(conversions), 2) if conversions else None,
         }
-    
+
     return stats_by_product
+
+
+# ========================================
+# PROMPT VISUALIZER (Métricas Agregadas por Prompt)
+# ========================================
+
+@router.get("/{project_id}/geo/prompt-visualizer")
+def get_prompt_visualizer_data(
+    project_id: str,
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Retorna dados agregados de todos os prompts para visualização interativa.
+
+    Agrupa runs por prompt_text e calcula todas as métricas GEO:
+    - Brand Presence (mentions, first mention, density, prominence)
+    - Citation Quality (rate, first position, quality)
+    - Competitive Intelligence (competitor ratio, SOV, co-citation)
+    - Engagement (triggers, engagement score)
+    - Advanced Metrics (zero-click, authority, relevance, clarity, conversion)
+    - Zero-Click Classification
+
+    Returns:
+        {
+            "prompts": [
+                {
+                    "prompt_text": "Qual o melhor cartão de crédito?",
+                    "prompt_preview": "Qual o melhor cartão...",
+                    "runs_count": 15,
+                    "engines": ["ChatGPT", "Gemini", "Perplexity"],
+                    "brand_presence": {...},
+                    "citation_quality": {...},
+                    "competitive_intel": {...},
+                    "engagement": {...},
+                    "advanced_metrics": {...},
+                    "zero_click_classification": {...},
+                    "latest_run_date": "2025-01-15T10:30:00",
+                    "trend": "up" | "down" | "stable"
+                }
+            ],
+            "total_prompts": 25,
+            "total_runs": 450,
+            "period_start": "2025-01-01",
+            "period_end": "2025-01-31"
+        }
+    """
+    # Verificar se projeto existe
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Data de corte
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    period_end = datetime.utcnow()
+
+    # Query base: runs LLM do projeto com prompt_text
+    # Need to import PromptVersion
+    from app.models.models import PromptVersion
+
+    # Query to get runs with their prompt versions and engine names
+    runs_with_prompts = db.query(Run, PromptVersion.text, Engine.name).filter(
+        Run.project_id == project_id,
+        Run.started_at >= cutoff_date,
+        Run.status == "completed",
+    ).join(Engine).filter(
+        or_(
+            Engine.name.ilike("%openai%"),
+            Engine.name.ilike("%chatgpt%"),
+            Engine.name.ilike("%gemini%"),
+            Engine.name.ilike("%perplexity%"),
+            Engine.name.ilike("%claude%"),
+        )
+    ).join(PromptVersion, Run.prompt_version_id == PromptVersion.id).filter(
+        PromptVersion.text.isnot(None),
+        PromptVersion.text != "",
+    ).all()
+
+    if not runs_with_prompts:
+        return {
+            "prompts": [],
+            "total_prompts": 0,
+            "total_runs": 0,
+            "period_start": cutoff_date.isoformat(),
+            "period_end": period_end.isoformat(),
+        }
+
+    # Agrupar por prompt_text
+    prompts_data: Dict[str, Dict[str, Any]] = {}
+
+    for run, prompt_text, engine_name in runs_with_prompts:
+        prompt_key = prompt_text.strip()
+
+        if prompt_key not in prompts_data:
+            prompts_data[prompt_key] = {
+                "prompt_text": prompt_key,
+                "prompt_preview": prompt_key[:100] + "..." if len(prompt_key) > 100 else prompt_key,
+                "runs": [],
+                "engines": set(),
+                "latest_run_date": run.started_at,
+            }
+
+        prompts_data[prompt_key]["runs"].append(run)
+
+        # Engine info
+        if engine_name:
+            prompts_data[prompt_key]["engines"].add(engine_name)
+
+        # Track latest run
+        if run.started_at > prompts_data[prompt_key]["latest_run_date"]:
+            prompts_data[prompt_key]["latest_run_date"] = run.started_at
+
+    # Calcular métricas agregadas para cada prompt
+    prompts_list = []
+
+    for prompt_key, data in prompts_data.items():
+        runs_list = data["runs"]
+        runs_count = len(runs_list)
+
+        # BRAND PRESENCE
+        brand_mentions = [r.brand_mention_count for r in runs_list if r.brand_mention_count is not None]
+        first_mentions = [r.brand_first_mention_position for r in runs_list if r.brand_first_mention_position is not None]
+        densities = [r.brand_mention_density for r in runs_list if r.brand_mention_density is not None]
+        prominences = [r.brand_prominence_score for r in runs_list if r.brand_prominence_score is not None]
+
+        brand_presence = {
+            "avg_mention_count": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else 0,
+            "avg_first_mention_pos": round(sum(first_mentions) / len(first_mentions), 2) if first_mentions else None,
+            "avg_mention_density": round(sum(densities) / len(densities), 4) if densities else 0,
+            "avg_prominence_score": round(sum(prominences) / len(prominences), 2) if prominences else 0,
+        }
+
+        # CITATION QUALITY
+        citation_rates_obs = [r.citation_rate_observed for r in runs_list if r.citation_rate_observed is not None]
+        citation_rates_cor = [r.citation_rate_corrected for r in runs_list if r.citation_rate_corrected is not None]
+        first_citation_pos = [r.first_citation_position for r in runs_list if r.first_citation_position is not None]
+        citation_quality = [r.citation_quality_score for r in runs_list if r.citation_quality_score is not None]
+
+        citation_quality_data = {
+            "avg_citation_rate_observed": round(sum(citation_rates_obs) / len(citation_rates_obs), 2) if citation_rates_obs else 0,
+            "avg_citation_rate_corrected": round(sum(citation_rates_cor) / len(citation_rates_cor), 2) if citation_rates_cor else 0,
+            "avg_first_citation_pos": round(sum(first_citation_pos) / len(first_citation_pos), 2) if first_citation_pos else None,
+            "avg_quality_score": round(sum(citation_quality) / len(citation_quality), 2) if citation_quality else 0,
+        }
+
+        # COMPETITIVE INTELLIGENCE
+        competitor_ratios = [r.competitor_mention_ratio for r in runs_list if r.competitor_mention_ratio is not None]
+        sov_llm = [r.share_of_voice_llm for r in runs_list if r.share_of_voice_llm is not None]
+
+        # Calculate cocitation count from JSON field
+        cocitation_counts = []
+        for r in runs_list:
+            if r.cocitation_competitors:
+                try:
+                    cocited = json.loads(r.cocitation_competitors)
+                    cocitation_counts.append(len(cocited) if isinstance(cocited, list) else 0)
+                except:
+                    pass
+
+        competitive_intel = {
+            "avg_competitor_ratio": round(sum(competitor_ratios) / len(competitor_ratios), 2) if competitor_ratios else 0,
+            "avg_sov_llm": round(sum(sov_llm) / len(sov_llm), 2) if sov_llm else 0,
+            "avg_cocitation_count": round(sum(cocitation_counts) / len(cocitation_counts), 2) if cocitation_counts else 0,
+        }
+
+        # ENGAGEMENT
+        trigger_counts = [r.conversational_trigger_count for r in runs_list if r.conversational_trigger_count is not None]
+        engagement_scores = [r.engagement_score for r in runs_list if r.engagement_score is not None]
+
+        engagement = {
+            "avg_trigger_count": round(sum(trigger_counts) / len(trigger_counts), 2) if trigger_counts else 0,
+            "avg_engagement_score": round(sum(engagement_scores) / len(engagement_scores), 2) if engagement_scores else 0,
+        }
+
+        # ADVANCED METRICS
+        zero_click_presence = [r.zero_click_presence for r in runs_list if r.zero_click_presence is not None]
+        authority = [r.authority_score for r in runs_list if r.authority_score is not None]
+        relevance = [r.relevance_score for r in runs_list if r.relevance_score is not None]
+        clarity = [r.clarity_score for r in runs_list if r.clarity_score is not None]
+        conversion = [r.conversion_potential_score for r in runs_list if r.conversion_potential_score is not None]
+
+        advanced_metrics = {
+            "avg_zero_click_presence": round(sum(zero_click_presence) / len(zero_click_presence), 2) if zero_click_presence else 0,
+            "avg_authority_score": round(sum(authority) / len(authority), 2) if authority else 0,
+            "avg_relevance_score": round(sum(relevance) / len(relevance), 2) if relevance else 0,
+            "avg_clarity_score": round(sum(clarity) / len(clarity), 2) if clarity else 0,
+            "avg_conversion_potential": round(sum(conversion) / len(conversion), 2) if conversion else 0,
+        }
+
+        # ZERO-CLICK CLASSIFICATION (aggregated distribution)
+        response_types = {}
+        sufficiency_levels = {}
+        actionability = {}
+        trust_sources = {}
+        brand_positions = {}
+        funnel_stages = {}
+
+        for r in runs_list:
+            if r.response_type:
+                response_types[r.response_type] = response_types.get(r.response_type, 0) + 1
+            if r.sufficiency_level:
+                sufficiency_levels[r.sufficiency_level] = sufficiency_levels.get(r.sufficiency_level, 0) + 1
+            if r.actionability_type:
+                actionability[r.actionability_type] = actionability.get(r.actionability_type, 0) + 1
+            if r.trust_source:
+                trust_sources[r.trust_source] = trust_sources.get(r.trust_source, 0) + 1
+            if r.brand_positioning:
+                brand_positions[r.brand_positioning] = brand_positions.get(r.brand_positioning, 0) + 1
+            if r.funnel_stage:
+                funnel_stages[r.funnel_stage] = funnel_stages.get(r.funnel_stage, 0) + 1
+
+        zero_click_classification = {
+            "response_types": response_types,
+            "sufficiency_levels": sufficiency_levels,
+            "actionability": actionability,
+            "trust_sources": trust_sources,
+            "brand_positions": brand_positions,
+            "funnel_stages": funnel_stages,
+        }
+
+        # TREND (compare first half vs second half)
+        mid_point = cutoff_date + (period_end - cutoff_date) / 2
+        first_half = [r for r in runs_list if r.started_at < mid_point]
+        second_half = [r for r in runs_list if r.started_at >= mid_point]
+
+        trend = "stable"
+        if first_half and second_half:
+            first_avg = sum(r.citation_rate_corrected for r in first_half if r.citation_rate_corrected) / len(first_half)
+            second_avg = sum(r.citation_rate_corrected for r in second_half if r.citation_rate_corrected) / len(second_half)
+
+            if second_avg > first_avg * 1.15:
+                trend = "up"
+            elif second_avg < first_avg * 0.85:
+                trend = "down"
+
+        prompts_list.append({
+            "prompt_text": data["prompt_text"],
+            "prompt_preview": data["prompt_preview"],
+            "runs_count": runs_count,
+            "engines": sorted(list(data["engines"])),
+            "brand_presence": brand_presence,
+            "citation_quality": citation_quality_data,
+            "competitive_intel": competitive_intel,
+            "engagement": engagement,
+            "advanced_metrics": advanced_metrics,
+            "zero_click_classification": zero_click_classification,
+            "latest_run_date": data["latest_run_date"].isoformat(),
+            "trend": trend,
+        })
+
+    # Ordenar por runs_count (mais executados primeiro)
+    prompts_list.sort(key=lambda x: x["runs_count"], reverse=True)
+
+    return {
+        "prompts": prompts_list,
+        "total_prompts": len(prompts_list),
+        "total_runs": len(runs_with_prompts),
+        "period_start": cutoff_date.isoformat(),
+        "period_end": period_end.isoformat(),
+    }

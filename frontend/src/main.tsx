@@ -11,8 +11,9 @@ import WorkspacePage from './pages/Workspace'
 import SettingsPage from './pages/Settings'
 import MonitorsPage from './pages/Monitors'
 import SandboxPage from './pages/Sandbox'
-import IMMetricsDashboard from './pages/IMMetricsDashboard'
+import GEODashboard from './pages/GEOdashboard'
 import GeoDashboardPOC from './pages/GeoDashboardPOC'
+import PromptVisualizer from './pages/PromptVisualizer'
 import './index.css'
 import { Button } from './components/ui/button'
 import { Toaster } from 'sonner'
@@ -133,8 +134,9 @@ function Layout() {
           </svg>
         </Link>
         <Link to="/runs" className="text-sm opacity-80 hover:opacity-100">Runs</Link>
-        <Link to="/im-metrics" className="text-sm opacity-80 hover:opacity-100 font-medium text-purple-600 dark:text-purple-400">📊 IM Metrics</Link>
-        <Link to="/geo-poc" className="text-sm opacity-80 hover:opacity-100 font-medium text-blue-600 dark:text-blue-400">🌍 Dashboard POC</Link>
+        <Link to="/geo" className="text-sm opacity-80 hover:opacity-100 font-medium text-blue-600 dark:text-blue-400">🌍 GEO Dashboard</Link>
+        <Link to="/geo-poc" className="text-sm opacity-80 hover:opacity-100">POC Dashboard</Link>
+        <Link to="/prompt-visualizer" className="text-sm opacity-80 hover:opacity-100 font-medium text-purple-600 dark:text-purple-400">✨ Prompt Visualizer</Link>
         <Link to="/workspace" className="text-sm opacity-80 hover:opacity-100">Projetos & Temas</Link>
         <Link to="/prompts" className="text-sm opacity-80 hover:opacity-100">Prompts</Link>
         <Link to="/monitors" className="text-sm opacity-80 hover:opacity-100">Monitores</Link>
@@ -182,9 +184,12 @@ const router = createBrowserRouter([
       { index: true, element: <RootRedirect /> },
       { path: 'runs', element: <Runs /> },
       { path: 'runs/:id', element: <RunDetail /> },
-      { path: 'im-metrics', element: <IMMetricsDashboard /> },
+      { path: 'geo', element: <GEODashboard /> },
+      { path: 'geo/:projectId', element: <GEODashboard /> },
       { path: 'geo-poc', element: <GeoDashboardPOC /> },
       { path: 'geo-poc/:projectId', element: <GeoDashboardPOC /> },
+      { path: 'prompt-visualizer', element: <PromptVisualizer /> },
+      { path: 'prompt-visualizer/:projectId', element: <PromptVisualizer /> },
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'projects', element: <ProjectsPage /> },
       { path: 'subprojects', element: <SubprojectsPage /> },

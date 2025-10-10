@@ -1,0 +1,194 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  getGeoStatsByFunnel,
+  getGeoStatsByProduct,
+  getGeoStatsByQuestionType,
+  type GeoStatsByFunnelItem,
+  type GeoStatsByProductItem,
+  type GeoStatsByQuestionTypeItem,
+  getGeoDashboard,
+  type GeoDashboard,
+  type GeoPositioning,
+  type GeoPositioningTimelinePoint,
+} from './api'
+
+export type GeoOverviewKpi = {
+  id: string
+  label: string
+  value: number | null
+  delta?: number | null
+  unit?: string
+  deltaUnit?: 'percent' | 'points' | null
+  trendDirection?: 'up' | 'down' | 'neutral' | null
+  footerPrimary?: string | null
+  footerSecondary?: string | null
+}
+
+export type GeoOverviewData = {
+  kpis: GeoOverviewKpi[]
+  shareOfVoice?: Record<string, number>
+  timeline?: Array<{ date: string; engagement: number | null; conversionPotential: number | null }>
+  brandTimeline?: Array<{ date: string; mentions: number; firstMentionAvg: number | null; densityAvg: number | null }>
+  metrics?: {
+    brandMentionDensityAvg?: number | null
+    brandFirstMentionPositionAvg?: number | null
+    conversationalTriggerAvg?: number | null
+    engagementScoreAvg?: number | null
+    conversionPotentialScoreAvg?: number | null
+    topConversionPotential?: string | null
+    competitorMentionRatioAvg?: number | null
+    cocitationPercentage?: number | null
+  }
+}
+
+export type GeoAggregations = {
+  byProduct: GeoStatsByProductItem[]
+  byFunnel: GeoStatsByFunnelItem[]
+  byQuestionType: GeoStatsByQuestionTypeItem[]
+}
+
+export type GeoDashboardState = {
+  loading: boolean
+  error: string | null
+  data: GeoDashboard | null
+}
+
+export function useGeoDashboard(projectId: string | undefined) {
+  const [state, setState] = useState<GeoDashboardState>({ loading: !!projectId, error: null, data: null })
+
+  useEffect(() => {
+    if (!projectId) {
+      setState({ loading: false, error: null, data: null })
+      return
+    }
+
+    let mounted = true
+    setState((prev) => ({ ...prev, loading: true, error: null }))
+
+    getGeoDashboard(projectId)
+      .then((data) => {
+        if (!mounted) return
+        setState({ loading: false, error: null, data })
+      })
+      .catch((err: any) => {
+        if (!mounted) return
+        setState({ loading: false, error: err?.message || 'Erro ao carregar GEO dashboard', data: null })
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [projectId])
+
+  const overview: GeoOverviewData | null = useMemo(() => {
+    if (!state.data) return null
+
+    const kpis: GeoOverviewKpi[] = (state.data.kpis || []).map((kpi, index) => {
+      const rawValue = kpi.value
+      let value: number | null
+      if (typeof rawValue === 'number') {
+        value = rawValue
+      } else if (rawValue == null || rawValue === '') {
+        value = null
+      } else {
+        const parsed = Number(rawValue)
+        value = Number.isFinite(parsed) ? parsed : null
+      }
+
+      return {
+        id: kpi.label || `kpi-${index}`,
+        label: kpi.label,
+        value,
+        delta: kpi.delta ?? null,
+        unit: kpi.unit,
+        deltaUnit: kpi.delta_unit ?? null,
+        trendDirection: kpi.trend_direction ?? null,
+        footerPrimary: kpi.footer_primary ?? null,
+        footerSecondary: kpi.footer_secondary ?? null,
+      }
+    })
+
+
+    const positioning = state.data.positioning as GeoPositioning | undefined
+    const shareOfVoice = positioning?.share_of_voice || undefined
+
+    const timelineData = state.data.timeline || []
+    const engagementTimeline = timelineData.map((point) => ({
+      date: point.date,
+      engagement: point.engagement_score_avg ?? null,
+      conversionPotential: point.conversion_potential_score_avg ?? null,
+    }))
+
+    const brandTimeline = timelineData.map((point) => ({
+      date: point.date,
+      mentions: point.brand_mention_count ?? 0,
+      firstMentionAvg: point.brand_first_mention_position_avg ?? null,
+      densityAvg: point.brand_mention_density_avg ?? null,
+    }))
+
+    const summary = state.data.geo_summary || {}
+    const metrics = {
+      brandMentionDensityAvg: summary.brand_mention_density_avg ?? null,
+      brandFirstMentionPositionAvg: summary.brand_first_mention_position_avg ?? null,
+      conversationalTriggerAvg: summary.conversational_trigger_avg ?? null,
+      engagementScoreAvg: summary.engagement_score_avg ?? null,
+      conversionPotentialScoreAvg: summary.conversion_potential_score_avg ?? null,
+      topConversionPotential: summary.top_conversion_potential ?? null,
+      competitorMentionRatioAvg: summary.competitor_mention_ratio_avg ?? null,
+      cocitationPercentage: summary.cocitation_percentage ?? null,
+    }
+
+    return { kpis, shareOfVoice, timeline: engagementTimeline, brandTimeline, metrics }
+  }, [state.data])
+
+  return {
+    ...state,
+    overview,
+  }
+}
+
+export function useGeoAggregations(projectId: string | undefined, options: { days?: number } = {}) {
+  const [loading, setLoading] = useState<boolean>(!!projectId)
+  const [error, setError] = useState<string | null>(null)
+  const [data, setData] = useState<GeoAggregations | null>(null)
+  const { days = 30 } = options
+
+  useEffect(() => {
+    if (!projectId) {
+      setLoading(false)
+      setError(null)
+      setData(null)
+      return
+    }
+
+    let mounted = true
+    setLoading(true)
+    setError(null)
+
+    Promise.all([
+      getGeoStatsByProduct(projectId, days),
+      getGeoStatsByFunnel(projectId, days),
+      getGeoStatsByQuestionType(projectId, days),
+    ])
+      .then(([product, funnel, question]) => {
+        if (!mounted) return
+        setData({
+          byProduct: Object.values(product || {}) as GeoStatsByProductItem[],
+          byFunnel: Object.values(funnel || {}) as GeoStatsByFunnelItem[],
+          byQuestionType: Object.values(question || {}) as GeoStatsByQuestionTypeItem[],
+        })
+        setLoading(false)
+      })
+      .catch((err: any) => {
+        if (!mounted) return
+        setError(err?.message || 'Erro ao carregar agregações GEO')
+        setLoading(false)
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [projectId, days])
+
+  return { loading, error, data }
+}

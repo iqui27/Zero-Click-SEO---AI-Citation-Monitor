@@ -438,6 +438,8 @@ class GeoPositioning(BaseModel):
     """Positioning section data."""
     brand_ranking: List[GeoBrandRanking]
     perception_breakdown: List[GeoPerceptionBreakdown]
+    share_of_voice: Optional[Dict[str, float]] = None
+    total_mentions: Optional[int] = None
 
 
 class GeoWordCloudItem(BaseModel):
@@ -615,6 +617,29 @@ class GeoDashboardFilters(BaseModel):
     bank_ids: Optional[List[str]] = None
 
 
+class GeoTimelinePoint(BaseModel):
+    """Timeline data point."""
+    date: str
+    brand_mention_count: Optional[int] = None
+    brand_first_mention_position_avg: Optional[float] = None
+    brand_mention_density_avg: Optional[float] = None
+    engagement_score_avg: Optional[float] = None
+    conversion_potential_score_avg: Optional[float] = None
+
+
+class GeoSummary(BaseModel):
+    """Aggregated GEO summary metrics."""
+    total_runs: Optional[int] = None
+    brand_mention_density_avg: Optional[float] = None
+    brand_first_mention_position_avg: Optional[float] = None
+    conversational_trigger_avg: Optional[float] = None
+    engagement_score_avg: Optional[float] = None
+    conversion_potential_score_avg: Optional[float] = None
+    top_conversion_potential: Optional[str] = None
+    competitor_mention_ratio_avg: Optional[float] = None
+    cocitation_percentage: Optional[float] = None
+
+
 class GeoDashboardOut(BaseModel):
     """Complete GEO dashboard response."""
     project_id: Optional[str]
@@ -629,3 +654,5 @@ class GeoDashboardOut(BaseModel):
     alerts: List[GeoAlert]
     swot: GeoSWOT
     raw_samples: List[GeoRawSample]
+    timeline: Optional[List[GeoTimelinePoint]] = None
+    geo_summary: Optional[GeoSummary] = None

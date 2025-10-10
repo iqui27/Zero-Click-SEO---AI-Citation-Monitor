@@ -203,7 +203,13 @@ def calculate_brand_presence_metrics(
     mention_count = len(positions)
     
     # Primeira posição (None se não houver menções)
-    first_position = positions[0] if positions else None
+    first_position_char = positions[0] if positions else None
+    
+    # Converter para percentual da resposta (0-100%)
+    # 0% = início, 100% = final. Quanto menor, melhor!
+    first_position_pct = None
+    if first_position_char is not None:
+        first_position_pct = round((first_position_char / text_length) * 100, 2)
     
     # Densidade: menções por 1000 caracteres
     density = (mention_count / text_length) * 1000.0
@@ -211,10 +217,10 @@ def calculate_brand_presence_metrics(
     # Prominence Score (0-100)
     prominence = 0.0
     
-    if mention_count > 0 and first_position is not None:
+    if mention_count > 0 and first_position_char is not None:
         # Componente 1: Posição da primeira menção (40 pts)
         # Primeiros 20% do texto = 40 pts, últimos 20% = 0 pts
-        first_pos_ratio = first_position / text_length
+        first_pos_ratio = first_position_char / text_length
         if first_pos_ratio <= 0.20:
             prominence += 40.0
         elif first_pos_ratio <= 0.40:
@@ -244,12 +250,12 @@ def calculate_brand_presence_metrics(
         if first_paragraph_end == -1:
             first_paragraph_end = min(300, text_length)
         
-        if first_position < first_paragraph_end:
+        if first_position_char < first_paragraph_end:
             prominence += 30.0
     
     return {
         "brand_mention_count": mention_count,
-        "brand_first_mention_position": first_position,
+        "brand_first_mention_position": first_position_pct,  # Agora retorna percentual 0-100
         "brand_mention_density": round(density, 2),
         "brand_prominence_score": round(prominence, 2),
     }

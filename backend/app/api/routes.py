@@ -5208,18 +5208,24 @@ def get_geo_dashboard(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     bank_ids: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    prompt_category: Optional[str] = None,
+    prompt_text: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> GeoDashboardOut:
     """
     Get GEO Dashboard POC data with aggregated metrics.
 
     Query params:
-    - prompt_id: Filter by prompt
+    - prompt_id: Filter by prompt template ID
     - prompt_version_id: Filter by prompt version
-    - subproject_id: Filter by subproject/product
+    - subproject_id: Filter by subproject (tema)
     - date_from: Start date (YYYY-MM-DD)
     - date_to: End date (YYYY-MM-DD)
     - bank_ids: Comma-separated bank domain/names to compare
+    - llm_model: Filter by LLM model name (e.g., 'gpt', 'claude', 'gemini')
+    - prompt_category: Filter by prompt template category
+    - prompt_text: Filter by prompt text (partial match on name or text)
     """
     from app.services.geo_dashboard import compute_geo_dashboard
     from datetime import date as date_type
@@ -5255,6 +5261,9 @@ def get_geo_dashboard(
         date_from=date_from_parsed,
         date_to=date_to_parsed,
         bank_ids=bank_ids_list,
+        llm_model=llm_model,
+        prompt_category=prompt_category,
+        prompt_text=prompt_text,
     )
 
     return result

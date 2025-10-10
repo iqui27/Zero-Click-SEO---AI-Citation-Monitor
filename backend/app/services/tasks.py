@@ -34,6 +34,7 @@ from app.services.engine_runner import run_engine
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
 from app.services.gemini_semantic import GeminiSemanticService
 from app.services.geo_metrics import calculate_all_geo_metrics
+from app.services.gemini_integration import GeminiClassificationIntegrator
 
 celery = Celery(
     "seo_monitor",
@@ -963,6 +964,28 @@ def process_semantic_insights(run_id: str) -> None:
                 traceback.print_exc()
                 _log(db, run.id, "geo_metrics", "fail", str(geo_exc))
                 # Não falhar o processo todo se GEO falhar
+
+        # Classificação Zero-Click com Gemini (após GEO)
+        try:
+            print(f"[CLASSIFICATION] Iniciando classificação Zero-Click para run {run_id}")
+            _log(db, run.id, "classification", "started", "Gemini Zero-Click classification")
+            
+            integrator = GeminiClassificationIntegrator(db=db)
+            classification_result = integrator.classify_and_update_run_with_gemini(run_id, response_text)
+            
+            if classification_result:
+                print(f"[CLASSIFICATION] Run {run_id} classificada: {classification_result.response_type.value}/{classification_result.brand_positioning.value} (confiança: {classification_result.confidence:.2f})")
+                _log(db, run.id, "classification", "ok", f"type={classification_result.response_type.value}, positioning={classification_result.brand_positioning.value}, confidence={classification_result.confidence:.2f}")
+            else:
+                print(f"[CLASSIFICATION] Falha ao classificar run {run_id}")
+                _log(db, run.id, "classification", "fail", "Classification returned None")
+                
+        except Exception as class_exc:
+            print(f"[CLASSIFICATION] Erro ao classificar run {run_id}: {class_exc}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "classification", "fail", str(class_exc))
+            # Não falhar o processo todo se classificação falhar
 
         db.commit()
         _log(db, run.id, "semantic_insights", "ok", f"entities={entities_count}, perception={primary_category}")

@@ -14,12 +14,13 @@ Aggregates metrics across runs for the POC dashboard including:
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any, Set
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, case, desc, text
 from collections import Counter, defaultdict
 import json
 import re
+import statistics
 from urllib.parse import urlparse
 
 from app.models.models import (
@@ -30,9 +31,11 @@ from app.models.models import (
     SerpFeature,
     Project,
     Domain,
+    Prompt,
     PromptTemplate,
     SubProject,
     RunSemanticInsight,
+    PromptVersion,
 )
 from app.services.normalization import normalize_domain
 
@@ -113,6 +116,9 @@ def compute_geo_dashboard(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     bank_ids: Optional[List[str]] = None,
+    llm_model: Optional[str] = None,
+    prompt_category: Optional[str] = None,
+    prompt_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Compute aggregated GEO dashboard data with filtering.
@@ -120,12 +126,15 @@ def compute_geo_dashboard(
     Args:
         db: Database session
         project_id: Project ID (required)
-        prompt_id: Optional filter by prompt
+        prompt_id: Optional filter by prompt template ID
         prompt_version_id: Optional filter by prompt version
-        subproject_id: Optional filter by subproject (produto)
+        subproject_id: Optional filter by subproject (tema)
         date_from: Optional start date filter
         date_to: Optional end date filter
         bank_ids: Optional list of bank domains/names to compare
+        llm_model: Optional filter by LLM model name
+        prompt_category: Optional filter by prompt template category
+        prompt_text: Optional filter by prompt text (partial match)
 
     Returns:
         Dictionary with all dashboard sections
@@ -137,7 +146,36 @@ def compute_geo_dashboard(
         Run.status == "completed"
     )
 
-    if prompt_version_id:
+    # Filter by prompt category or text
+    # Note: PromptTemplate has category, but Run uses prompt_version_id which links to Prompt (not PromptTemplate)
+    # We'll filter by PromptTemplate if category is provided, otherwise by Prompt for text search
+    if prompt_category:
+        # Join through PromptVersion -> PromptTemplate for category filter
+        query = query.join(PromptVersion, Run.prompt_version_id == PromptVersion.id)
+        query = query.join(Prompt, PromptVersion.prompt_id == Prompt.id)
+        # Note: Prompt doesn't have category, but PromptTemplate does
+        # For now, we'll search in Prompt.name or text
+        query = query.filter(
+            or_(
+                Prompt.name.ilike(f"%{prompt_category}%"),
+                Prompt.text.ilike(f"%{prompt_category}%")
+            )
+        )
+    elif prompt_text or prompt_id:
+        query = query.join(PromptVersion, Run.prompt_version_id == PromptVersion.id)
+        query = query.join(Prompt, PromptVersion.prompt_id == Prompt.id)
+        
+        if prompt_id:
+            query = query.filter(Prompt.id == prompt_id)
+        
+        if prompt_text:
+            query = query.filter(
+                or_(
+                    Prompt.text.ilike(f"%{prompt_text}%"),
+                    Prompt.name.ilike(f"%{prompt_text}%")
+                )
+            )
+    elif prompt_version_id:
         query = query.filter(Run.prompt_version_id == prompt_version_id)
 
     if subproject_id:
@@ -149,6 +187,9 @@ def compute_geo_dashboard(
     if date_to:
         query = query.filter(func.date(Run.started_at) <= date_to)
 
+    if llm_model:
+        query = query.filter(Run.model_name.ilike(f"%{llm_model}%"))
+
     runs = query.all()
 
     if not runs:
@@ -156,20 +197,27 @@ def compute_geo_dashboard(
 
     run_ids = [r.id for r in runs]
 
-    # Get project domains for "our" detection
+    # Get project info and domains for "our" detection
+    project = db.query(Project).filter(Project.id == project_id).first()
     domains = db.query(Domain).filter(Domain.project_id == project_id).all()
     our_domains = {normalize_domain(d.domain) for d in domains if d.domain}
+    our_label = project.name if project and project.name else "Nossa marca"
 
     # Aggregate data
     kpis = _compute_kpis(runs, our_domains, bank_ids)
     radar = _compute_radar(runs, bank_ids)
-    positioning = _compute_positioning(db, run_ids, bank_ids)
+    positioning = _compute_positioning(db, run_ids, bank_ids, our_domains, our_label)
     keywords_entities = _compute_keywords_entities(db, run_ids)
     panorama = _compute_panorama(runs, db, run_ids, bank_ids)
     web_structure = _compute_web_structure(db, run_ids, bank_ids)
     alerts = _compute_alerts(runs)
     swot = _compute_swot(runs)
     raw_samples = _get_raw_samples(db, run_ids, limit=10)
+
+    timeline, geo_summary = _compute_geo_timeline_and_summary(runs)
+    cocitation_breakdown = _compute_cocitation_breakdown(db, run_ids, our_domains)
+    context_insights = _compute_context_insights(runs)
+    exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)
 
     return {
         "project_id": project_id,
@@ -180,6 +228,9 @@ def compute_geo_dashboard(
             "date_from": date_from.isoformat() if date_from else None,
             "date_to": date_to.isoformat() if date_to else None,
             "bank_ids": bank_ids,
+            "llm_model": llm_model,
+            "prompt_category": prompt_category,
+            "prompt_text": prompt_text,
         },
         "total_runs": len(runs),
         "kpis": kpis,
@@ -191,6 +242,11 @@ def compute_geo_dashboard(
         "alerts": alerts,
         "swot": swot,
         "raw_samples": raw_samples,
+        "timeline": timeline,
+        "geo_summary": geo_summary,
+        "cocitation_breakdown": cocitation_breakdown,
+        "context_insights": context_insights,
+        "exclusive_citations_count": exclusive_citations_count,
     }
 
 
@@ -212,42 +268,139 @@ def _empty_dashboard() -> Dict[str, Any]:
     }
 
 
+def _trend_direction(current: Optional[float], previous: Optional[float]) -> str:
+    if current is None and previous is None:
+        return "neutral"
+    if current is None:
+        return "neutral"
+    if previous in (None, 0):
+        return "up" if current > 0 else "neutral"
+    if current > previous:
+        return "up"
+    if current < previous:
+        return "down"
+    return "neutral"
+
+
 def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str]]) -> List[Dict[str, Any]]:
-    """Compute hero KPI metrics."""
+    """Compute hero KPI metrics (últimos 7 dias vs período anterior)."""
 
-    # Perception label mapping
-    PERCEPTION_LABELS = {
-        "inovacao": "Inovação & tecnologia",
-        "tradicao": "Tradição & segurança",
-        "custo": "Baixo custo",
-        "atendimento": "Atendimento & relacionamento",
-    }
+    if not runs:
+        return [
+            {"label": "Menções de Marca", "value": 0, "unit": "total", "delta": None, "delta_unit": "percent"},
+            {"label": "Taxa de Citação", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+            {"label": "Índice de Proeminência", "value": 0.0, "unit": "score", "delta": None, "delta_unit": "percent"},
+            {"label": "Presença Zero-Click", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+        ]
 
-    # Count AI Overview rankings (where brand is mentioned in AI Overview)
-    ai_overview_count = sum(1 for r in runs if r.ia_resources_detected and r.ia_resources_detected > 0)
+    WINDOW_DAYS = 7
 
-    # Count URL rankings (DCR flag) - Note: DCR is calculated at run time, so we use the flag
-    url_ranking_count = sum(1 for r in runs if r.dcr_flag)
+    def _resolve_date(run: Run) -> Optional[date]:
+        ts = run.started_at or run.finished_at
+        return ts.date() if ts else None
 
-    # Total mentions
-    total_mentions = sum(r.citations_count or 0 for r in runs)
+    sorted_runs = sorted(
+        [r for r in runs if _resolve_date(r)],
+        key=lambda r: (r.started_at or r.finished_at),
+        reverse=True,
+    )
 
-    # Average EEAT score
-    eeat_scores = [r.eeat_score for r in runs if r.eeat_score is not None]
-    avg_eeat = sum(eeat_scores) / len(eeat_scores) if eeat_scores else 0
+    if not sorted_runs:
+        return [
+            {"label": "Menções de Marca", "value": 0, "unit": "total", "delta": None, "delta_unit": "percent"},
+            {"label": "Taxa de Citação", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+            {"label": "Índice de Proeminência", "value": 0.0, "unit": "score", "delta": None, "delta_unit": "percent"},
+            {"label": "Presença Zero-Click", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+        ]
 
-    # Most common perception
-    perceptions = [r.perceived_value_category for r in runs if r.perceived_value_category]
-    perception_counts = Counter(perceptions)
-    top_perception_code = perception_counts.most_common(1)[0][0] if perception_counts else None
-    top_perception = PERCEPTION_LABELS.get(top_perception_code, top_perception_code or "N/A")
+    latest_date = _resolve_date(sorted_runs[0])
+    current_start = latest_date - timedelta(days=WINDOW_DAYS - 1)
+    previous_start = current_start - timedelta(days=WINDOW_DAYS)
+    previous_end = current_start - timedelta(days=1)
+
+    current_runs: List[Run] = []
+    previous_runs: List[Run] = []
+
+    for run in sorted_runs:
+        run_date = _resolve_date(run)
+        if not run_date:
+            continue
+        if run_date >= current_start:
+            current_runs.append(run)
+        elif previous_start <= run_date <= previous_end:
+            previous_runs.append(run)
+
+    def _aggregate(runs_bucket: List[Run]) -> Dict[str, Optional[float]]:
+        if not runs_bucket:
+            return {
+                "brand_mentions": 0.0,
+                "citation_rate": 0.0,
+                "prominence_avg": 0.0,
+                "zero_click": 0.0,
+                "runs": 0,
+            }
+
+        total_runs = len(runs_bucket)
+        brand_mentions = sum(run.brand_mention_count or 0 for run in runs_bucket)
+        citation_rate = (sum(1 for run in runs_bucket if run.citations_count and run.citations_count > 0) / total_runs) * 100
+        prominence_scores = [run.brand_prominence_score for run in runs_bucket if run.brand_prominence_score is not None]
+        prominence_avg = sum(prominence_scores) / len(prominence_scores) if prominence_scores else 0.0
+        zero_click = (sum(1 for run in runs_bucket if run.ia_resources_detected and run.ia_resources_detected > 0) / total_runs) * 100
+
+        return {
+            "brand_mentions": float(brand_mentions),
+            "citation_rate": round(citation_rate, 1),
+            "prominence_avg": round(prominence_avg, 1),
+            "zero_click": round(zero_click, 1),
+            "runs": total_runs,
+        }
+
+    def _pct_change(current: float, previous: float) -> Optional[float]:
+        if previous in (None, 0):
+            return None
+        return round(((current - previous) / previous) * 100, 1)
+
+    def _point_change(current: float, previous: float) -> Optional[float]:
+        if previous is None:
+            return None
+        return round(current - previous, 1)
+
+    current_metrics = _aggregate(current_runs or sorted_runs)
+    previous_metrics = _aggregate(previous_runs)
 
     return [
-        {"label": "Ranking AI Overview", "value": ai_overview_count, "total": len(runs), "unit": "runs"},
-        {"label": "Ranking URLs", "value": url_ranking_count, "total": len(runs), "unit": "runs"},
-        {"label": "Menções", "value": total_mentions, "unit": "total"},
-        {"label": "E-E-A-T Médio", "value": round(avg_eeat, 1), "unit": "score"},
-        {"label": "Percepção Principal", "value": top_perception, "unit": "category"},
+        {
+            "label": "Menções de Marca",
+            "value": current_metrics["brand_mentions"],
+            "unit": "total",
+            "delta": _pct_change(current_metrics["brand_mentions"], previous_metrics["brand_mentions"]),
+            "trend_direction": _trend_direction(current_metrics["brand_mentions"], previous_metrics["brand_mentions"]),
+            "delta_unit": "percent",
+        },
+        {
+            "label": "Taxa de Citação",
+            "value": current_metrics["citation_rate"],
+            "unit": "percent",
+            "delta": _point_change(current_metrics["citation_rate"], previous_metrics["citation_rate"]),
+            "trend_direction": _trend_direction(current_metrics["citation_rate"], previous_metrics["citation_rate"]),
+            "delta_unit": "points",
+        },
+        {
+            "label": "Índice de Proeminência",
+            "value": current_metrics["prominence_avg"],
+            "unit": "score",
+            "delta": _pct_change(current_metrics["prominence_avg"], previous_metrics["prominence_avg"]),
+            "trend_direction": _trend_direction(current_metrics["prominence_avg"], previous_metrics["prominence_avg"]),
+            "delta_unit": "percent",
+        },
+        {
+            "label": "Presença Zero-Click",
+            "value": current_metrics["zero_click"],
+            "unit": "percent",
+            "delta": _point_change(current_metrics["zero_click"], previous_metrics["zero_click"]),
+            "trend_direction": _trend_direction(current_metrics["zero_click"], previous_metrics["zero_click"]),
+            "delta_unit": "points",
+        },
     ]
 
 
@@ -279,14 +432,46 @@ def _compute_radar(runs: List[Run], bank_ids: Optional[List[str]]) -> List[Dict[
     ]
 
 
-def _compute_positioning(db: Session, run_ids: List[str], bank_ids: Optional[List[str]]) -> Dict[str, Any]:
-    """Compute brand ranking and perception breakdown."""
+def _compute_positioning(
+    db: Session,
+    run_ids: List[str],
+    bank_ids: Optional[List[str]],
+    our_domains: Set[str],
+    our_label: str,
+) -> Dict[str, Any]:
+    """Compute brand ranking, share of voice and perception breakdown."""
 
     # Get all citations from runs
     citations = db.query(Citation).filter(Citation.run_id.in_(run_ids)).all()
 
     # Count mentions by domain
     domain_counts = Counter(c.domain for c in citations if c.domain)
+
+    total_mentions = sum(domain_counts.values()) or 0
+    our_mentions = 0
+    competitor_mentions: Dict[str, int] = {}
+
+    for domain, count in domain_counts.items():
+        if _domain_matches(domain, our_domains):
+            our_mentions += count
+        else:
+            competitor_mentions[domain] = competitor_mentions.get(domain, 0) + count
+
+    share_of_voice: Dict[str, float] = {}
+    if total_mentions > 0:
+        if our_mentions:
+            label = our_label.strip() or "Nossa marca"
+            share_of_voice[label] = round((our_mentions / total_mentions) * 100, 2)
+
+        # Ordenar concorrentes por menções e limitar para manter visual limpo
+        sorted_competitors = sorted(competitor_mentions.items(), key=lambda item: item[1], reverse=True)
+        other_total = 0
+        for domain, count in sorted_competitors[:6]:
+            share_of_voice[domain] = round((count / total_mentions) * 100, 2)
+        if len(sorted_competitors) > 6:
+            other_total = sum(count for _, count in sorted_competitors[6:])
+        if other_total:
+            share_of_voice["Outros"] = round((other_total / total_mentions) * 100, 2)
 
     # Build ranking table
     brand_ranking = [
@@ -300,7 +485,134 @@ def _compute_positioning(db: Session, run_ids: List[str], bank_ids: Optional[Lis
     return {
         "brand_ranking": brand_ranking,
         "perception_breakdown": perception_breakdown,
+        "share_of_voice": share_of_voice,
+        "total_mentions": total_mentions,
     }
+
+
+def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+    """Aggregate GEO timeline (daily) and summary metrics."""
+
+    timeline_map: Dict[date, Dict[str, Any]] = defaultdict(lambda: {
+        "mention_sum": 0,
+        "mention_counts": 0,
+        "first_sum": 0.0,
+        "first_counts": 0,
+        "density_sum": 0.0,
+        "density_counts": 0,
+        "engagement_sum": 0.0,
+        "engagement_counts": 0,
+        "conversion_sum": 0.0,
+        "conversion_counts": 0,
+    })
+
+    density_values: List[float] = []
+    first_values: List[float] = []
+    trigger_values: List[float] = []
+    engagement_values: List[float] = []
+    conversion_scores: List[float] = []
+    conversion_labels: List[str] = []
+    competitor_ratios: List[float] = []
+    runs_with_cocitation = 0
+
+    total_runs = len(runs)
+
+    for run in runs:
+        ts = run.started_at or run.finished_at
+        if not ts:
+            continue
+
+        run_date = ts.date()
+
+        if run.brand_mention_density is not None:
+            density_values.append(run.brand_mention_density)
+        if run.brand_first_mention_position is not None:
+            first_values.append(run.brand_first_mention_position)
+        if run.conversational_trigger_count is not None:
+            trigger_values.append(float(run.conversational_trigger_count))
+        if run.engagement_score is not None:
+            engagement_values.append(run.engagement_score)
+        if run.conversion_potential_score is not None:
+            conversion_scores.append(run.conversion_potential_score)
+        if run.conversion_potential:
+            conversion_labels.append(run.conversion_potential)
+        if run.competitor_mention_ratio is not None:
+            competitor_ratios.append(run.competitor_mention_ratio)
+
+        if run.cocitation_competitors:
+            try:
+                competitors_payload = json.loads(run.cocitation_competitors)
+                if isinstance(competitors_payload, list) and competitors_payload:
+                    runs_with_cocitation += 1
+            except json.JSONDecodeError:
+                pass
+
+        if run_date is None:
+            continue
+
+        entry = timeline_map[run_date]
+
+        if run.brand_mention_count is not None:
+            entry["mention_sum"] += run.brand_mention_count
+            entry["mention_counts"] += 1
+
+        if run.brand_first_mention_position is not None:
+            entry["first_sum"] += float(run.brand_first_mention_position)
+            entry["first_counts"] += 1
+
+        if run.brand_mention_density is not None:
+            entry["density_sum"] += run.brand_mention_density
+            entry["density_counts"] += 1
+
+        if run.engagement_score is not None:
+            entry["engagement_sum"] += run.engagement_score
+            entry["engagement_counts"] += 1
+
+        if run.conversion_potential_score is not None:
+            entry["conversion_sum"] += run.conversion_potential_score
+            entry["conversion_counts"] += 1
+
+    timeline: List[Dict[str, Any]] = []
+    for day in sorted(timeline_map.keys()):
+        entry = timeline_map[day]
+        # Calculate median for first mention position per day (more robust to outliers)
+        day_first_positions = [r.brand_first_mention_position for r in runs if r.started_at and r.started_at.date() == day and r.brand_first_mention_position is not None]
+        first_mention_median = round(statistics.median(day_first_positions), 2) if day_first_positions else None
+        
+        timeline.append({
+            "date": day.isoformat(),
+            "brand_mention_count": entry["mention_sum"],
+            "brand_first_mention_position_avg": first_mention_median,
+            "brand_mention_density_avg": _safe_avg(entry["density_sum"], entry["density_counts"]),
+            "engagement_score_avg": _safe_avg(entry["engagement_sum"], entry["engagement_counts"]),
+            "conversion_potential_score_avg": _safe_avg(entry["conversion_sum"], entry["conversion_counts"]),
+        })
+
+    geo_summary = {
+        "total_runs": total_runs,
+        "brand_mention_density_avg": _safe_avg(sum(density_values), len(density_values)),
+        "brand_first_mention_position_avg": round(statistics.median(first_values), 2) if first_values else None,
+        "conversational_trigger_avg": _safe_avg(sum(trigger_values), len(trigger_values)),
+        "engagement_score_avg": _safe_avg(sum(engagement_values), len(engagement_values)),
+        "conversion_potential_score_avg": _safe_avg(sum(conversion_scores), len(conversion_scores)),
+        "top_conversion_potential": _most_common(conversion_labels),
+        "competitor_mention_ratio_avg": _safe_avg(sum(competitor_ratios), len(competitor_ratios)),
+        "cocitation_percentage": round((runs_with_cocitation / total_runs) * 100, 2) if total_runs else 0.0,
+    }
+
+    return timeline, geo_summary
+
+
+def _safe_avg(sum_value: float, count: int) -> Optional[float]:
+    if not count:
+        return None
+    return round(sum_value / count, 2)
+
+
+def _most_common(values: List[str]) -> Optional[str]:
+    if not values:
+        return None
+    return Counter(values).most_common(1)[0][0]
 
 
 def _extract_keywords_from_text(text: str, top_n: int = 50) -> List[Dict[str, Any]]:
@@ -832,6 +1144,141 @@ def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
         "opportunities": opportunities,
         "threats": threats,
     }
+
+
+def _compute_cocitation_breakdown(db: Session, run_ids: List[str], our_domains: Set[str]) -> List[Dict[str, Any]]:
+    """
+    Compute co-citation breakdown by competitor.
+    
+    Returns list of competitors with their co-citation rates.
+    """
+    runs = db.query(Run).filter(Run.id.in_(run_ids)).all()
+    
+    competitor_cocitations: Dict[str, int] = Counter()
+    total_runs_with_cocitation = 0
+    
+    for run in runs:
+        if not run.cocitation_competitors:
+            continue
+            
+        try:
+            competitors = json.loads(run.cocitation_competitors)
+            if isinstance(competitors, list) and competitors:
+                total_runs_with_cocitation += 1
+                for competitor in competitors:
+                    if isinstance(competitor, dict):
+                        name = competitor.get("name") or competitor.get("domain")
+                    else:
+                        name = str(competitor)
+                    
+                    if name:
+                        competitor_cocitations[name] += 1
+        except (json.JSONDecodeError, TypeError):
+            continue
+    
+    # Calculate percentages and sort
+    breakdown = []
+    for competitor, count in competitor_cocitations.most_common(10):
+        percentage = (count / len(run_ids)) * 100 if run_ids else 0
+        breakdown.append({
+            "name": competitor,
+            "cocitation_count": count,
+            "cocitation_rate": round(percentage, 1),
+        })
+    
+    return breakdown
+
+
+def _compute_context_insights(runs: List[Run]) -> Dict[str, Any]:
+    """
+    Generate context-based insights from runs.
+    
+    Analyzes performance by theme, category, and question type.
+    """
+    # Group by question type
+    by_question_type: Dict[str, List[Run]] = defaultdict(list)
+    for run in runs:
+        qtype = run.question_type or "outros"
+        by_question_type[qtype].append(run)
+    
+    # Group by product category
+    by_category: Dict[str, List[Run]] = defaultdict(list)
+    for run in runs:
+        cat = run.product_category or "geral"
+        by_category[cat].append(run)
+    
+    # Calculate performance by context
+    context_performance = []
+    
+    for qtype, qtype_runs in by_question_type.items():
+        if not qtype_runs:
+            continue
+            
+        brand_mentions = sum(r.brand_mention_count or 0 for r in qtype_runs)
+        avg_engagement = sum(r.engagement_score or 0 for r in qtype_runs if r.engagement_score) / len([r for r in qtype_runs if r.engagement_score]) if any(r.engagement_score for r in qtype_runs) else 0
+        
+        context_performance.append({
+            "context": qtype,
+            "type": "question_type",
+            "runs_count": len(qtype_runs),
+            "brand_mentions": brand_mentions,
+            "avg_engagement": round(avg_engagement, 1),
+        })
+    
+    for cat, cat_runs in by_category.items():
+        if not cat_runs or cat == "geral":
+            continue
+            
+        brand_mentions = sum(r.brand_mention_count or 0 for r in cat_runs)
+        avg_engagement = sum(r.engagement_score or 0 for r in cat_runs if r.engagement_score) / len([r for r in cat_runs if r.engagement_score]) if any(r.engagement_score for r in cat_runs) else 0
+        
+        context_performance.append({
+            "context": cat,
+            "type": "category",
+            "runs_count": len(cat_runs),
+            "brand_mentions": brand_mentions,
+            "avg_engagement": round(avg_engagement, 1),
+        })
+    
+    # Sort by brand mentions descending
+    context_performance.sort(key=lambda x: x["brand_mentions"], reverse=True)
+    
+    return {
+        "performance_by_context": context_performance[:10],
+        "total_contexts": len(by_question_type) + len([c for c in by_category.keys() if c != "geral"]),
+    }
+
+
+def _compute_exclusive_citations(runs: List[Run], our_domains: Set[str]) -> int:
+    """
+    Count runs where ONLY our brand was cited (no competitors).
+    
+    A run has exclusive citation if:
+    - It has at least one citation from our domains
+    - It has no co-citations with competitors
+    """
+    exclusive_count = 0
+    
+    for run in runs:
+        # Check if run has our citations
+        if not run.our_citations_count or run.our_citations_count == 0:
+            continue
+        
+        # Check if run has co-citations
+        has_cocitation = False
+        if run.cocitation_competitors:
+            try:
+                competitors = json.loads(run.cocitation_competitors)
+                if isinstance(competitors, list) and competitors:
+                    has_cocitation = True
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # If has our citations but no co-citations, it's exclusive
+        if not has_cocitation:
+            exclusive_count += 1
+    
+    return exclusive_count
 
 
 def _get_raw_samples(db: Session, run_ids: List[str], limit: int = 10) -> List[Dict[str, Any]]:

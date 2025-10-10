@@ -47,6 +47,20 @@ export type RunListItem = {
   classification_confidence?: number
   perceived_value_category?: string
   semantic_summary?: string
+  // GEO metrics summary
+  brand_mention_count?: number | null
+  brand_prominence_score?: number | null
+  brand_mention_density?: number | null
+  brand_first_mention_position?: number | null
+  citation_rate_observed?: number | null
+  citation_rate_corrected?: number | null
+  share_of_voice_llm?: number | null
+  competitor_mention_ratio?: number | null
+  conversational_trigger_count?: number | null
+  engagement_score?: number | null
+  zero_click_presence?: number | null
+  conversion_potential_score?: number | null
+  product_category?: string | null
 }
 
 export type EngineConfig = {
@@ -110,6 +124,31 @@ export type RunDetail = {
   funnel_stage?: string
   perceived_value_category?: string
   semantic_summary?: string
+  response_text?: string
+  // GEO brand presence
+  brand_mention_count?: number | null
+  brand_first_mention_position?: number | null
+  brand_mention_density?: number | null
+  brand_prominence_score?: number | null
+  // GEO citation metrics
+  citation_quality_score?: number | null
+  first_citation_position?: number | null
+  citation_rate_observed?: number | null
+  citation_rate_corrected?: number | null
+  // GEO competitive intelligence
+  competitor_mention_ratio?: number | null
+  share_of_voice_llm?: number | null
+  cocitation_competitors?: string | null
+  // GEO engagement
+  conversational_trigger_count?: number | null
+  engagement_score?: number | null
+  // GEO advanced metrics
+  zero_click_presence?: number | null
+  authority_score?: number | null
+  relevance_score?: number | null
+  clarity_score?: number | null
+  product_category?: string | null
+  conversion_potential_score?: number | null
 }
 
 export type SemanticSnapshot = {
@@ -426,14 +465,16 @@ export const migrateToGemini = (projectId?: string, limit = 200) =>
   }).then(r => r.data)
 
 // ---------- GEO Dashboard Types ----------
-
 export type GeoKPI = {
   label: string
   value: any
   total?: number
+  delta?: number | null
   unit?: string
-  delta?: number
-  trend?: 'up' | 'down' | 'stable'
+  delta_unit?: 'percent' | 'points' | null
+  trend_direction?: 'up' | 'down' | 'neutral' | null
+  footer_primary?: string | null
+  footer_secondary?: string | null
 }
 
 export type GeoRadarDimension = {
@@ -459,9 +500,42 @@ export type GeoPerceptionBreakdown = {
   bank_b?: number
 }
 
+export type GeoPositioningTimelineMetrics = {
+  engagement_score?: number | null
+  conversion_potential_score?: number | null
+}
+
+export type GeoPositioningTimelinePoint = {
+  date: string
+  metrics?: GeoPositioningTimelineMetrics
+}
+
 export type GeoPositioning = {
   brand_ranking: GeoBrandRanking[]
   perception_breakdown: GeoPerceptionBreakdown[]
+  share_of_voice?: Record<string, number>
+  timeline?: GeoPositioningTimelinePoint[]
+}
+
+export type GeoTimelinePoint = {
+  date: string
+  brand_mention_count?: number
+  brand_first_mention_position_avg?: number | null
+  brand_mention_density_avg?: number | null
+  engagement_score_avg?: number | null
+  conversion_potential_score_avg?: number | null
+}
+
+export type GeoSummary = {
+  total_runs?: number
+  brand_mention_density_avg?: number | null
+  brand_first_mention_position_avg?: number | null
+  conversational_trigger_avg?: number | null
+  engagement_score_avg?: number | null
+  conversion_potential_score_avg?: number | null
+  top_conversion_potential?: string | null
+  competitor_mention_ratio_avg?: number | null
+  cocitation_percentage?: number | null
 }
 
 export type GeoWordCloudItem = {
@@ -559,6 +633,38 @@ export type GeoDashboard = {
   alerts: GeoAlert[]
   swot: GeoSWOT
   raw_samples: GeoRawSample[]
+  timeline?: GeoTimelinePoint[]
+  geo_summary?: GeoSummary
+}
+
+export type GeoStatsByProductItem = {
+  product_category: string | null
+  runs_count: number
+  avg_citation_rate: number | null
+  avg_prominence: number | null
+  avg_sov: number | null
+  avg_engagement: number | null
+  avg_conversion_potential: number | null
+}
+
+export type GeoStatsByFunnelItem = {
+  funnel_stage: string | null
+  runs_count: number
+  avg_citation_rate: number | null
+  avg_prominence: number | null
+  avg_sov: number | null
+  avg_engagement: number | null
+  avg_conversion_potential: number | null
+}
+
+export type GeoStatsByQuestionTypeItem = {
+  question_type: string | null
+  runs_count: number
+  avg_citation_rate: number | null
+  avg_prominence: number | null
+  avg_sov: number | null
+  avg_engagement: number | null
+  avg_conversion_potential: number | null
 }
 
 export const getGeoDashboard = (
@@ -570,6 +676,9 @@ export const getGeoDashboard = (
     date_from?: string
     date_to?: string
     bank_ids?: string[]
+    llm_model?: string
+    prompt_category?: string
+    prompt_text?: string
   }
 ) => {
   const params = new URLSearchParams()
@@ -582,6 +691,30 @@ export const getGeoDashboard = (
   if (filters?.bank_ids && filters.bank_ids.length > 0) {
     params.set('bank_ids', filters.bank_ids.join(','))
   }
+  if (filters?.llm_model) params.set('llm_model', filters.llm_model)
+  if (filters?.prompt_category) params.set('prompt_category', filters.prompt_category)
+  if (filters?.prompt_text) params.set('prompt_text', filters.prompt_text)
 
-  return http.get<GeoDashboard>(`/projects/${projectId}/geo-dashboard?${params.toString()}`).then(r => r.data)
+  const query = params.toString()
+  const basePath = `/projects/${projectId}/geo-dashboard`
+  const path = query ? `${basePath}?${query}` : basePath
+
+  return http.get<GeoDashboard>(path).then(r => r.data)
 }
+
+export const getGeoStatsByProduct = (projectId: string, days = 30) =>
+  http.get<Record<string, GeoStatsByProductItem>>(`/projects/${projectId}/geo/stats-by-product`, {
+    params: { days }
+  }).then(r => r.data)
+
+export const getGeoStatsByFunnel = (projectId: string, days = 30) =>
+  http.get<Record<string, GeoStatsByFunnelItem>>(`/projects/${projectId}/geo/stats-by-funnel`, {
+    params: { days }
+  }).then(r => r.data)
+
+export const getGeoStatsByQuestionType = (projectId: string, days = 30) =>
+  http.get<Record<string, GeoStatsByQuestionTypeItem>>(`/projects/${projectId}/geo/stats-by-question-type`, {
+    params: { days }
+  }).then(r => r.data)
+
+export default http

@@ -1,6 +1,10 @@
 {
   "dependencies": {
     "@types/react-window": "^1.8.8",
+    "@use-gesture/react": "^10.3.1",
+    "claude": "^0.1.1",
+    "claude-mcp": "^2.4.1",
+    "codex": "^0.2.3",
     "react-window": "^2.1.1"
   }
 }
