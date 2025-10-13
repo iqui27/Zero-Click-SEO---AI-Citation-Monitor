@@ -219,6 +219,11 @@ def compute_geo_dashboard(
     context_insights = _compute_context_insights(runs)
     exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)
 
+    # Add semantic_scores to geo_summary
+    semantic_scores = _aggregate_semantic_scores(db, run_ids)
+    if semantic_scores:
+        geo_summary["semantic_scores"] = semantic_scores
+
     return {
         "project_id": project_id,
         "filters_applied": {
@@ -504,6 +509,10 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
         "engagement_counts": 0,
         "conversion_sum": 0.0,
         "conversion_counts": 0,
+        "citation_rate_observed_sum": 0.0,
+        "citation_rate_observed_counts": 0,
+        "citation_rate_corrected_sum": 0.0,
+        "citation_rate_corrected_counts": 0,
     })
 
     density_values: List[float] = []
@@ -572,6 +581,14 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
             entry["conversion_sum"] += run.conversion_potential_score
             entry["conversion_counts"] += 1
 
+        if run.citation_rate_observed is not None:
+            entry["citation_rate_observed_sum"] += run.citation_rate_observed
+            entry["citation_rate_observed_counts"] += 1
+
+        if run.citation_rate_corrected is not None:
+            entry["citation_rate_corrected_sum"] += run.citation_rate_corrected
+            entry["citation_rate_corrected_counts"] += 1
+
     timeline: List[Dict[str, Any]] = []
     for day in sorted(timeline_map.keys()):
         entry = timeline_map[day]
@@ -586,6 +603,8 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
             "brand_mention_density_avg": _safe_avg(entry["density_sum"], entry["density_counts"]),
             "engagement_score_avg": _safe_avg(entry["engagement_sum"], entry["engagement_counts"]),
             "conversion_potential_score_avg": _safe_avg(entry["conversion_sum"], entry["conversion_counts"]),
+            "citation_rate_observed_avg": _safe_avg(entry["citation_rate_observed_sum"], entry["citation_rate_observed_counts"]),
+            "citation_rate_corrected_avg": _safe_avg(entry["citation_rate_corrected_sum"], entry["citation_rate_corrected_counts"]),
         })
 
     geo_summary = {
@@ -613,6 +632,55 @@ def _most_common(values: List[str]) -> Optional[str]:
     if not values:
         return None
     return Counter(values).most_common(1)[0][0]
+
+
+def _aggregate_semantic_scores(db: Session, run_ids: List[str]) -> Optional[Dict[str, float]]:
+    """
+    Aggregate semantic scores from RunSemanticInsight for all runs.
+
+    Returns averaged scores for: authority, relevance, clarity, context, precision, freshness.
+    """
+    insights = db.query(RunSemanticInsight).filter(
+        RunSemanticInsight.run_id.in_(run_ids)
+    ).all()
+
+    if not insights:
+        return None
+
+    # Collect all semantic scores
+    scores_by_dimension: Dict[str, List[float]] = {
+        "authority": [],
+        "relevance": [],
+        "clarity": [],
+        "context": [],
+        "precision": [],
+        "freshness": [],
+    }
+
+    for insight in insights:
+        payload = insight.payload or {}
+        semantic_scores = payload.get("semantic_scores", {})
+
+        if not semantic_scores:
+            continue
+
+        for dimension, score in semantic_scores.items():
+            if dimension in scores_by_dimension and score is not None:
+                scores_by_dimension[dimension].append(float(score))
+
+    # Calculate averages
+    aggregated_scores = {}
+    for dimension, scores in scores_by_dimension.items():
+        if scores:
+            aggregated_scores[dimension] = round(sum(scores) / len(scores), 1)
+        else:
+            aggregated_scores[dimension] = 0
+
+    # Only return if we have at least some scores
+    if any(score > 0 for score in aggregated_scores.values()):
+        return aggregated_scores
+
+    return None
 
 
 def _extract_keywords_from_text(text: str, top_n: int = 50) -> List[Dict[str, Any]]:

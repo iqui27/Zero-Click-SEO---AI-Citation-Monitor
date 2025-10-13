@@ -517,22 +517,27 @@ def calculate_engagement_metrics(response_text: str) -> Dict[str, Any]:
         matches = re.findall(pattern, text_lower)
         trigger_count += len(matches)
     
-    # Calcular engagement score
+    # Calcular engagement score com escala contínua
     # 0 triggers = 0
-    # 1-2 triggers = 30
-    # 3-4 triggers = 60
-    # 5+ triggers = 100 (cap)
-    
+    # 1-3 triggers = 20-50 (progressivo)
+    # 4-8 triggers = 50-80 (progressivo)
+    # 9-15 triggers = 80-95 (progressivo)
+    # 16+ triggers = 95-100 (cap em 100)
+
     if trigger_count == 0:
         score = 0.0
-    elif trigger_count <= 2:
-        score = 30.0
-    elif trigger_count <= 4:
-        score = 60.0
-    elif trigger_count <= 6:
-        score = 80.0
+    elif trigger_count <= 3:
+        # 20 base + 10 por trigger
+        score = 20.0 + (trigger_count * 10.0)
+    elif trigger_count <= 8:
+        # 50 base + 6 por trigger adicional
+        score = 50.0 + ((trigger_count - 3) * 6.0)
+    elif trigger_count <= 15:
+        # 80 base + 2 por trigger adicional
+        score = 80.0 + ((trigger_count - 8) * 2.14)
     else:
-        score = 100.0
+        # 95 base + 0.3 por trigger adicional (cap em 100)
+        score = min(100.0, 95.0 + ((trigger_count - 15) * 0.3))
     
     return {
         "conversational_trigger_count": int(trigger_count),
@@ -739,17 +744,27 @@ def calculate_advanced_metrics(
         zero_click += 10.0
     
     # 2. Authority Score
-    # Detectar linguagem de autoridade no contexto da marca
+    # Detectar linguagem de autoridade + citações oficiais
     authority = 0.0
     text_lower = response_text.lower()
-    
+
+    # Palavras-chave de autoridade expandidas
     authority_keywords = [
         "líder", "referência", "especialista", "autoridade", "principal",
         "reconhecid", "estabelecid", "tradicional", "maior", "melhor",
-        "expertise", "experiência", "confiável", "sólid", "respeitad"
+        "expertise", "experiência", "confiável", "sólid", "respeitad",
+        "oficial", "certificad", "aprovad", "regulamentad", "licenciad",
+        "premiado", "destaque", "top", "ranking", "primeiro lugar",
+        "fundad", "história", "anos de mercado", "pioneiro"
     ]
-    
-    # Buscar keywords próximas à marca
+
+    # Palavras-chave negativas (reduzem authority)
+    negative_keywords = [
+        "problema", "reclamação", "falha", "defeito", "insatisfação",
+        "não recomend", "evite", "cuidado", "atenção", "risco"
+    ]
+
+    # Componente 1: Keywords de autoridade próximas à marca (40 pts)
     brand_lower = project_name.lower()
     if brand_lower in text_lower:
         brand_pos = text_lower.find(brand_lower)
@@ -757,9 +772,25 @@ def calculate_advanced_metrics(
         start = max(0, brand_pos - 100)
         end = min(len(text_lower), brand_pos + 100)
         context = text_lower[start:end]
-        
+
         authority_count = sum(1 for kw in authority_keywords if kw in context)
-        authority = min(100.0, authority_count * 25.0)  # Max 100
+        negative_count = sum(1 for kw in negative_keywords if kw in context)
+
+        # Cada keyword positiva = +10 pts, negativa = -15 pts
+        authority_from_keywords = (authority_count * 10.0) - (negative_count * 15.0)
+        authority += max(0, min(40.0, authority_from_keywords))
+
+    # Componente 2: Citações oficiais (60 pts)
+    # URLs do domínio oficial = forte sinal de autoridade
+    our_citations_count = sum(1 for c in citations if c.get("is_ours"))
+    if our_citations_count >= 3:
+        authority += 60.0  # 3+ citações = máxima autoridade
+    elif our_citations_count == 2:
+        authority += 45.0
+    elif our_citations_count == 1:
+        authority += 30.0
+
+    authority = min(100.0, authority)
     
     # 3. Relevance Score
     # Heurística: marca mencionada + contexto relevante + sem desvios
@@ -823,11 +854,12 @@ def calculate_advanced_metrics(
     
     # 5. Conversion Potential
     # Fórmula: média ponderada de engagement, authority, relevance e zero-click
+    # Pesos rebalanceados após melhorias nas métricas
     conversion_potential_score = (
-        engagement_score * 0.35 +  # Engagement é o mais importante
-        authority * 0.25 +          # Autoridade gera confiança
-        relevance * 0.25 +          # Relevância mantém interesse
-        zero_click * 0.15           # Zero-click reduz fricção
+        engagement_score * 0.30 +  # Engagement (gatilhos conversacionais)
+        authority * 0.30 +          # Autoridade (citações + keywords) - aumentado
+        relevance * 0.25 +          # Relevância (menções e contexto)
+        zero_click * 0.15           # Zero-click (reduz fricção)
     )
     
     # Classificar em categorias

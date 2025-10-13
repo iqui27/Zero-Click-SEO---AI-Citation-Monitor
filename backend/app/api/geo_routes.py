@@ -565,6 +565,7 @@ def get_geo_stats_by_funnel(
         if not runs:
             stats_by_funnel[stage] = {
                 "runs_count": 0,
+                "avg_brand_mentions": None,
                 "avg_citation_rate": None,
                 "avg_prominence": None,
                 "avg_engagement": None,
@@ -573,13 +574,15 @@ def get_geo_stats_by_funnel(
             continue
         
         # Calcular médias
+        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
         citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
         prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
         engagements = [r.engagement_score for r in runs if r.engagement_score is not None]
         conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
-        
+
         stats_by_funnel[stage] = {
             "runs_count": len(runs),
+            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
             "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
             "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
             "avg_engagement": round(sum(engagements) / len(engagements), 2) if engagements else None,
@@ -637,6 +640,7 @@ def get_geo_stats_by_question_type(
         if not runs:
             stats_by_type[qtype] = {
                 "runs_count": 0,
+                "avg_brand_mentions": None,
                 "avg_citation_rate": None,
                 "avg_prominence": None,
                 "avg_sov": None,
@@ -645,13 +649,15 @@ def get_geo_stats_by_question_type(
             continue
         
         # Calcular médias
+        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
         citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
         prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
         sovs = [r.share_of_voice_llm for r in runs if r.share_of_voice_llm is not None]
         conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
-        
+
         stats_by_type[qtype] = {
             "runs_count": len(runs),
+            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
             "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
             "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
             "avg_sov": round(sum(sovs) / len(sovs), 2) if sovs else None,
@@ -712,6 +718,7 @@ def get_geo_stats_by_product(
         if not runs:
             stats_by_product[category] = {
                 "runs_count": 0,
+                "avg_brand_mentions": None,
                 "avg_citation_rate": None,
                 "avg_prominence": None,
                 "avg_sov": None,
@@ -721,6 +728,7 @@ def get_geo_stats_by_product(
             continue
 
         # Calcular médias
+        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
         citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
         prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
         sovs = [r.share_of_voice_llm for r in runs if r.share_of_voice_llm is not None]
@@ -729,6 +737,7 @@ def get_geo_stats_by_product(
 
         stats_by_product[category] = {
             "runs_count": len(runs),
+            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
             "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
             "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
             "avg_sov": round(sum(sovs) / len(sovs), 2) if sovs else None,
@@ -996,4 +1005,160 @@ def get_prompt_visualizer_data(
         "total_runs": len(runs_with_prompts),
         "period_start": cutoff_date.isoformat(),
         "period_end": period_end.isoformat(),
+    }
+
+
+# ========================================
+# REPROCESS GEO METRICS (Recalcular Métricas)
+# ========================================
+
+@router.post("/{project_id}/geo/reprocess-metrics")
+def reprocess_geo_metrics(
+    project_id: str,
+    run_ids: Optional[List[str]] = None,
+    limit: int = Query(100, ge=1, le=1000, description="Max runs to process"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Reprocessa métricas GEO para runs existentes.
+    
+    Útil após melhorias nos algoritmos de cálculo de métricas.
+    Recalcula:
+    - Engagement Score (com nova escala contínua)
+    - Authority Score (com detecção de citações oficiais)
+    - Conversion Potential Score (com pesos rebalanceados)
+    
+    Args:
+        project_id: ID do projeto
+        run_ids: Lista opcional de run_ids específicas. Se None, processa runs mais recentes.
+        limit: Número máximo de runs a processar (padrão: 100)
+    
+    Returns:
+        {
+            "processed": int,
+            "updated": int,
+            "errors": int,
+            "sample_updates": [...],
+        }
+    """
+    from app.services.geo_metrics import calculate_all_geo_metrics
+    from app.models.models import Citation, Domain
+    
+    # Verificar se projeto existe
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Buscar runs
+    if run_ids:
+        # Processar runs específicas
+        runs = db.query(Run).filter(
+            Run.project_id == project_id,
+            Run.id.in_(run_ids),
+            Run.status == "completed",
+        ).all()
+    else:
+        # Processar runs mais recentes do projeto
+        runs = db.query(Run).filter(
+            Run.project_id == project_id,
+            Run.status == "completed",
+            Run.response_text.isnot(None),
+        ).order_by(Run.started_at.desc()).limit(limit).all()
+    
+    if not runs:
+        return {
+            "processed": 0,
+            "updated": 0,
+            "errors": 0,
+            "message": "No runs found to process",
+        }
+    
+    # Preparar dados do projeto
+    domains = db.query(Domain).filter(Domain.project_id == project_id).all()
+    project_domains = [d.domain for d in domains if d.domain]
+    
+    # Domain variants map
+    variants = db.query(DomainVariant).filter(
+        DomainVariant.project_id == project_id,
+        DomainVariant.is_active == True,
+    ).all()
+    domain_variants_map = {v.variant_domain.lower(): v.canonical_domain.lower() for v in variants}
+    
+    processed = 0
+    updated = 0
+    errors = 0
+    sample_updates = []
+    
+    for run in runs:
+        try:
+            # Buscar citações
+            citations_raw = db.query(Citation).filter(Citation.run_id == run.id).all()
+            citations = [
+                {
+                    "is_ours": c.is_ours,
+                    "domain": c.domain,
+                    "url": c.url,
+                    "anchor": c.anchor,
+                    "position": c.position,
+                    "type": c.type,
+                }
+                for c in citations_raw
+            ]
+            
+            # Recalcular métricas
+            metrics = calculate_all_geo_metrics(
+                response_text=run.response_text or "",
+                project_name=project.name,
+                citations=citations,
+                competitors_from_gemini=[],  # Será extraído de semantic insights se disponível
+                project_domains=project_domains,
+                brand_variations=None,  # TODO: Permitir configurar
+                domain_variants_map=domain_variants_map,
+            )
+            
+            # Guardar valores antigos para comparação
+            old_engagement = run.engagement_score
+            old_authority = run.authority_score
+            old_conversion = run.conversion_potential_score
+            
+            # Atualizar run com novas métricas
+            for key, value in metrics.items():
+                if hasattr(run, key):
+                    setattr(run, key, value)
+            
+            # Sample para retorno (primeiras 5 runs)
+            if len(sample_updates) < 5:
+                sample_updates.append({
+                    "run_id": run.id,
+                    "old_metrics": {
+                        "engagement_score": old_engagement,
+                        "authority_score": old_authority,
+                        "conversion_potential_score": old_conversion,
+                    },
+                    "new_metrics": {
+                        "engagement_score": metrics.get("engagement_score"),
+                        "authority_score": metrics.get("authority_score"),
+                        "conversion_potential_score": metrics.get("conversion_potential_score"),
+                    },
+                })
+            
+            processed += 1
+            updated += 1
+            
+        except Exception as e:
+            errors += 1
+            # Log error but continue
+            print(f"[ERROR] Failed to reprocess run {run.id}: {e}")
+            continue
+    
+    # Commit changes
+    db.commit()
+    
+    return {
+        "processed": processed,
+        "updated": updated,
+        "errors": errors,
+        "total_runs_eligible": len(runs),
+        "sample_updates": sample_updates,
+        "message": f"Successfully reprocessed {updated} runs with new metric calculations",
     }

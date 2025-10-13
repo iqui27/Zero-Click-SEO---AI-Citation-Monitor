@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../ui/card'
 import { Badge } from '../ui/badge'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
@@ -18,23 +18,21 @@ import {
   Label,
   Cell,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
   Legend,
 } from 'recharts'
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../ui/chart'
 import { TrendingUp, TrendingDown, Minus, ExternalLink } from 'lucide-react'
-import { useGeoDashboard, useGeoAggregations } from '../../lib/geo'
+import { useGeoDashboard, useGeoAggregations, type GeoDashboardFilters } from '../../lib/geo'
 import type { GeoDashboard } from '../../lib/api'
-
-type BrandFilter = 'with_brand' | 'without_brand' | 'all'
-type DashboardFilterKey = 'brand' | 'llm' | 'project' | 'theme' | 'category' | 'prompt'
 
 export type UnifiedGeoDashboardProps = {
   projectId: string
 }
 
-function ExamplesSection({ data, brandFilter }: { data: GeoDashboard | null; brandFilter: BrandFilter }) {
+function ExamplesSection({ data }: { data: GeoDashboard | null }) {
   const samples = useMemo(() => {
     if (!data?.raw_samples) return []
     return data.raw_samples.slice(0, 5)
@@ -45,9 +43,7 @@ function ExamplesSection({ data, brandFilter }: { data: GeoDashboard | null; bra
       <div className="mb-6">
         <h2 className="text-2xl font-semibold text-slate-900">Exemplos de Respostas</h2>
         <p className="text-sm text-slate-500 mt-1">
-          Amostras de respostas baseadas no filtro selecionado ({
-            brandFilter === 'all' ? 'todas' : brandFilter === 'with_brand' ? 'com marca' : 'sem marca'
-          })
+          Amostras de respostas mais recentes
         </p>
       </div>
 
@@ -98,22 +94,16 @@ function ExamplesSection({ data, brandFilter }: { data: GeoDashboard | null; bra
 const COLORS = ['#2563eb', '#f97316', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#6366f1']
 
 export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
-  const [filters, setFilters] = useState<Record<DashboardFilterKey, string>>({
-    brand: 'all',
-    llm: 'all',
-    project: 'all',
-    theme: 'all',
-    category: 'all',
-    prompt: 'all',
+  const [filters, setFilters] = useState<GeoDashboardFilters>({
+    llm_model: undefined,
+    subproject_id: undefined,
+    prompt_category: undefined,
+    date_from: undefined,
+    date_to: undefined,
   })
-  const { loading, error, data, overview } = useGeoDashboard(projectId)
-  const aggregations = useGeoAggregations(projectId, { days: 30 })
 
-  const filteredData = useMemo(() => {
-    if (!data) return null
-    // TODO: Apply brand filter to raw_samples
-    return data
-  }, [data, filters.brand])
+  const { loading, error, data, overview } = useGeoDashboard(projectId, filters)
+  const aggregations = useGeoAggregations(projectId, { days: 30 })
 
   if (loading) {
     return (
@@ -144,26 +134,13 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
     )
   }
 
-  const handleFilterChange = (key: DashboardFilterKey, value: string) => {
-    setFilters((prev) => ({ ...prev, [key]: value }))
+  const handleFilterChange = (key: keyof GeoDashboardFilters, value: string | undefined) => {
+    setFilters((prev) => ({ ...prev, [key]: value === 'all' || !value ? undefined : value }))
   }
 
-  const filterConfigs: Array<{
-    key: DashboardFilterKey
-    label: string
-    options: { value: string; label: string }[]
-  }> = [
+  const filterConfigs = [
     {
-      key: 'brand',
-      label: 'Marcas',
-      options: [
-        { value: 'all', label: 'Todas as respostas' },
-        { value: 'with_brand', label: 'Com marca' },
-        { value: 'without_brand', label: 'Sem marca' },
-      ],
-    },
-    {
-      key: 'llm',
+      key: 'llm_model' as keyof GeoDashboardFilters,
       label: 'LLM',
       options: [
         { value: 'all', label: 'Todos os modelos' },
@@ -174,15 +151,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       ],
     },
     {
-      key: 'project',
-      label: 'Projeto',
-      options: [
-        { value: 'all', label: 'Todos os projetos' },
-        // TODO: Carregar projetos dinamicamente
-      ],
-    },
-    {
-      key: 'theme',
+      key: 'subproject_id' as keyof GeoDashboardFilters,
       label: 'Tema (Subprojeto)',
       options: [
         { value: 'all', label: 'Todos os temas' },
@@ -190,19 +159,11 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       ],
     },
     {
-      key: 'category',
-      label: 'Categoria (Prompt)',
+      key: 'prompt_category' as keyof GeoDashboardFilters,
+      label: 'Categoria',
       options: [
         { value: 'all', label: 'Todas as categorias' },
-        // TODO: Carregar categorias de templates dinamicamente
-      ],
-    },
-    {
-      key: 'prompt',
-      label: 'Prompt (Texto)',
-      options: [
-        { value: 'all', label: 'Todos os prompts' },
-        // TODO: Carregar prompts dinamicamente ou usar input de busca
+        // TODO: Carregar categorias dinamicamente
       ],
     },
   ]
@@ -217,14 +178,14 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filterConfigs.map((filter) => (
             <div key={filter.key} className="space-y-1">
               <label className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">
                 {filter.label}
               </label>
               <Select
-                value={filters[filter.key]}
+                value={filters[filter.key] || 'all'}
                 onChange={(e) => handleFilterChange(filter.key, e.target.value)}
                 className="w-full"
               >
@@ -261,7 +222,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       <DomainTrackingSection data={data} />
 
       {/* Exemplos */}
-      <ExamplesSection data={filteredData} brandFilter={filters.brand as BrandFilter} />
+      <ExamplesSection data={data} />
     </div>
   )
 }
@@ -291,12 +252,6 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     return Number.isFinite(normalized) ? normalized : null
   }, [avgCitationPosition])
 
-  // Citações exclusivas (dados reais do backend)
-  const exclusiveCitations = useMemo(() => {
-    const count = (data as any).exclusive_citations_count
-    return count != null && count > 0 ? count : null
-  }, [data])
-
   const formatNumber = (value: number) =>
     value.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
@@ -322,7 +277,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     {
       title: 'Posição Média da Citação',
       value: avgCitationPositionNormalized != null ? formatNumber(avgCitationPositionNormalized) : '–',
-      subtitle: null,
+      subtitle: <span className="text-xs text-slate-500">% da resposta</span>,
       delta: null,
       trend: null,
     },
@@ -333,17 +288,10 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
       delta: zeroClickKpi?.delta,
       trend: zeroClickKpi?.trendDirection,
     },
-    {
-      title: 'Citações Exclusivas',
-      value: exclusiveCitations != null ? String(exclusiveCitations).replace(/\B(?=(\d{3})+(?!\d))/g, '.') : '–',
-      subtitle: <span className="text-xs text-slate-500">somente nossa marca citada</span>,
-      delta: null,
-      trend: null,
-    },
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       {bigNumbers.map((metric) => (
         <Card key={metric.title}>
           <CardHeader className="pb-2">
@@ -392,7 +340,7 @@ function BrandPresenceSection({ data, overview }: { data: GeoDashboard; overview
                 <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                 <YAxis yAxisId="left" stroke="#94a3b8" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                 <YAxis yAxisId="right" orientation="right" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} tickLine={false} axisLine={false} />
-                <Tooltip />
+                <RechartsTooltip />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar yAxisId="left" dataKey="mentions" name="Menções" fill="#2563eb" radius={[4, 4, 0, 0]} />
                 <Bar yAxisId="right" dataKey="firstMentionAvg" name="Posição Primeira Menção" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
@@ -443,7 +391,6 @@ function MetricPanel({ title, primary, secondary }: MetricPanelProps) {
 }
 
 function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard; aggregations: any }) {
-  const [activeTab, setActiveTab] = useState<'sov' | 'cocitation' | 'context'>('sov')
   const shareOfVoice = data.positioning?.share_of_voice || {}
   const pieData = useMemo(() => {
     return Object.entries(shareOfVoice).map(([name, value]) => ({
@@ -461,30 +408,39 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
     return ourMentions / 100
   }, [data, shareOfVoice])
 
-  // Co-citação por concorrente (dados reais do backend)
+  // Derive cocitation data from brand_ranking
   const cocitationByCompetitor = useMemo(() => {
-    const breakdown = ((data as any).cocitation_breakdown || []) as Array<{ name: string; cocitation_rate: number }>
-    return breakdown.map((item, index) => ({
-      name: item.name,
-      value: item.cocitation_rate,
-      color: COLORS[index % COLORS.length],
-    }))
+    const ranking = data.positioning?.brand_ranking || []
+    const totalMentions = (data.positioning as any)?.total_mentions || 1
+
+    // Skip first item (our brand) and take competitors
+    return ranking
+      .slice(1, 11)
+      .map((item, index) => ({
+        name: item.brand,
+        value: (item.mentions / totalMentions) * 100,
+        color: COLORS[index % COLORS.length],
+      }))
+      .filter(item => item.value > 0)
   }, [data])
 
-  // Contexto (dados reais do backend)
+  // Derive context data from aggregations
   const contextData = useMemo(() => {
-    const insights = ((data as any).context_insights?.performance_by_context || []) as Array<{
-      context: string
-      brand_mentions: number
-      avg_engagement: number
-      type: string
+    const byProduct = (aggregations?.byProduct || []) as Array<{
+      product_category: string | null
+      avg_brand_mentions: number | null
+      avg_engagement_score: number | null
     }>
-    return insights.slice(0, 10).map((item) => ({
-      category: item.context,
-      brandMentions: item.brand_mentions,
-      engagement: item.avg_engagement,
-    }))
-  }, [data])
+
+    return byProduct
+      .filter((item) => item.product_category)
+      .map((item) => ({
+        category: item.product_category as string,
+        brandMentions: item.avg_brand_mentions ?? 0,
+        engagement: item.avg_engagement_score ?? 0,
+      }))
+      .slice(0, 8)
+  }, [aggregations])
 
   const productPresence = useMemo(() => {
     const items = (aggregations?.byProduct || []) as Array<{
@@ -513,52 +469,66 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
   }, [aggregations])
 
   return (
-    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="w-full">
+    <Tabs defaultValue="sov" className="w-full">
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <CardTitle className="text-base">Análise Competitiva</CardTitle>
-              <TabsList className="grid grid-cols-3 gap-2 rounded-full bg-slate-100 p-1">
-                <TabsTrigger value="sov" className="rounded-full px-4 py-2 text-xs md:text-sm">
-                  Share of Voice
-                </TabsTrigger>
-                <TabsTrigger value="cocitation" className="rounded-full px-4 py-2 text-xs md:text-sm">
-                  Co-Citação
-                </TabsTrigger>
-                <TabsTrigger value="context" className="rounded-full px-4 py-2 text-xs md:text-sm">
-                  Contexto
-                </TabsTrigger>
-              </TabsList>
-            </div>
-          </div>
+          <CardTitle className="text-base">Análise Competitiva</CardTitle>
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="sov">Share of Voice</TabsTrigger>
+            <TabsTrigger value="cocitation">Co-citação</TabsTrigger>
+            <TabsTrigger value="context">Contexto</TabsTrigger>
+          </TabsList>
         </CardHeader>
         <CardContent>
           <TabsContent value="sov">
             <div className="space-y-4">
               <p className="text-sm text-slate-600">Distribuição de menções por marca no período analisado</p>
               {pieData.length ? (
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        labelLine
-                        label={({ name, value }) => `${name}: ${value.toFixed(1)}%`}
-                        outerRadius={120}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {pieData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value: any) => `${Number(value).toFixed(1)}%`} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
+                <Card className="flex flex-col">
+                  <CardHeader className="items-center pb-0">
+                    <CardTitle className="text-base">Share of Voice</CardTitle>
+                    <CardDescription className="text-xs text-slate-500">Participação por marca</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 pb-0">
+                    <ChartContainer
+                      config={useMemo<ChartConfig>(
+                        () =>
+                          pieData.reduce((acc, item, index) => {
+                            acc[item.name] = {
+                              label: item.name,
+                              color: COLORS[index % COLORS.length],
+                            }
+                            return acc
+                          }, {} as ChartConfig),
+                        [pieData]
+                      )}
+                      className="mx-auto h-[320px] w-full max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
+                    >
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                          <Pie
+                            data={pieData}
+                            dataKey="value"
+                            nameKey="name"
+                            labelLine={false}
+                            label={({ name, value }) =>
+                              `${name ?? ''} ${typeof value === 'number' ? value.toFixed(1) : value}%`
+                            }
+                          >
+                            {pieData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </ChartContainer>
+                  </CardContent>
+                  <CardFooter className="flex-col gap-1.5 text-xs text-slate-500">
+                    <span>Legenda atualizada com cores padronizadas</span>
+                    <span>Valores representam % de menções no período</span>
+                  </CardFooter>
+                </Card>
               ) : (
                 <p className="text-sm text-slate-500">Sem dados disponíveis.</p>
               )}
@@ -567,12 +537,12 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs text-slate-500">Ratio de Menção Competitiva</p>
                   <p className="text-2xl font-bold text-slate-900">{competitiveRatio.toFixed(2)}</p>
-                  <p className="text-xs text-slate-500">nossa / (nossa + concorrentes)</p>
+                  <p className="text-xs text-slate-500">nossa / total</p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs text-slate-500">Co-Citações</p>
                   <p className="text-2xl font-bold text-slate-900">{cocitationPercentage.toFixed(0)}%</p>
-                  <p className="text-xs text-slate-500">das menções incluem concorrentes</p>
+                  <p className="text-xs text-slate-500">das respostas incluem concorrentes</p>
                 </div>
               </div>
             </div>
@@ -592,8 +562,8 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                         <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                        <Tooltip formatter={(value: any) => `${value}%`} />
-                        <Bar dataKey="value" name="Taxa de Co-citação" radius={[0, 6, 6, 0]}>
+                        <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
+                        <Bar dataKey="value" name="% de Menções" radius={[0, 6, 6, 0]}>
                           {cocitationByCompetitor.map((entry, index) => (
                             <Cell key={`cocitation-${entry.name}-${index}`} fill={entry.color} />
                           ))}
@@ -603,12 +573,12 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                   </div>
 
                   <div className="rounded-lg bg-slate-50 p-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Top Concorrentes Co-citados</h4>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Top Concorrentes Mencionados</h4>
                     <ul className="space-y-2 text-sm text-slate-700">
                       {cocitationByCompetitor.slice(0, 5).map((item, index) => (
                         <li key={`cocitation-list-${item.name}-${index}`} className="flex items-start gap-2">
                           <span style={{ color: item.color }}>•</span>
-                          <span><strong>{item.name}</strong> aparece em <strong>{item.value.toFixed(1)}%</strong> das respostas</span>
+                          <span><strong>{item.name}</strong> representa <strong>{item.value.toFixed(1)}%</strong> das menções</span>
                         </li>
                       ))}
                     </ul>
@@ -616,7 +586,7 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                 </>
               ) : (
                 <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
-                  Sem dados de co-citação disponíveis para o período selecionado.
+                  Sem dados de concorrentes disponíveis para o período selecionado.
                 </div>
               )}
             </div>
@@ -632,7 +602,7 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="category" stroke="#94a3b8" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" />
                         <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                        <Tooltip />
+                        <RechartsTooltip />
                         <Legend />
                         <Bar dataKey="brandMentions" name="Menções de Marca" fill="#2563eb" radius={[6, 6, 0, 0]} />
                         <Bar dataKey="engagement" name="Engajamento Médio" fill="#10b981" radius={[6, 6, 0, 0]} />
@@ -641,13 +611,13 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                   </div>
 
                   <div className="rounded-lg bg-slate-50 p-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Performance por Contexto</h4>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Performance por Categoria de Produto</h4>
                     <div className="space-y-2">
                       {contextData.slice(0, 5).map((item, index) => (
                         <div key={index} className="flex items-center justify-between text-sm">
                           <span className="text-slate-700">{item.category}</span>
                           <div className="flex gap-4">
-                            <span className="text-blue-600 font-medium">{item.brandMentions} menções</span>
+                            <span className="text-blue-600 font-medium">{item.brandMentions.toFixed(1)} menções</span>
                             <span className="text-emerald-600 font-medium">{item.engagement.toFixed(0)} eng.</span>
                           </div>
                         </div>
@@ -675,7 +645,7 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                             <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
                             <YAxis dataKey="product" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={140} />
-                            <Tooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
+                            <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
                             <Bar dataKey="presence" name="Presença Concorrente" fill="#9333ea" radius={[0, 6, 6, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
@@ -699,7 +669,7 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                             <XAxis dataKey="stage" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                             <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                            <Tooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
+                            <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
                             <Bar dataKey="presence" name="Presença Concorrente" fill="#f97316" radius={[6, 6, 0, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
@@ -738,7 +708,7 @@ function EngagementConversionSection({ overview }: { overview: any }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                <Tooltip />
+                <RechartsTooltip />
                 <Legend />
                 <Bar dataKey="engagement" name="Taxa de Engajamento" fill="#10b981" />
                 <Bar dataKey="conversionPotential" name="Potencial de Conversão" fill="#f59e0b" />
@@ -771,10 +741,46 @@ function EngagementConversionSection({ overview }: { overview: any }) {
   )
 }
 
+// Label mappings for Portuguese
+const PRODUCT_LABELS: Record<string, string> = {
+  cartoes: 'Cartões',
+  credito: 'Crédito',
+  investimentos: 'Investimentos',
+  conta: 'Conta',
+  seguros: 'Seguros',
+  empresarial: 'Empresarial',
+  digital: 'Digital',
+  multiproduto: 'Multiproduto',
+}
+
+const FUNNEL_LABELS: Record<string, string> = {
+  consciencia: 'Consciência',
+  consideracao: 'Consideração',
+  decisao: 'Decisão',
+  pos_compra: 'Pós-Compra',
+}
+
+const QUESTION_LABELS: Record<string, string> = {
+  informacional: 'Informacional',
+  transacional: 'Transacional',
+  navegacional: 'Navegacional',
+  comparativa: 'Comparativa',
+}
+
 function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard; aggregations: any }) {
-  const byProduct = aggregations?.byProduct || []
-  const byFunnel = aggregations?.byFunnel || []
-  const byQuestion = aggregations?.byQuestionType || []
+  const byProduct = (aggregations?.byProduct || []).filter((item: any) => item.product_category)
+  const byFunnel = (aggregations?.byFunnel || []).filter((item: any) => item.funnel_stage)
+  const byQuestion = (aggregations?.byQuestionType || []).filter((item: any) => item.question_type)
+
+  // Prepare timeline data for Citation Rate graph
+  const timeline = useMemo(() => {
+    const timelineData = data.timeline || []
+    return timelineData.map((point: any) => ({
+      date: point.date,
+      observed: point.citation_rate_observed_avg || 0,
+      corrected: point.citation_rate_corrected_avg || 0,
+    }))
+  }, [data])
 
   return (
     <Card>
@@ -783,74 +789,99 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
         <CardDescription>Taxa de Citação (CR)</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Gráfico de linha temporal - placeholder */}
-        <div className="h-48 flex items-center justify-center border-2 border-dashed border-slate-200 rounded-lg">
-          <p className="text-sm text-slate-400">Gráfico de linha temporal (CR Observado vs CR Corrigido)</p>
+        {/* Gráfico de linha temporal */}
+        <div className="h-64">
+          {timeline.length ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={timeline} margin={{ top: 12, right: 20, bottom: 12, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
+                <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
+                <Legend />
+                <Bar dataKey="observed" name="CR Observado" fill="#3b82f6" />
+                <Bar dataKey="corrected" name="CR Corrigido" fill="#8b5cf6" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
+              Gráfico de linha temporal (CR Observado vs CR Corrigido)
+            </div>
+          )}
         </div>
 
         {/* Por Produto, Funil e Tipo */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Produto</h4>
-            {byProduct.slice(0, 5).map((item: any) => (
-              <div key={item.product_category} className="mb-2">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-slate-600 capitalize">{item.product_category}</span>
-                  <span className="font-semibold text-slate-900">
-                    {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                  </span>
+            {byProduct.length > 0 ? (
+              byProduct.slice(0, 5).map((item: any) => (
+                <div key={item.product_category} className="mb-2">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-slate-600">{PRODUCT_LABELS[item.product_category] || item.product_category}</span>
+                    <span className="font-semibold text-slate-900">
+                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500"
+                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-500"
-                    style={{ width: `${item.avg_citation_rate || 0}%` }}
-                  />
-                </div>
-                <span className="text-xs text-emerald-600">+12%</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+            )}
           </div>
 
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Estágio do Funil</h4>
-            {byFunnel.map((item: any) => (
-              <div key={item.funnel_stage} className="mb-2">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-slate-600 capitalize">{item.funnel_stage || 'Sem estágio'}</span>
-                  <span className="font-semibold text-slate-900">
-                    {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                  </span>
+            {byFunnel.length > 0 ? (
+              byFunnel.map((item: any) => (
+                <div key={item.funnel_stage} className="mb-2">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-slate-600">{FUNNEL_LABELS[item.funnel_stage] || item.funnel_stage}</span>
+                    <span className="font-semibold text-slate-900">
+                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500"
+                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-purple-500"
-                    style={{ width: `${item.avg_citation_rate || 0}%` }}
-                  />
-                </div>
-                <span className="text-xs text-emerald-600">+15%</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+            )}
           </div>
 
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Tipo de Pergunta</h4>
-            {byQuestion.slice(0, 4).map((item: any) => (
-              <div key={item.question_type} className="mb-2">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-slate-600 capitalize">{item.question_type || 'Sem tipo'}</span>
-                  <span className="font-semibold text-slate-900">
-                    {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                  </span>
+            {byQuestion.length > 0 ? (
+              byQuestion.slice(0, 4).map((item: any) => (
+                <div key={item.question_type} className="mb-2">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-slate-600">{QUESTION_LABELS[item.question_type] || item.question_type}</span>
+                    <span className="font-semibold text-slate-900">
+                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-orange-500"
+                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-orange-500"
-                    style={{ width: `${item.avg_citation_rate || 0}%` }}
-                  />
-                </div>
-                <span className="text-xs text-emerald-600">+3%</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+            )}
           </div>
         </div>
       </CardContent>
@@ -865,7 +896,14 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
   }, [data])
 
   const totalMentions = (data.positioning as any)?.total_mentions || 0
-  const correctionFactor = 10.1 // Mock
+
+  // Correction factor: difference between corrected and observed citation rates
+  // Note: requires citation_rate_corrected and citation_rate_observed from backend
+  const correctionFactor = useMemo(() => {
+    const citationKpi = (data.kpis || []).find((k: any) => k.label === 'Taxa de Citação')
+    // For now, using delta as proxy; ideally should be (corrected - observed) rates
+    return citationKpi?.delta != null ? Math.abs(citationKpi.delta) : null
+  }, [data])
 
   return (
     <Card>
@@ -886,7 +924,7 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                   <YAxis dataKey="brand" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
-                  <Tooltip />
+                  <RechartsTooltip />
                   <Bar dataKey="mentions" name="Menções" fill="#2563eb" radius={[0, 6, 6, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -912,9 +950,13 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Fator de Correção</p>
-                  <p className="text-2xl font-bold text-slate-900">+{correctionFactor.toFixed(1)}%</p>
-                  <p className="text-xs text-slate-500">Aumento na taxa de citação após correção</p>
+                  <p className="text-xs text-slate-500">Variação de Taxa de Citação</p>
+                  <p className="text-2xl font-bold text-slate-900">
+                    {correctionFactor != null ? `${correctionFactor > 0 ? '+' : ''}${correctionFactor.toFixed(1)}%` : '–'}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {correctionFactor != null ? 'Variação em relação ao período anterior' : 'Dados não disponíveis'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -956,6 +998,11 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
     })
   }, [data])
 
+  const hasSemanticScores = useMemo(() => {
+    const scores = ((data.geo_summary as any)?.semantic_scores || {}) as Record<string, number>
+    return Object.keys(scores).length > 0 && Object.values(scores).some(v => v > 0)
+  }, [data])
+
   const perceivedValueCategories = useMemo(() => {
     const categories = ((data.geo_summary as any)?.perceived_value_categories || []) as Array<{ label: string; value: number }>
     const palette = ['bg-blue-100 text-blue-700', 'bg-purple-100 text-purple-700', 'bg-emerald-100 text-emerald-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700']
@@ -968,12 +1015,7 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
       }))
     }
 
-    return [
-      { label: 'Inovação', value: 42, className: palette[0] },
-      { label: 'Tradição', value: 28, className: palette[1] },
-      { label: 'Atendimento', value: 18, className: palette[2] },
-      { label: 'Custo-Benefício', value: 12, className: palette[3] },
-    ]
+    return []
   }, [data])
 
   return (
@@ -1031,24 +1073,34 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
           </CardHeader>
           <CardContent className="space-y-6 pt-2">
             <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarMetrics} outerRadius={90}>
-                  <PolarGrid stroke="#e2e8f0" />
-                  <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 12, fill: '#475569' }} />
-                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} stroke="#cbd5f5" />
-                  <Radar dataKey="value" stroke="#6366f1" fill="#6366f1" fillOpacity={0.35} />
-                </RadarChart>
-              </ResponsiveContainer>
+              {hasSemanticScores ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadarChart data={radarMetrics} outerRadius={90}>
+                    <PolarGrid stroke="#e2e8f0" />
+                    <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 12, fill: '#475569' }} />
+                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} stroke="#cbd5f5" />
+                    <Radar dataKey="value" stroke="#6366f1" fill="#6366f1" fillOpacity={0.35} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
+                  Análise semântica não disponível para este período.
+                </div>
+              )}
             </div>
 
             <div>
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">Categorias de Valor Percebido</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {perceivedValueCategories.map((cat) => (
-                  <span key={`perceived-${cat.label}`} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${cat.className}`}>
-                    {cat.label} ({cat.value}%)
-                  </span>
-                ))}
+                {perceivedValueCategories.length > 0 ? (
+                  perceivedValueCategories.map((cat) => (
+                    <span key={`perceived-${cat.label}`} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${cat.className}`}>
+                      {cat.label} ({cat.value}%)
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500">Dados de categorias de valor não disponíveis para este período.</p>
+                )}
               </div>
             </div>
           </CardContent>

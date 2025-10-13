@@ -811,6 +811,12 @@ def process_semantic_insights(run_id: str) -> None:
         project = db.get(Project, run.project_id)
         project_name = project.name if project else None
 
+        # Fallback: se project_name for None/vazio, tentar usar um nome genérico
+        # Isso garante que GEO metrics sejam calculadas mesmo com dados incompletos
+        if not project_name and project:
+            project_name = f"Project_{run.project_id[:8]}"  # Fallback genérico
+            print(f"[SEMANTIC] ⚠️ Project name is None, using fallback: {project_name}")
+
         _log(db, run.id, "semantic_insights", "started", "Gemini semantic analysis")
 
         service = GeminiSemanticService()
@@ -871,11 +877,14 @@ def process_semantic_insights(run_id: str) -> None:
         engine = db.get(Engine, run.engine_id) if run.engine_id else None
         engine_name = engine.name.lower() if engine else ""
         is_llm = any(llm in engine_name for llm in ["chatgpt", "gemini", "perplexity", "claude", "gpt", "openai"])
-        
-        if is_llm and response_text and project_name:
+
+        # Calcular GEO para LLMs com response_text (project_name opcional com fallback)
+        if is_llm and response_text:
             try:
-                print(f"[GEO] Calculando métricas GEO para run {run_id}")
-                
+                # Garantir que temos um project_name válido
+                geo_project_name = project_name or (f"Project_{run.project_id[:8]}" if run.project_id else "Unknown")
+                print(f"[GEO] Calculando métricas GEO para run {run_id} (project: {geo_project_name})")
+
                 # Preparar citations para GEO
                 citations_for_geo = [
                     {
@@ -897,10 +906,10 @@ def process_semantic_insights(run_id: str) -> None:
                 
                 # Detectar nome da marca a partir dos domínios ou usar nome do projeto
                 # Ex: bb.com.br -> "Banco do Brasil" ou "BB"
-                brand_name = project_name
+                brand_name = geo_project_name  # Usar o nome seguro com fallback
                 brand_variations = []
-                
-                if project and project.domains:
+
+                if project and hasattr(project, 'domains') and project.domains:
                     # Tentar inferir nome da marca a partir do domínio principal
                     main_domain = project.domains[0].domain if project.domains else None
                     if main_domain:
@@ -913,10 +922,10 @@ def process_semantic_insights(run_id: str) -> None:
                             "bradesco.com.br": ("Bradesco", ["Bradesco"]),
                             "santander.com.br": ("Santander", ["Santander"]),
                         }
-                        
+
                         if domain_lower in brand_map:
                             brand_name, brand_variations = brand_map[domain_lower]
-                
+
                 # Calcular todas as métricas GEO
                 geo_metrics = calculate_all_geo_metrics(
                     response_text=response_text,
@@ -969,17 +978,17 @@ def process_semantic_insights(run_id: str) -> None:
         try:
             print(f"[CLASSIFICATION] Iniciando classificação Zero-Click para run {run_id}")
             _log(db, run.id, "classification", "started", "Gemini Zero-Click classification")
-            
+
             integrator = GeminiClassificationIntegrator(db=db)
             classification_result = integrator.classify_and_update_run_with_gemini(run_id, response_text)
-            
+
             if classification_result:
                 print(f"[CLASSIFICATION] Run {run_id} classificada: {classification_result.response_type.value}/{classification_result.brand_positioning.value} (confiança: {classification_result.confidence:.2f})")
                 _log(db, run.id, "classification", "ok", f"type={classification_result.response_type.value}, positioning={classification_result.brand_positioning.value}, confidence={classification_result.confidence:.2f}")
             else:
                 print(f"[CLASSIFICATION] Falha ao classificar run {run_id}")
                 _log(db, run.id, "classification", "fail", "Classification returned None")
-                
+
         except Exception as class_exc:
             print(f"[CLASSIFICATION] Erro ao classificar run {run_id}: {class_exc}")
             import traceback
@@ -987,7 +996,84 @@ def process_semantic_insights(run_id: str) -> None:
             _log(db, run.id, "classification", "fail", str(class_exc))
             # Não falhar o processo todo se classificação falhar
 
+        # === CLASSIFICAÇÃO GEO COM GEMINI (funnel, question_type, product_category) ===
+        try:
+            from app.services.geo_classifier import classify_run_with_gemini
+
+            print(f"[GEO_CLASSIFIER] Iniciando classificação GEO para run {run_id}")
+            _log(db, run.id, "geo_classifier", "started", "Gemini GEO classification")
+
+            classification = classify_run_with_gemini(run, db)
+
+            if classification:
+                run.funnel_stage = classification.get("funnel_stage")
+                run.question_type = classification.get("question_type")
+
+                # Se product_category não foi calculado pelo GEO metrics, usar do classificador
+                if not run.product_category:
+                    run.product_category = classification.get("product_category")
+
+                db.commit()
+
+                print(f"[GEO_CLASSIFIER] Run {run_id} classificada: funnel={run.funnel_stage}, type={run.question_type}, category={run.product_category}")
+                _log(db, run.id, "geo_classifier", "ok", f"funnel={run.funnel_stage}, type={run.question_type}, category={run.product_category}")
+            else:
+                _log(db, run.id, "geo_classifier", "skip", "No classification returned")
+
+        except Exception as clf_exc:
+            print(f"[GEO_CLASSIFIER] Erro ao classificar run {run_id}: {clf_exc}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "geo_classifier", "fail", str(clf_exc))
+            # Não falhar o processo todo se classificação falhar
+
+        # === ANÁLISE SEMÂNTICA GEO COM GEMINI (semantic_scores) ===
+        try:
+            from app.services.geo_semantic_analyzer import analyze_semantic_scores
+
+            print(f"[GEO_SEMANTIC] Iniciando análise semântica GEO para run {run_id}")
+            _log(db, run.id, "geo_semantic", "started", "Gemini semantic quality analysis")
+
+            semantic_scores = analyze_semantic_scores(run, db)
+
+            if semantic_scores and any(v is not None for v in semantic_scores.values()):
+                # Armazenar scores no RunSemanticInsight (adicionar ao payload existente)
+                insight = db.get(RunSemanticInsight, run_id)
+                if insight:
+                    payload = insight.payload or {}
+                    payload["semantic_scores"] = semantic_scores
+                    insight.payload = payload
+                    insight.updated_at = datetime.utcnow()
+                else:
+                    # Criar novo insight se não existir
+                    payload = {"semantic_scores": semantic_scores}
+                    insight = RunSemanticInsight(run_id=run_id, payload=payload)
+                    db.add(insight)
+
+                db.commit()
+
+                print(f"[GEO_SEMANTIC] Run {run_id} analisada: authority={semantic_scores.get('authority')}, relevance={semantic_scores.get('relevance')}")
+                _log(db, run.id, "geo_semantic", "ok", f"authority={semantic_scores.get('authority')}, relevance={semantic_scores.get('relevance')}, clarity={semantic_scores.get('clarity')}")
+            else:
+                _log(db, run.id, "geo_semantic", "skip", "No semantic scores returned")
+
+        except Exception as sem_exc:
+            print(f"[GEO_SEMANTIC] Erro ao analisar semanticamente run {run_id}: {sem_exc}")
+            import traceback
+            traceback.print_exc()
+            _log(db, run.id, "geo_semantic", "fail", str(sem_exc))
+            # Não falhar o processo todo se análise semântica falhar
+
+        # Refresh run object para garantir que temos a versão mais recente
+        # Isso é importante porque GeminiClassificationIntegrator pode ter atualizado o run
+        try:
+            db.refresh(run)
+            print(f"[DEBUG] Run object refreshed before commit")
+        except Exception as refresh_exc:
+            print(f"[DEBUG] Could not refresh run object: {refresh_exc}")
+
         db.commit()
+        print(f"[DEBUG] Final commit completed for run {run_id}")
         _log(db, run.id, "semantic_insights", "ok", f"entities={entities_count}, perception={primary_category}")
         _finalize_run(db, run, "Semantic insights completed")
 

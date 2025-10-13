@@ -311,7 +311,7 @@ class RunDetailOut(BaseModel):
     
     # Brand Presence
     brand_mention_count: Optional[int] = None
-    brand_first_mention_position: Optional[int] = None
+    brand_first_mention_position: Optional[float] = None  # Percentage, not int
     brand_mention_density: Optional[float] = None
     brand_prominence_score: Optional[float] = None
     

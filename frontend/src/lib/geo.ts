@@ -53,7 +53,16 @@ export type GeoDashboardState = {
   data: GeoDashboard | null
 }
 
-export function useGeoDashboard(projectId: string | undefined) {
+export type GeoDashboardFilters = {
+  subproject_id?: string
+  date_from?: string
+  date_to?: string
+  llm_model?: string
+  prompt_category?: string
+  prompt_text?: string
+}
+
+export function useGeoDashboard(projectId: string | undefined, filters?: GeoDashboardFilters) {
   const [state, setState] = useState<GeoDashboardState>({ loading: !!projectId, error: null, data: null })
 
   useEffect(() => {
@@ -65,7 +74,17 @@ export function useGeoDashboard(projectId: string | undefined) {
     let mounted = true
     setState((prev) => ({ ...prev, loading: true, error: null }))
 
-    getGeoDashboard(projectId)
+    // Convert filter values to API format
+    const apiFilters = filters ? {
+      subproject_id: filters.subproject_id !== 'all' ? filters.subproject_id : undefined,
+      date_from: filters.date_from,
+      date_to: filters.date_to,
+      llm_model: filters.llm_model !== 'all' ? filters.llm_model : undefined,
+      prompt_category: filters.prompt_category !== 'all' ? filters.prompt_category : undefined,
+      prompt_text: filters.prompt_text !== 'all' ? filters.prompt_text : undefined,
+    } : undefined
+
+    getGeoDashboard(projectId, apiFilters)
       .then((data) => {
         if (!mounted) return
         setState({ loading: false, error: null, data })
@@ -78,7 +97,7 @@ export function useGeoDashboard(projectId: string | undefined) {
     return () => {
       mounted = false
     }
-  }, [projectId])
+  }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text])
 
   const overview: GeoOverviewData | null = useMemo(() => {
     if (!state.data) return null
@@ -115,8 +134,8 @@ export function useGeoDashboard(projectId: string | undefined) {
     const timelineData = state.data.timeline || []
     const engagementTimeline = timelineData.map((point) => ({
       date: point.date,
-      engagement: point.engagement_score_avg ?? null,
-      conversionPotential: point.conversion_potential_score_avg ?? null,
+      engagement: point.engagement_score_avg ?? 0,
+      conversionPotential: point.conversion_potential_score_avg ?? 0,
     }))
 
     const brandTimeline = timelineData.map((point) => ({
@@ -172,10 +191,27 @@ export function useGeoAggregations(projectId: string | undefined, options: { day
     ])
       .then(([product, funnel, question]) => {
         if (!mounted) return
+
+        // Transform objects to arrays with category field included
+        const productArray = Object.entries(product || {}).map(([key, value]) => ({
+          ...value,
+          product_category: key
+        })) as GeoStatsByProductItem[]
+
+        const funnelArray = Object.entries(funnel || {}).map(([key, value]) => ({
+          ...value,
+          funnel_stage: key
+        })) as GeoStatsByFunnelItem[]
+
+        const questionArray = Object.entries(question || {}).map(([key, value]) => ({
+          ...value,
+          question_type: key
+        })) as GeoStatsByQuestionTypeItem[]
+
         setData({
-          byProduct: Object.values(product || {}) as GeoStatsByProductItem[],
-          byFunnel: Object.values(funnel || {}) as GeoStatsByFunnelItem[],
-          byQuestionType: Object.values(question || {}) as GeoStatsByQuestionTypeItem[],
+          byProduct: productArray,
+          byFunnel: funnelArray,
+          byQuestionType: questionArray,
         })
         setLoading(false)
       })
