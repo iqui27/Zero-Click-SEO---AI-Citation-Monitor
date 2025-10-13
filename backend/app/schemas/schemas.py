@@ -625,6 +625,8 @@ class GeoTimelinePoint(BaseModel):
     brand_mention_density_avg: Optional[float] = None
     engagement_score_avg: Optional[float] = None
     conversion_potential_score_avg: Optional[float] = None
+    citation_rate_observed_avg: Optional[float] = None
+    citation_rate_corrected_avg: Optional[float] = None
 
 
 class GeoSummary(BaseModel):
@@ -638,6 +640,7 @@ class GeoSummary(BaseModel):
     top_conversion_potential: Optional[str] = None
     competitor_mention_ratio_avg: Optional[float] = None
     cocitation_percentage: Optional[float] = None
+    semantic_scores: Optional[Dict[str, float]] = None
 
 
 class GeoDashboardOut(BaseModel):

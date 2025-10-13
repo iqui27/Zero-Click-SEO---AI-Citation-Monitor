@@ -8,14 +8,19 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
   PieChart,
   Pie,
   RadarChart,
   Radar,
+  RadialBarChart,
+  RadialBar,
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
   Label,
+  LabelList,
   Cell,
   CartesianGrid,
   Tooltip as RechartsTooltip,
@@ -445,27 +450,46 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
   const productPresence = useMemo(() => {
     const items = (aggregations?.byProduct || []) as Array<{
       product_category: string | null
-      avg_sov: number | null
+      avg_citation_rate?: number | null
+      avg_brand_mentions?: number | null
+      runs_count?: number | null
     }>
-    return items
-      .filter((item) => item.product_category)
+    
+    const result = items
+      .filter((item) => {
+        const hasCategory = !!item.product_category
+        const hasRate = item.avg_citation_rate != null && item.avg_citation_rate > 0
+        return hasCategory && hasRate
+      })
       .map((item) => ({
         product: item.product_category as string,
-        presence: item.avg_sov ?? 0,
+        presence: item.avg_citation_rate ?? 0,
       }))
+      .slice(0, 8)
+    
+    return result
   }, [aggregations])
 
   const funnelPresence = useMemo(() => {
     const items = (aggregations?.byFunnel || []) as Array<{
       funnel_stage: string | null
-      avg_sov: number | null
+      avg_citation_rate?: number | null
+      avg_brand_mentions?: number | null
+      runs_count?: number | null
     }>
-    return items
-      .filter((item) => item.funnel_stage)
+    
+    const result = items
+      .filter((item) => {
+        const hasStage = !!item.funnel_stage
+        const hasRate = item.avg_citation_rate != null && item.avg_citation_rate > 0
+        return hasStage && hasRate
+      })
       .map((item) => ({
         stage: item.funnel_stage as string,
-        presence: item.avg_sov ?? 0,
+        presence: item.avg_citation_rate ?? 0,
       }))
+    
+    return result
   }, [aggregations])
 
   return (
@@ -556,12 +580,12 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={cocitationByCompetitor}
-                        layout="horizontal"
-                        margin={{ top: 12, right: 20, bottom: 12, left: 60 }}
+                        layout="vertical"
+                        margin={{ top: 12, right: 20, bottom: 12, left: 120 }}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                        <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                        <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 'dataMax']} />
+                        <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={110} />
                         <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
                         <Bar dataKey="value" name="% de Menções" radius={[0, 6, 6, 0]}>
                           {cocitationByCompetitor.map((entry, index) => (
@@ -641,12 +665,16 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                     {productPresence.length ? (
                       <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={productPresence} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 120 }}>
+                          <BarChart data={productPresence} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 100 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                             <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                            <YAxis dataKey="product" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={140} />
+                            <YAxis dataKey="product" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
                             <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
-                            <Bar dataKey="presence" name="Presença Concorrente" fill="#9333ea" radius={[0, 6, 6, 0]} />
+                            <Bar dataKey="presence" name="Citation Rate" radius={[0, 6, 6, 0]}>
+                              {productPresence.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={`hsl(${(index * 360) / productPresence.length}, 70%, 50%)`} />
+                              ))}
+                            </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -665,12 +693,16 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
                     {funnelPresence.length ? (
                       <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={funnelPresence} margin={{ top: 12, right: 24, bottom: 32, left: 12 }}>
+                          <BarChart data={funnelPresence} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 100 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis dataKey="stage" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
+                            <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
+                            <YAxis dataKey="stage" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
                             <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
-                            <Bar dataKey="presence" name="Presença Concorrente" fill="#f97316" radius={[6, 6, 0, 0]} />
+                            <Bar dataKey="presence" name="Citation Rate" radius={[0, 6, 6, 0]}>
+                              {funnelPresence.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={`hsl(${20 + (index * 40)}, 85%, 55%)`} />
+                              ))}
+                            </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -689,7 +721,18 @@ function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard
 }
 
 function EngagementConversionSection({ overview }: { overview: any }) {
-  const timeline = overview?.timeline || []
+  const timelineRaw = overview?.timeline || []
+  
+  // Filter timeline data - data already comes transformed from overview
+  const timeline = useMemo(() => {
+    const filtered = timelineRaw.filter((point: any) => 
+      (point.engagement != null && point.engagement > 0) || 
+      (point.conversionPotential != null && point.conversionPotential > 0)
+    )
+    
+    console.log('[EngagementConversion] Raw:', timelineRaw.length, 'Filtered:', filtered.length, 'Data:', filtered)
+    return filtered
+  }, [timelineRaw])
   
   const conversationalTriggers = overview?.metrics?.conversationalTriggerAvg || 0
   const engagementScore = overview?.metrics?.engagementScoreAvg || 0
@@ -701,18 +744,55 @@ function EngagementConversionSection({ overview }: { overview: any }) {
         <CardTitle className="text-base">Engajamento & Potencial de Conversão</CardTitle>
       </CardHeader>
       <CardContent>
-        {timeline.length ? (
+        {timeline.length > 0 ? (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={timeline} margin={{ top: 12, right: 20, bottom: 12, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
+              <LineChart
+                data={timeline}
+                margin={{
+                  left: 12,
+                  right: 12,
+                  top: 12,
+                  bottom: 12,
+                }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  tick={{ fontSize: 11 }}
+                  stroke="#94a3b8"
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11 }}
+                  stroke="#94a3b8"
+                  domain={[0, 100]}
+                />
                 <RechartsTooltip />
                 <Legend />
-                <Bar dataKey="engagement" name="Taxa de Engajamento" fill="#10b981" />
-                <Bar dataKey="conversionPotential" name="Potencial de Conversão" fill="#f59e0b" />
-              </BarChart>
+                <Line
+                  dataKey="engagement"
+                  name="Taxa de Engajamento"
+                  type="monotone"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  dot={{ fill: "#10b981", r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+                <Line
+                  dataKey="conversionPotential"
+                  name="Potencial de Conversão"
+                  type="monotone"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={{ fill: "#f59e0b", r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (

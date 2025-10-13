@@ -517,27 +517,27 @@ def calculate_engagement_metrics(response_text: str) -> Dict[str, Any]:
         matches = re.findall(pattern, text_lower)
         trigger_count += len(matches)
     
-    # Calcular engagement score com escala contínua
+    # Calcular engagement score com escala contínua mais realista
     # 0 triggers = 0
-    # 1-3 triggers = 20-50 (progressivo)
-    # 4-8 triggers = 50-80 (progressivo)
-    # 9-15 triggers = 80-95 (progressivo)
-    # 16+ triggers = 95-100 (cap em 100)
+    # 1-5 triggers = 10-40 (baixo)
+    # 6-12 triggers = 40-70 (médio)
+    # 13-20 triggers = 70-90 (alto)
+    # 21+ triggers = 90-100 (excepcional)
 
     if trigger_count == 0:
         score = 0.0
-    elif trigger_count <= 3:
-        # 20 base + 10 por trigger
-        score = 20.0 + (trigger_count * 10.0)
-    elif trigger_count <= 8:
-        # 50 base + 6 por trigger adicional
-        score = 50.0 + ((trigger_count - 3) * 6.0)
-    elif trigger_count <= 15:
-        # 80 base + 2 por trigger adicional
-        score = 80.0 + ((trigger_count - 8) * 2.14)
+    elif trigger_count <= 5:
+        # 10 base + 6 por trigger
+        score = 10.0 + (trigger_count * 6.0)
+    elif trigger_count <= 12:
+        # 40 base + 4.3 por trigger adicional
+        score = 40.0 + ((trigger_count - 5) * 4.3)
+    elif trigger_count <= 20:
+        # 70 base + 2.5 por trigger adicional
+        score = 70.0 + ((trigger_count - 12) * 2.5)
     else:
-        # 95 base + 0.3 por trigger adicional (cap em 100)
-        score = min(100.0, 95.0 + ((trigger_count - 15) * 0.3))
+        # 90 base + 0.5 por trigger adicional (cap em 100)
+        score = min(100.0, 90.0 + ((trigger_count - 20) * 0.5))
     
     return {
         "conversational_trigger_count": int(trigger_count),

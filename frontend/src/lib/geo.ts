@@ -75,14 +75,18 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
     setState((prev) => ({ ...prev, loading: true, error: null }))
 
     // Convert filter values to API format
-    const apiFilters = filters ? {
-      subproject_id: filters.subproject_id !== 'all' ? filters.subproject_id : undefined,
-      date_from: filters.date_from,
-      date_to: filters.date_to,
-      llm_model: filters.llm_model !== 'all' ? filters.llm_model : undefined,
-      prompt_category: filters.prompt_category !== 'all' ? filters.prompt_category : undefined,
-      prompt_text: filters.prompt_text !== 'all' ? filters.prompt_text : undefined,
-    } : undefined
+    // Default to last 30 days if no date filter specified
+    const defaultDateFrom = new Date()
+    defaultDateFrom.setDate(defaultDateFrom.getDate() - 30)
+    
+    const apiFilters = {
+      subproject_id: filters?.subproject_id !== 'all' ? filters?.subproject_id : undefined,
+      date_from: filters?.date_from || defaultDateFrom.toISOString().split('T')[0],
+      date_to: filters?.date_to,
+      llm_model: filters?.llm_model !== 'all' ? filters?.llm_model : undefined,
+      prompt_category: filters?.prompt_category !== 'all' ? filters?.prompt_category : undefined,
+      prompt_text: filters?.prompt_text !== 'all' ? filters?.prompt_text : undefined,
+    }
 
     getGeoDashboard(projectId, apiFilters)
       .then((data) => {
