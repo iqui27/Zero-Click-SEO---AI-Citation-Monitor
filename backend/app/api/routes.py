@@ -5376,22 +5376,27 @@ def get_geo_dashboard_filters(
     
     # Get distinct prompts
     prompts_query = (
-        db.query(Prompt, func.count(Run.id).label('run_count'))
+        db.query(
+            Prompt.id,
+            Prompt.name,
+            Prompt.text,
+            func.count(Run.id).label('run_count')
+        )
         .join(PromptVersion, Prompt.id == PromptVersion.prompt_id)
         .join(Run, Run.prompt_version_id == PromptVersion.id)
         .filter(Run.project_id == project_id)
-        .group_by(Prompt.id)
+        .group_by(Prompt.id, Prompt.name, Prompt.text)
         .all()
     )
     
     prompts = [
         {
-            'value': prompt.id,
-            'label': prompt.name,
-            'text_preview': prompt.text[:100] + '...' if len(prompt.text) > 100 else prompt.text,
-            'run_count': run_count
+            'value': row[0],  # prompt_id
+            'label': row[1],  # prompt_name
+            'text_preview': row[2][:100] + '...' if len(row[2]) > 100 else row[2],  # prompt_text
+            'run_count': row[3]  # run_count
         }
-        for prompt, run_count in prompts_query
+        for row in prompts_query
     ]
     
     # Get distinct prompt categories (from prompt text/name patterns)
