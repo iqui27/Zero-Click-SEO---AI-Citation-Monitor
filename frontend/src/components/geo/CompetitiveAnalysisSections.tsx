@@ -65,12 +65,45 @@ function getBankColor(name: string, index: number): string {
   return DEFAULT_COLORS[index % DEFAULT_COLORS.length]
 }
 
+// Função para simplificar nomes de domínios
+function simplifyBankName(name: string): string {
+  // Remover .com.br, .gov.br, etc
+  const withoutDomain = name.replace(/\.(com|gov|net|org)\.(br|com)/gi, '')
+  
+  // Mapeamento de nomes simplificados
+  const nameMap: Record<string, string> = {
+    'bb': 'Banco do Brasil',
+    'bcb': 'BCB',
+    'nubank': 'Nubank',
+    'santander': 'Santander',
+    'itau': 'Itaú',
+    'bradesco': 'Bradesco',
+    'caixa': 'Caixa',
+    'inter': 'Inter',
+    'c6bank': 'C6 Bank',
+    'neon': 'Neon',
+    'picpay': 'Picpay',
+    'will': 'Will Bank',
+    'banco.bradesco': 'Bradesco',
+  }
+  
+  const lowerName = withoutDomain.toLowerCase()
+  for (const [key, value] of Object.entries(nameMap)) {
+    if (lowerName.includes(key)) {
+      return value
+    }
+  }
+  
+  return name
+}
+
 // Componente 1: Share of Voice
 export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
   const shareOfVoice = data.positioning?.share_of_voice || {}
   const pieData = useMemo(() => {
     return Object.entries(shareOfVoice).map(([name, value]) => ({
-      name,
+      name: simplifyBankName(name),
+      originalName: name,
       value: Number(value),
     }))
   }, [shareOfVoice])
@@ -112,10 +145,10 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
                     }, {} as ChartConfig),
                   [pieData]
                 )}
-                className="mx-auto h-[320px] w-full max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
+                className="mx-auto h-[380px] w-full max-w-[500px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-xs [&_.recharts-pie-label-text]:font-medium"
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart margin={{ top: 20, right: 80, bottom: 20, left: 80 }}>
                     <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                     <Pie
                       data={pieData}
