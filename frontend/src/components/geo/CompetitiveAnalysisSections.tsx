@@ -101,10 +101,18 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
             </CardHeader>
             <CardContent className="flex-1 pb-0">
               <ChartContainer
-                config={{
-                  count: { label: 'Menções', color: 'hsl(var(--chart-1))' },
-                }}
-                className="h-[280px] w-full ml-[-20px] max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
+                config={useMemo<ChartConfig>(
+                  () =>
+                    pieData.reduce((acc, item, index) => {
+                      acc[item.name] = {
+                        label: item.name,
+                        color: getBankColor(item.name, index),
+                      }
+                      return acc
+                    }, {} as ChartConfig),
+                  [pieData]
+                )}
+                className="mx-auto h-[320px] w-full max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
               >
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
