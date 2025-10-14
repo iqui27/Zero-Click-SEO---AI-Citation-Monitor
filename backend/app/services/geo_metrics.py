@@ -342,7 +342,7 @@ def calculate_citation_quality_score(
         ]
         
         # Janela de contexto: 200 chars ao redor da menção do domínio
-        if domain and domain in response_text.lower():
+        if domain and response_text and domain in response_text.lower():
             domain_pos = response_text.lower().find(domain.lower())
             start = max(0, domain_pos - 100)
             end = min(len(response_text), domain_pos + 100)

@@ -472,11 +472,12 @@ class GeoPanoramaCard(BaseModel):
 
 
 class GeoPanoramaChart(BaseModel):
-    """Panorama comparison chart data."""
-    bank: str
-    ai_overview_count: int
-    paa_count: int
-    kp_count: int
+    """Panorama comparison chart data - LLM metrics."""
+    model: str
+    runs: int
+    citations: int
+    our_citations: int
+    citation_rate: float
 
 
 class GeoPanorama(BaseModel):
@@ -641,6 +642,7 @@ class GeoSummary(BaseModel):
     competitor_mention_ratio_avg: Optional[float] = None
     cocitation_percentage: Optional[float] = None
     semantic_scores: Optional[Dict[str, float]] = None
+    perceived_value_categories: Optional[List[Dict[str, Any]]] = None
 
 
 class GeoDashboardOut(BaseModel):

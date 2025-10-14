@@ -245,6 +245,7 @@ export const updateSubproject = (
 export const deleteProject = (id: string) => http.delete(`/projects/${id}`).then(r => r.data)
 export const deleteSubproject = (id: string) => http.delete(`/subprojects/${id}`).then(r => r.data)
 export const deleteRun = (id: string) => http.delete(`/runs/${id}`).then(r => r.data)
+export const deleteProjectRuns = (projectId: string) => http.delete<{ deleted: number; message: string }>(`/projects/${projectId}/runs`).then(r => r.data)
 
 // ---------- Utils ----------
 export const getUrlTitle = (url: string) => http.get<{ title: string }>(`/utils/url-title`, { params: { url } }).then(r => r.data)

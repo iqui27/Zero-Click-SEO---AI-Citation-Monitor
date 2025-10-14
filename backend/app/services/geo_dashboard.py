@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, case, desc, text
+from sqlalchemy import func, and_, or_, case, desc, text, Date
 from collections import Counter, defaultdict
 import json
 import re
@@ -182,9 +182,13 @@ def compute_geo_dashboard(
         query = query.filter(Run.subproject_id == subproject_id)
 
     if date_from:
+        # Use func.date() - works on both SQLite and SQL Server
+        # SQLite: date(started_at)
+        # SQL Server: CONVERT(DATE, started_at)
         query = query.filter(func.date(Run.started_at) >= date_from)
 
     if date_to:
+        # Use func.date() - works on both SQLite and SQL Server
         query = query.filter(func.date(Run.started_at) <= date_to)
 
     if llm_model:
@@ -208,7 +212,7 @@ def compute_geo_dashboard(
     radar = _compute_radar(runs, bank_ids)
     positioning = _compute_positioning(db, run_ids, bank_ids, our_domains, our_label)
     keywords_entities = _compute_keywords_entities(db, run_ids)
-    panorama = _compute_panorama(runs, db, run_ids, bank_ids)
+    panorama = _compute_panorama(db, run_ids, runs)
     web_structure = _compute_web_structure(db, run_ids, bank_ids)
     alerts = _compute_alerts(runs)
     swot = _compute_swot(runs)
@@ -219,8 +223,26 @@ def compute_geo_dashboard(
     context_insights = _compute_context_insights(runs)
     exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)
 
-    # Add semantic_scores to geo_summary
+    # Add semantic_scores to geo_summary from radar dimensions
     semantic_scores = _aggregate_semantic_scores(db, run_ids)
+    if not semantic_scores and radar:
+        # Fallback: use radar dimensions as semantic scores
+        semantic_scores = {}
+        for dimension in radar[0].get("dimensions", []):
+            name = dimension.get("name", "").lower()
+            value = dimension.get("value", 0)
+            # Map dimension names to semantic score keys
+            key_map = {
+                "taxa de citação": "citation_rate",
+                "engajamento": "engagement",
+                "conversão": "conversion",
+                "autoridade": "authority",
+                "relevância": "relevance",
+                "clareza": "clarity"
+            }
+            key = key_map.get(name, name.replace(" ", "_"))
+            semantic_scores[key] = value
+    
     if semantic_scores:
         geo_summary["semantic_scores"] = semantic_scores
 
@@ -350,7 +372,9 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
         citation_rate = (sum(1 for run in runs_bucket if run.citations_count and run.citations_count > 0) / total_runs) * 100
         prominence_scores = [run.brand_prominence_score for run in runs_bucket if run.brand_prominence_score is not None]
         prominence_avg = sum(prominence_scores) / len(prominence_scores) if prominence_scores else 0.0
-        zero_click = (sum(1 for run in runs_bucket if run.ia_resources_detected and run.ia_resources_detected > 0) / total_runs) * 100
+        # Use zero_click_presence (LLM metric) instead of ia_resources_detected (SERP metric)
+        zero_click_scores = [run.zero_click_presence for run in runs_bucket if run.zero_click_presence is not None]
+        zero_click = sum(zero_click_scores) / len(zero_click_scores) if zero_click_scores else 0.0
 
         return {
             "brand_mentions": float(brand_mentions),
@@ -410,28 +434,26 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
 
 
 def _compute_radar(runs: List[Run], bank_ids: Optional[List[str]]) -> List[Dict[str, Any]]:
-    """Compute radar chart dimensions for selected banks."""
+    """Compute radar chart dimensions for LLM responses - simplified for GEO Dashboard."""
 
-    # For MVP: aggregate all runs (single bank view)
-    # TODO: Split by bank_ids when bank detection is implemented
-
-    im_seo_scores = [r.im_seo_score for r in runs if r.im_seo_score is not None]
-    im_seoia_scores = [r.im_seoia_score for r in runs if r.im_seoia_score is not None]
-    irzc_scores = [r.irzc_score for r in runs if r.irzc_score is not None]
-    eeat_scores = [r.eeat_score for r in runs if r.eeat_score is not None]
-    cwv_scores = [r.core_web_vitals_score for r in runs if r.core_web_vitals_score is not None]
-    ia_ready_scores = [r.ia_ready_score for r in runs if r.ia_ready_score is not None]
+    # GEO Dashboard metrics (LLM-focused, not SERP)
+    citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
+    engagement_scores = [r.engagement_score for r in runs if r.engagement_score is not None]
+    conversion_scores = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
+    authority_scores = [r.authority_score for r in runs if r.authority_score is not None]
+    relevance_scores = [r.relevance_score for r in runs if r.relevance_score is not None]
+    clarity_scores = [r.clarity_score for r in runs if r.clarity_score is not None]
 
     return [
         {
-            "bank": "Agregado",  # TODO: Split by actual banks
+            "bank": "Agregado",
             "dimensions": [
-                {"name": "IM-SEO", "value": sum(im_seo_scores) / len(im_seo_scores) if im_seo_scores else 0},
-                {"name": "IM-SEO/IA", "value": sum(im_seoia_scores) / len(im_seoia_scores) if im_seoia_scores else 0},
-                {"name": "IRZC", "value": sum(irzc_scores) / len(irzc_scores) if irzc_scores else 0},
-                {"name": "E-E-A-T", "value": sum(eeat_scores) / len(eeat_scores) if eeat_scores else 0},
-                {"name": "Core Web Vitals", "value": sum(cwv_scores) / len(cwv_scores) if cwv_scores else 0},
-                {"name": "IA Ready", "value": sum(ia_ready_scores) / len(ia_ready_scores) if ia_ready_scores else 0},
+                {"name": "Taxa de Citação", "value": sum(citation_rates) / len(citation_rates) if citation_rates else 0},
+                {"name": "Engajamento", "value": sum(engagement_scores) / len(engagement_scores) if engagement_scores else 0},
+                {"name": "Conversão", "value": sum(conversion_scores) / len(conversion_scores) if conversion_scores else 0},
+                {"name": "Autoridade", "value": sum(authority_scores) / len(authority_scores) if authority_scores else 0},
+                {"name": "Relevância", "value": sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0},
+                {"name": "Clareza", "value": sum(clarity_scores) / len(clarity_scores) if clarity_scores else 0},
             ]
         }
     ]
@@ -523,6 +545,7 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
     conversion_labels: List[str] = []
     competitor_ratios: List[float] = []
     runs_with_cocitation = 0
+    perceived_value_categories: List[str] = []
 
     total_runs = len(runs)
 
@@ -547,6 +570,8 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
             conversion_labels.append(run.conversion_potential)
         if run.competitor_mention_ratio is not None:
             competitor_ratios.append(run.competitor_mention_ratio)
+        if run.perceived_value_category:
+            perceived_value_categories.append(run.perceived_value_category)
 
         if run.cocitation_competitors:
             try:
@@ -607,6 +632,21 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
             "citation_rate_corrected_avg": _safe_avg(entry["citation_rate_corrected_sum"], entry["citation_rate_corrected_counts"]),
         })
 
+    # Aggregate perceived value categories
+    perceived_value_agg = []
+    if perceived_value_categories:
+        category_counts = Counter(perceived_value_categories)
+        total_categorized = sum(category_counts.values())
+        perceived_value_agg = [
+            {
+                "label": category,
+                "value": count,
+                "percentage": round((count / total_categorized) * 100, 1)
+            }
+            for category, count in category_counts.most_common()
+        ]
+        print(f"[DEBUG] perceived_value_categories: {perceived_value_agg}")
+    
     geo_summary = {
         "total_runs": total_runs,
         "brand_mention_density_avg": _safe_avg(sum(density_values), len(density_values)),
@@ -617,6 +657,7 @@ def _compute_geo_timeline_and_summary(runs: List[Run]) -> tuple[list[Dict[str, A
         "top_conversion_potential": _most_common(conversion_labels),
         "competitor_mention_ratio_avg": _safe_avg(sum(competitor_ratios), len(competitor_ratios)),
         "cocitation_percentage": round((runs_with_cocitation / total_runs) * 100, 2) if total_runs else 0.0,
+        "perceived_value_categories": perceived_value_agg if perceived_value_agg else None,
     }
 
     return timeline, geo_summary
@@ -869,41 +910,46 @@ def _compute_keywords_entities(db: Session, run_ids: List[str]) -> Dict[str, Any
     }
 
 
-def _compute_panorama(runs: List[Run], db: Session, run_ids: List[str], bank_ids: Optional[List[str]]) -> Dict[str, Any]:
-    """Compute panorama cards and comparison chart."""
+def _compute_panorama(db: Session, run_ids: List[str], runs: List[Run]) -> Dict[str, Any]:
+    """Compute panorama cards - LLM metrics only (no SERP features)."""
 
-    # Calculate deltas
-    im_seo_scores = [r.im_seo_score for r in runs if r.im_seo_score is not None]
-    im_seoia_scores = [r.im_seoia_score for r in runs if r.im_seoia_score is not None]
-
-    avg_im_seo = sum(im_seo_scores) / len(im_seo_scores) if im_seo_scores else 0
-    avg_im_seoia = sum(im_seoia_scores) / len(im_seoia_scores) if im_seoia_scores else 0
-    delta = avg_im_seoia - avg_im_seo
-
-    # Count AI Overview, PAA, KP occurrences
-    serp_features = db.query(SerpFeature).filter(SerpFeature.run_id.in_(run_ids)).all()
-
-    ai_overview_count = sum(1 for sf in serp_features if sf.has_ai_overview)
-    paa_count = sum(1 for sf in serp_features if sf.has_paa)
-    kp_count = sum(1 for sf in serp_features if sf.has_knowledge_panel)
+    # LLM-specific metrics
+    avg_citation_rate = sum(r.citation_rate_observed or 0 for r in runs) / len(runs) if runs else 0
+    avg_engagement = sum(r.engagement_score or 0 for r in runs) / len(runs) if runs else 0
+    avg_conversion = sum(r.conversion_potential_score or 0 for r in runs) / len(runs) if runs else 0
+    
+    # Count citations
+    total_citations = sum(r.citations_count or 0 for r in runs)
+    our_citations = sum(r.our_citations_count or 0 for r in runs)
 
     cards = [
-        {"label": "IM-SEO/IA vs IM-SEO", "value": round(delta, 2), "delta": round(delta, 2), "supporting": f"IM-SEO: {round(avg_im_seo, 1)}, IM-SEO/IA: {round(avg_im_seoia, 1)}"},
         {"label": "Total Runs", "value": len(runs)},
-        {"label": "AI Overview", "value": ai_overview_count},
-        {"label": "PAA", "value": paa_count},
-        {"label": "Knowledge Panel", "value": kp_count},
+        {"label": "Taxa de Citação Média", "value": round(avg_citation_rate, 1), "unit": "%"},
+        {"label": "Total de Citações", "value": total_citations},
+        {"label": "Nossas Citações", "value": our_citations},
+        {"label": "Engajamento Médio", "value": round(avg_engagement, 1)},
+        {"label": "Conversão Média", "value": round(avg_conversion, 1)},
     ]
 
-    # Chart data (placeholder - should be per bank)
-    chart = [
-        {
-            "bank": "Agregado",
-            "ai_overview_count": ai_overview_count,
-            "paa_count": paa_count,
-            "kp_count": kp_count,
-        }
-    ]
+    # Chart data by LLM model
+    chart = []
+    models = {}
+    for run in runs:
+        model = run.model_name or "Unknown"
+        if model not in models:
+            models[model] = {"runs": 0, "citations": 0, "our_citations": 0}
+        models[model]["runs"] += 1
+        models[model]["citations"] += run.citations_count or 0
+        models[model]["our_citations"] += run.our_citations_count or 0
+    
+    for model, data in models.items():
+        chart.append({
+            "model": model,
+            "runs": data["runs"],
+            "citations": data["citations"],
+            "our_citations": data["our_citations"],
+            "citation_rate": round((data["our_citations"] / data["citations"] * 100) if data["citations"] > 0 else 0, 1)
+        })
 
     return {
         "cards": cards,
@@ -922,10 +968,16 @@ def _compute_web_structure(db: Session, run_ids: List[str], bank_ids: Optional[L
     citation_urls = [c.url for c in citations if c.url]
     url_metadata_map = {}
     if citation_urls:
-        url_metadata_list = db.query(UrlMetadata).filter(
-            UrlMetadata.url.in_(citation_urls),
-            UrlMetadata.status == "success"
-        ).all()
+        # SQL Server has a limit of ~2100 parameters, so batch the queries
+        batch_size = 2000
+        url_metadata_list = []
+        for i in range(0, len(citation_urls), batch_size):
+            batch = citation_urls[i:i + batch_size]
+            batch_results = db.query(UrlMetadata).filter(
+                UrlMetadata.url.in_(batch),
+                UrlMetadata.status == "success"
+            ).all()
+            url_metadata_list.extend(batch_results)
         url_metadata_map = {m.url: m for m in url_metadata_list}
 
     aggregated: Dict[str, Dict[str, Any]] = {}
@@ -1162,12 +1214,17 @@ def _compute_alerts(runs: List[Run]) -> List[Dict[str, Any]]:
 
 
 def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
-    """Generate SWOT analysis from aggregated metrics."""
+    """Generate SWOT analysis from LLM metrics."""
 
-    # Calculate averages
-    avg_eeat = sum(r.eeat_score for r in runs if r.eeat_score) / len([r for r in runs if r.eeat_score]) if any(r.eeat_score for r in runs) else 0
-    avg_ia_ready = sum(r.ia_ready_score for r in runs if r.ia_ready_score) / len([r for r in runs if r.ia_ready_score]) if any(r.ia_ready_score for r in runs) else 0
-    dcr_rate = sum(1 for r in runs if r.dcr_flag) / len(runs) if runs else 0
+    # Calculate LLM-specific averages
+    avg_citation_rate = sum(r.citation_rate_observed or 0 for r in runs) / len(runs) if runs else 0
+    avg_engagement = sum(r.engagement_score or 0 for r in runs) / len(runs) if runs else 0
+    avg_conversion = sum(r.conversion_potential_score or 0 for r in runs) / len(runs) if runs else 0
+    
+    # Citation metrics
+    total_citations = sum(r.citations_count or 0 for r in runs)
+    our_citations = sum(r.our_citations_count or 0 for r in runs)
+    citation_presence = (our_citations / total_citations * 100) if total_citations > 0 else 0
 
     strengths = []
     weaknesses = []
@@ -1175,36 +1232,34 @@ def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
     threats = []
 
     # Strengths
-    if avg_eeat >= 60:
-        strengths.append(f"E-E-A-T consistente (média {round(avg_eeat, 1)})")
-    if dcr_rate >= 0.4:
-        strengths.append(f"Boa presença em citações ({round(dcr_rate*100, 1)}% DCR)")
-    if avg_ia_ready >= 65:
-        strengths.append(f"Bases IA-Ready estruturadas (score {round(avg_ia_ready, 1)})")
-    positive_irzc = sum(1 for r in runs if r.irzc_score is not None and r.irzc_score < 40)
-    if runs and positive_irzc / len(runs) >= 0.4:
-        strengths.append("Baixo risco de experiências zero-click")
-    high_im_seo = [r for r in runs if r.im_seo_score is not None and r.im_seo_score >= 70]
-    if high_im_seo:
-        strengths.append(f"{len(high_im_seo)} runs com IM-SEO ≥ 70")
+    if avg_citation_rate >= 20:
+        strengths.append(f"Boa taxa de citação ({round(avg_citation_rate, 1)}%)")
+    if citation_presence >= 30:
+        strengths.append(f"Presença forte nas citações ({round(citation_presence, 1)}%)")
+    if avg_engagement >= 60:
+        strengths.append(f"Alto engajamento nas respostas ({round(avg_engagement, 1)})")
+    if avg_conversion >= 50:
+        strengths.append(f"Bom potencial de conversão ({round(avg_conversion, 1)})")
 
     # Weaknesses
-    if avg_eeat < 50:
-        weaknesses.append(f"E-E-A-T necessita melhorias (média {round(avg_eeat, 1)})")
-    if dcr_rate < 0.3:
-        weaknesses.append(f"Baixa presença em citações ({round(dcr_rate*100, 1)}% DCR)")
+    if avg_citation_rate < 10:
+        weaknesses.append(f"Taxa de citação baixa ({round(avg_citation_rate, 1)}%)")
+    if citation_presence < 15:
+        weaknesses.append(f"Presença fraca nas citações ({round(citation_presence, 1)}%)")
+    if avg_engagement < 40:
+        weaknesses.append(f"Engajamento baixo ({round(avg_engagement, 1)})")
 
     # Opportunities
-    if avg_ia_ready < 60:
-        opportunities.append("Potencial de otimização para blocos IA-Ready")
-
-    high_irzc = sum(1 for r in runs if r.irzc_score and r.irzc_score > 70) / len(runs) if runs else 0
-    if high_irzc > 0.3:
-        opportunities.append(f"Otimização para reduzir zero-click ({round(high_irzc*100, 1)}% alto IRZC)")
+    if avg_citation_rate < 30:
+        opportunities.append("Potencial para aumentar presença em citações LLM")
+    if avg_conversion < 60:
+        opportunities.append("Oportunidade de otimizar conteúdo para conversão")
 
     # Threats
-    if avg_eeat < 40:
-        threats.append("Risco de perda de visibilidade por baixo E-E-A-T")
+    if avg_citation_rate < 5:
+        threats.append("Risco de invisibilidade em respostas de LLMs")
+    if citation_presence < 10:
+        threats.append("Competidores dominando as citações")
 
     return {
         "strengths": strengths,

@@ -4325,6 +4325,39 @@ def project_stats(project_id: str, db: Session = Depends(get_db)):
     return {"subprojects": int(sp_count), "runs": int(run_count)}
 
 
+@api_router.delete("/projects/{project_id}/runs")
+def delete_project_runs(project_id: str, db: Session = Depends(get_db)):
+    """Deleta todas as runs de um projeto"""
+    from app.models.models import RunEvent, Citation, RunSemanticInsight, Evidence
+    
+    # Verificar se o projeto existe
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    
+    # Buscar todas as runs do projeto
+    run_ids = [r.id for r in db.query(Run.id).filter(Run.project_id == project_id).all()]
+    
+    if not run_ids:
+        return {"deleted": 0, "message": "Nenhuma run encontrada para este projeto"}
+    
+    # Deletar dados relacionados (respeitando foreign keys)
+    db.query(RunEvent).filter(RunEvent.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Citation).filter(Citation.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(RunSemanticInsight).filter(RunSemanticInsight.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Evidence).filter(Evidence.run_id.in_(run_ids)).delete(synchronize_session=False)
+    
+    # Deletar as runs
+    deleted_count = db.query(Run).filter(Run.project_id == project_id).delete(synchronize_session=False)
+    
+    db.commit()
+    
+    return {
+        "deleted": deleted_count,
+        "message": f"{deleted_count} run(s) deletada(s) com sucesso"
+    }
+
+
 # ============================================================================
 # CLASSIFICATION ENDPOINTS
 # ============================================================================

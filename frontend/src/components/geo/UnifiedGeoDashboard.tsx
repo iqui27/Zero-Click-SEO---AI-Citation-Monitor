@@ -1,9 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../ui/card'
 import { Badge } from '../ui/badge'
+import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { ShareOfVoiceSection, CocitationSection, ContextSection } from './CompetitiveAnalysisSections'
+import { toast } from 'sonner'
 import {
   ResponsiveContainer,
   BarChart,
@@ -27,11 +29,13 @@ import {
   XAxis,
   YAxis,
   Legend,
+  ComposedChart,
 } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../ui/chart'
-import { TrendingUp, TrendingDown, Minus, ExternalLink } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ExternalLink, Trash2 } from 'lucide-react'
 import { useGeoDashboard, useGeoAggregations, type GeoDashboardFilters } from '../../lib/geo'
 import type { GeoDashboard } from '../../lib/api'
+import { deleteProjectRuns } from '../../lib/api'
 
 export type UnifiedGeoDashboardProps = {
   projectId: string
@@ -143,6 +147,21 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
     setFilters((prev) => ({ ...prev, [key]: value === 'all' || !value ? undefined : value }))
   }
 
+  const handleDeleteAllRuns = async () => {
+    if (!confirm('⚠️ ATENÇÃO: Isso irá deletar TODAS as runs deste projeto. Esta ação não pode ser desfeita. Deseja continuar?')) {
+      return
+    }
+
+    try {
+      const result = await deleteProjectRuns(projectId)
+      toast.success(result.message || `${result.deleted} run(s) deletada(s)`)
+      // Recarregar dados
+      window.location.reload()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Erro ao deletar runs')
+    }
+  }
+
   const filterConfigs = [
     {
       key: 'llm_model' as keyof GeoDashboardFilters,
@@ -181,6 +200,15 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
             <h1 className="text-2xl font-semibold text-slate-900">Dashboard GEO</h1>
             <p className="text-sm text-slate-500 mt-1">Análise de presença em motores de busca generativos</p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDeleteAllRuns}
+            className="gap-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            <Trash2 className="h-4 w-4" />
+            Apagar Todas as Runs
+          </Button>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -208,10 +236,17 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       {/* Big Numbers */}
       <BigNumbersSection data={data} overview={overview} />
 
-      {/* Presença da Marca + Análise Competitiva */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BrandPresenceSection data={data} overview={overview} />
-        <CompetitiveAnalysisSection data={data} aggregations={aggregations.data} />
+      {/* Presença da Marca */}
+      <BrandPresenceSection data={data} overview={overview} />
+
+      {/* Análise Competitiva - 3 Componentes Separados */}
+      <div className="space-y-6">
+        <h2 className="text-2xl font-semibold text-slate-900">Análise Competitiva</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <ShareOfVoiceSection data={data} />
+          <CocitationSection data={data} />
+          <ContextSection data={data} aggregations={aggregations.data} />
+        </div>
       </div>
 
       {/* Engajamento & Potencial de Conversão */}
@@ -395,330 +430,6 @@ function MetricPanel({ title, primary, secondary }: MetricPanelProps) {
   )
 }
 
-function CompetitiveAnalysisSection({ data, aggregations }: { data: GeoDashboard; aggregations: any }) {
-  const shareOfVoice = data.positioning?.share_of_voice || {}
-  const pieData = useMemo(() => {
-    return Object.entries(shareOfVoice).map(([name, value]) => ({
-      name,
-      value: Number(value),
-    }))
-  }, [shareOfVoice])
-
-  const cocitationPercentage = data.geo_summary?.cocitation_percentage || 0
-  const competitiveRatio = useMemo(() => {
-    const totalMentions = (data.positioning as any)?.total_mentions || 0
-    const ourBrand = Object.keys(shareOfVoice)[0] || ''
-    const ourMentions = shareOfVoice[ourBrand] || 0
-    if (totalMentions === 0) return 0
-    return ourMentions / 100
-  }, [data, shareOfVoice])
-
-  // Derive cocitation data from brand_ranking
-  const cocitationByCompetitor = useMemo(() => {
-    const ranking = data.positioning?.brand_ranking || []
-    const totalMentions = (data.positioning as any)?.total_mentions || 1
-
-    // Skip first item (our brand) and take competitors
-    return ranking
-      .slice(1, 11)
-      .map((item, index) => ({
-        name: item.brand,
-        value: (item.mentions / totalMentions) * 100,
-        color: COLORS[index % COLORS.length],
-      }))
-      .filter(item => item.value > 0)
-  }, [data])
-
-  // Derive context data from aggregations
-  const contextData = useMemo(() => {
-    const byProduct = (aggregations?.byProduct || []) as Array<{
-      product_category: string | null
-      avg_brand_mentions: number | null
-      avg_engagement_score: number | null
-    }>
-
-    return byProduct
-      .filter((item) => item.product_category)
-      .map((item) => ({
-        category: item.product_category as string,
-        brandMentions: item.avg_brand_mentions ?? 0,
-        engagement: item.avg_engagement_score ?? 0,
-      }))
-      .slice(0, 8)
-  }, [aggregations])
-
-  const productPresence = useMemo(() => {
-    const items = (aggregations?.byProduct || []) as Array<{
-      product_category: string | null
-      avg_citation_rate?: number | null
-      avg_brand_mentions?: number | null
-      runs_count?: number | null
-    }>
-    
-    const result = items
-      .filter((item) => {
-        const hasCategory = !!item.product_category
-        const hasRate = item.avg_citation_rate != null && item.avg_citation_rate > 0
-        return hasCategory && hasRate
-      })
-      .map((item) => ({
-        product: item.product_category as string,
-        presence: item.avg_citation_rate ?? 0,
-      }))
-      .slice(0, 8)
-    
-    return result
-  }, [aggregations])
-
-  const funnelPresence = useMemo(() => {
-    const items = (aggregations?.byFunnel || []) as Array<{
-      funnel_stage: string | null
-      avg_citation_rate?: number | null
-      avg_brand_mentions?: number | null
-      runs_count?: number | null
-    }>
-    
-    const result = items
-      .filter((item) => {
-        const hasStage = !!item.funnel_stage
-        const hasRate = item.avg_citation_rate != null && item.avg_citation_rate > 0
-        return hasStage && hasRate
-      })
-      .map((item) => ({
-        stage: item.funnel_stage as string,
-        presence: item.avg_citation_rate ?? 0,
-      }))
-    
-    return result
-  }, [aggregations])
-
-  return (
-    <Tabs defaultValue="sov" className="w-full">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Análise Competitiva</CardTitle>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="sov">Share of Voice</TabsTrigger>
-            <TabsTrigger value="cocitation">Co-citação</TabsTrigger>
-            <TabsTrigger value="context">Contexto</TabsTrigger>
-          </TabsList>
-        </CardHeader>
-        <CardContent>
-          <TabsContent value="sov">
-            <div className="space-y-4">
-              <p className="text-sm text-slate-600">Distribuição de menções por marca no período analisado</p>
-              {pieData.length ? (
-                <Card className="flex flex-col">
-                  <CardHeader className="items-center pb-0">
-                    <CardTitle className="text-base">Share of Voice</CardTitle>
-                    <CardDescription className="text-xs text-slate-500">Participação por marca</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex-1 pb-0">
-                    <ChartContainer
-                      config={useMemo<ChartConfig>(
-                        () =>
-                          pieData.reduce((acc, item, index) => {
-                            acc[item.name] = {
-                              label: item.name,
-                              color: COLORS[index % COLORS.length],
-                            }
-                            return acc
-                          }, {} as ChartConfig),
-                        [pieData]
-                      )}
-                      className="mx-auto h-[320px] w-full max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
-                    >
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                          <Pie
-                            data={pieData}
-                            dataKey="value"
-                            nameKey="name"
-                            labelLine={false}
-                            label={({ name, value }) =>
-                              `${name ?? ''} ${typeof value === 'number' ? value.toFixed(1) : value}%`
-                            }
-                          >
-                            {pieData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </ChartContainer>
-                  </CardContent>
-                  <CardFooter className="flex-col gap-1.5 text-xs text-slate-500">
-                    <span>Legenda atualizada com cores padronizadas</span>
-                    <span>Valores representam % de menções no período</span>
-                  </CardFooter>
-                </Card>
-              ) : (
-                <p className="text-sm text-slate-500">Sem dados disponíveis.</p>
-              )}
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs text-slate-500">Ratio de Menção Competitiva</p>
-                  <p className="text-2xl font-bold text-slate-900">{competitiveRatio.toFixed(2)}</p>
-                  <p className="text-xs text-slate-500">nossa / total</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs text-slate-500">Co-Citações</p>
-                  <p className="text-2xl font-bold text-slate-900">{cocitationPercentage.toFixed(0)}%</p>
-                  <p className="text-xs text-slate-500">das respostas incluem concorrentes</p>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="cocitation">
-            <div className="space-y-6">
-              {cocitationByCompetitor.length ? (
-                <>
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={cocitationByCompetitor}
-                        layout="vertical"
-                        margin={{ top: 12, right: 20, bottom: 12, left: 120 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 'dataMax']} />
-                        <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={110} />
-                        <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
-                        <Bar dataKey="value" name="% de Menções" radius={[0, 6, 6, 0]}>
-                          {cocitationByCompetitor.map((entry, index) => (
-                            <Cell key={`cocitation-${entry.name}-${index}`} fill={entry.color} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="rounded-lg bg-slate-50 p-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Top Concorrentes Mencionados</h4>
-                    <ul className="space-y-2 text-sm text-slate-700">
-                      {cocitationByCompetitor.slice(0, 5).map((item, index) => (
-                        <li key={`cocitation-list-${item.name}-${index}`} className="flex items-start gap-2">
-                          <span style={{ color: item.color }}>•</span>
-                          <span><strong>{item.name}</strong> representa <strong>{item.value.toFixed(1)}%</strong> das menções</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              ) : (
-                <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
-                  Sem dados de concorrentes disponíveis para o período selecionado.
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="context">
-            <div className="space-y-6">
-              {contextData.length ? (
-                <>
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={contextData} margin={{ top: 12, right: 20, bottom: 60, left: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="category" stroke="#94a3b8" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" />
-                        <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                        <RechartsTooltip />
-                        <Legend />
-                        <Bar dataKey="brandMentions" name="Menções de Marca" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="engagement" name="Engajamento Médio" fill="#10b981" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="rounded-lg bg-slate-50 p-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Performance por Categoria de Produto</h4>
-                    <div className="space-y-2">
-                      {contextData.slice(0, 5).map((item, index) => (
-                        <div key={index} className="flex items-center justify-between text-sm">
-                          <span className="text-slate-700">{item.category}</span>
-                          <div className="flex gap-4">
-                            <span className="text-blue-600 font-medium">{item.brandMentions.toFixed(1)} menções</span>
-                            <span className="text-emerald-600 font-medium">{item.engagement.toFixed(0)} eng.</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
-                  Sem dados de contexto disponíveis para o período selecionado.
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm font-semibold text-slate-900">Presença Competitiva por Produto</CardTitle>
-                    <CardDescription>% de respostas com concorrentes por categoria</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {productPresence.length ? (
-                      <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={productPresence} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 100 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                            <YAxis dataKey="product" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
-                            <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
-                            <Bar dataKey="presence" name="Citation Rate" radius={[0, 6, 6, 0]}>
-                              {productPresence.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={`hsl(${(index * 360) / productPresence.length}, 70%, 50%)`} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-500">Sem dados competitivos por produto.</p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm font-semibold text-slate-900">Presença por Etapa do Funil</CardTitle>
-                    <CardDescription>% de respostas com concorrentes por estágio</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {funnelPresence.length ? (
-                      <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={funnelPresence} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 100 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                            <YAxis dataKey="stage" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
-                            <RechartsTooltip formatter={(value: number) => `${value.toFixed(1)}%`} />
-                            <Bar dataKey="presence" name="Citation Rate" radius={[0, 6, 6, 0]}>
-                              {funnelPresence.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={`hsl(${20 + (index * 40)}, 85%, 55%)`} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-500">Sem dados competitivos por funil.</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-          </TabsContent>
-        </CardContent>
-      </Card>
-    </Tabs>
-  )
-}
 
 function EngagementConversionSection({ overview }: { overview: any }) {
   const timelineRaw = overview?.timeline || []
@@ -869,19 +580,56 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
         <CardDescription>Taxa de Citação (CR)</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Gráfico de linha temporal */}
-        <div className="h-64">
+        {/* Gráfico de linha temporal - Barras + Linha */}
+        <div className="h-80">
           {timeline.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={timeline} margin={{ top: 12, right: 20, bottom: 12, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
-                <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
-                <Legend />
-                <Bar dataKey="observed" name="CR Observado" fill="#3b82f6" />
-                <Bar dataKey="corrected" name="CR Corrigido" fill="#8b5cf6" />
-              </BarChart>
+              <ComposedChart data={timeline} margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis 
+                  dataKey="date" 
+                  stroke="#94a3b8" 
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis 
+                  stroke="#94a3b8" 
+                  tick={{ fontSize: 11 }} 
+                  domain={[0, 100]}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <RechartsTooltip 
+                  formatter={(value: any) => `${value.toFixed(1)}%`}
+                  contentStyle={{ 
+                    backgroundColor: 'white', 
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Legend 
+                  wrapperStyle={{ fontSize: '12px' }}
+                  iconType="circle"
+                />
+                <Bar 
+                  dataKey="observed" 
+                  name="CR Observado" 
+                  fill="#3b82f6"
+                  radius={[4, 4, 0, 0]}
+                  barSize={40}
+                />
+                <Line 
+                  type="monotone"
+                  dataKey="corrected" 
+                  name="CR Corrigido" 
+                  stroke="#8b5cf6"
+                  strokeWidth={2.5}
+                  dot={{ fill: '#8b5cf6', r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </ComposedChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
