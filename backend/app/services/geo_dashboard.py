@@ -184,12 +184,23 @@ def compute_geo_dashboard(
         query = query.filter(Run.subproject_id == subproject_id)
 
     if date_from:
-        # Use func.cast() - works on both SQLite and Azure SQL Server
-        query = query.filter(func.cast(Run.started_at, Date) >= date_from)
+        # Use different functions based on database dialect
+        # SQLite: date() function works
+        # SQL Server: CAST AS DATE works (func.date() is not recognized)
+        dialect_name = db.bind.dialect.name
+        if dialect_name == 'mssql':
+            # SQL Server: use CAST
+            query = query.filter(func.cast(Run.started_at, Date) >= date_from)
+        else:
+            # SQLite and others: use date()
+            query = query.filter(func.date(Run.started_at) >= date_from)
 
     if date_to:
-        # Use func.cast() - works on both SQLite and Azure SQL Server
-        query = query.filter(func.cast(Run.started_at, Date) <= date_to)
+        dialect_name = db.bind.dialect.name
+        if dialect_name == 'mssql':
+            query = query.filter(func.cast(Run.started_at, Date) <= date_to)
+        else:
+            query = query.filter(func.date(Run.started_at) <= date_to)
 
     if llm_model:
         query = query.filter(Run.model_name.ilike(f"%{llm_model}%"))
