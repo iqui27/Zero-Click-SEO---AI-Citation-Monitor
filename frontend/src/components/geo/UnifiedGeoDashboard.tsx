@@ -348,7 +348,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     {
       title: 'Posição Média da Citação',
       value: avgCitationPositionNormalized != null ? formatNumber(avgCitationPositionNormalized) : '–',
-      subtitle: <span className="text-xs text-slate-500">% da resposta</span>,
+      subtitle: <span className="text-xs text-slate-500">posição normalizada</span>,
       delta: null,
       trend: null,
     },

@@ -17,7 +17,53 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import type { GeoDashboard } from '../../lib/api'
 import { Grid3x3, TrendingUp, MessageSquare } from 'lucide-react'
 
-const COLORS = ['#2563eb', '#f97316', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#6366f1']
+// Mapeamento de cores por banco
+const BANK_COLORS: Record<string, string> = {
+  'Banco do Brasil': '#FCFC30',
+  'bb.com.br': '#FCFC30',
+  'Santander': '#f70000',
+  'santander.com.br': '#f70000',
+  'Itaú': '#db4900',
+  'Itau': '#db4900',
+  'itau.com.br': '#db4900',
+  'Nu': '#a77bca',
+  'Nubank': '#a77bca',
+  'nubank.com.br': '#a77bca',
+  'Inter': '#ffaa00',
+  'inter.com.br': '#ffaa00',
+  'Bradesco': '#8a0000',
+  'bradesco.com.br': '#8a0000',
+  'C6': '#1a1a1a',
+  'C6 Bank': '#1a1a1a',
+  'c6bank.com.br': '#1a1a1a',
+  'Caixa': '#0582ca',
+  'caixa.gov.br': '#0582ca',
+  'Neon': '#03bfe0',
+  'neon.com.br': '#03bfe0',
+  'Will': '#fffa00',
+  'Will Bank': '#fffa00',
+  'Picpay': '#11c76f',
+  'picpay.com': '#11c76f',
+}
+
+const DEFAULT_COLORS = ['#2563eb', '#f97316', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#6366f1']
+
+// Função para obter cor do banco
+function getBankColor(name: string, index: number): string {
+  // Tentar match exato
+  if (BANK_COLORS[name]) return BANK_COLORS[name]
+  
+  // Tentar match parcial (case insensitive)
+  const lowerName = name.toLowerCase()
+  for (const [key, color] of Object.entries(BANK_COLORS)) {
+    if (lowerName.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerName)) {
+      return color
+    }
+  }
+  
+  // Fallback para cor padrão
+  return DEFAULT_COLORS[index % DEFAULT_COLORS.length]
+}
 
 // Componente 1: Share of Voice
 export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
@@ -55,18 +101,10 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
             </CardHeader>
             <CardContent className="flex-1 pb-0">
               <ChartContainer
-                config={useMemo<ChartConfig>(
-                  () =>
-                    pieData.reduce((acc, item, index) => {
-                      acc[item.name] = {
-                        label: item.name,
-                        color: COLORS[index % COLORS.length],
-                      }
-                      return acc
-                    }, {} as ChartConfig),
-                  [pieData]
-                )}
-                className="mx-auto h-[320px] w-full max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
+                config={{
+                  count: { label: 'Menções', color: 'hsl(var(--chart-1))' },
+                }}
+                className="h-[280px] w-full ml-[-20px] max-w-[420px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-sm [&_.recharts-pie-label-text]:font-medium"
               >
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -81,7 +119,7 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
                       }
                     >
                       {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        <Cell key={`cell-${index}`} fill={getBankColor(entry.name, index)} />
                       ))}
                     </Pie>
                   </PieChart>
@@ -125,7 +163,7 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
       .map((item, index) => ({
         name: item.brand,
         value: (item.mentions / totalMentions) * 100,
-        color: COLORS[index % COLORS.length],
+        color: getBankColor(item.brand, index),
       }))
       .filter(item => item.value > 0)
   }, [data])
@@ -146,11 +184,11 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
                 <BarChart
                   data={cocitationByCompetitor}
                   layout="vertical"
-                  margin={{ top: 12, right: 20, bottom: 12, left: 120 }}
+                  margin={{ top: 12, right: 20, bottom: 12, left: 160 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 'dataMax']} />
-                  <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={110} />
+                  <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={150} />
                   <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
                   <Bar dataKey="value" name="% de Menções" radius={[0, 6, 6, 0]}>
                     {cocitationByCompetitor.map((entry, index) => (
@@ -287,7 +325,7 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
             <div className="w-full bg-blue-100 h-2 rounded-full overflow-hidden">
               <div
                 className="bg-blue-500 h-2 rounded-full transition-all"
-                style={{ width: `${Math.min(citationRate * 10, 100)}%` }}
+                style={{ width: `${Math.min(citationRate, 100)}%` }}
               ></div>
             </div>
           )}
