@@ -145,10 +145,10 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
                     }, {} as ChartConfig),
                   [pieData]
                 )}
-                className="mx-auto h-[380px] w-full max-w-[500px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-xs [&_.recharts-pie-label-text]:font-medium"
+                className="mx-auto h-[400px] w-full max-w-[550px] pb-0 [&_.recharts-pie-label-text]:fill-slate-700 [&_.recharts-pie-label-text]:text-xs [&_.recharts-pie-label-text]:font-medium"
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 20, right: 80, bottom: 20, left: 80 }}>
+                  <PieChart margin={{ top: 30, right: 100, bottom: 30, left: 100 }}>
                     <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                     <Pie
                       data={pieData}
