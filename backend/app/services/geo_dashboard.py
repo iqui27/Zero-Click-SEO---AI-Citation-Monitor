@@ -119,6 +119,7 @@ def compute_geo_dashboard(
     llm_model: Optional[str] = None,
     prompt_category: Optional[str] = None,
     prompt_text: Optional[str] = None,
+    brand_presence: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Compute aggregated GEO dashboard data with filtering.
@@ -135,6 +136,7 @@ def compute_geo_dashboard(
         llm_model: Optional filter by LLM model name
         prompt_category: Optional filter by prompt template category
         prompt_text: Optional filter by prompt text (partial match)
+        brand_presence: Optional filter by brand citations ('with_brand', 'without_brand', 'all')
 
     Returns:
         Dictionary with all dashboard sections
@@ -193,6 +195,12 @@ def compute_geo_dashboard(
 
     if llm_model:
         query = query.filter(Run.model_name.ilike(f"%{llm_model}%"))
+    
+    # Filter by brand presence
+    if brand_presence == 'with_brand':
+        query = query.filter(Run.our_citations_count > 0)
+    elif brand_presence == 'without_brand':
+        query = query.filter((Run.our_citations_count == 0) | (Run.our_citations_count.is_(None)))
 
     runs = query.all()
 
@@ -258,6 +266,7 @@ def compute_geo_dashboard(
             "llm_model": llm_model,
             "prompt_category": prompt_category,
             "prompt_text": prompt_text,
+            "brand_presence": brand_presence,
         },
         "total_runs": len(runs),
         "kpis": kpis,
@@ -369,7 +378,11 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
 
         total_runs = len(runs_bucket)
         brand_mentions = sum(run.brand_mention_count or 0 for run in runs_bucket)
-        citation_rate = (sum(1 for run in runs_bucket if run.citations_count and run.citations_count > 0) / total_runs) * 100
+        
+        # Citation rate: percentage of runs with OUR brand citations
+        # This is more accurate for brand presence analysis
+        citation_rate = (sum(1 for run in runs_bucket if (run.our_citations_count or 0) > 0) / total_runs) * 100
+        
         prominence_scores = [run.brand_prominence_score for run in runs_bucket if run.brand_prominence_score is not None]
         prominence_avg = sum(prominence_scores) / len(prominence_scores) if prominence_scores else 0.0
         # Use zero_click_presence (LLM metric) instead of ia_resources_detected (SERP metric)

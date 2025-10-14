@@ -537,6 +537,12 @@ export type GeoSummary = {
   top_conversion_potential?: string | null
   competitor_mention_ratio_avg?: number | null
   cocitation_percentage?: number | null
+  semantic_scores?: Record<string, number> | null
+  perceived_value_categories?: Array<{
+    label: string
+    value: number
+    percentage: number
+  }> | null
 }
 
 export type GeoWordCloudItem = {
@@ -621,6 +627,17 @@ export type GeoDashboardFilters = {
   bank_ids?: string[]
 }
 
+export type GeoContextInsights = {
+  performance_by_context?: Array<{
+    context: string
+    type: string
+    runs_count: number
+    brand_mentions: number
+    avg_engagement: number
+  }>
+  total_contexts?: number
+}
+
 export type GeoDashboard = {
   project_id?: string
   filters_applied: GeoDashboardFilters
@@ -636,6 +653,7 @@ export type GeoDashboard = {
   raw_samples: GeoRawSample[]
   timeline?: GeoTimelinePoint[]
   geo_summary?: GeoSummary
+  context_insights?: GeoContextInsights
 }
 
 export type GeoStatsByProductItem = {
@@ -680,6 +698,7 @@ export const getGeoDashboard = (
     llm_model?: string
     prompt_category?: string
     prompt_text?: string
+    brand_presence?: string
   }
 ) => {
   const params = new URLSearchParams()
@@ -695,12 +714,25 @@ export const getGeoDashboard = (
   if (filters?.llm_model) params.set('llm_model', filters.llm_model)
   if (filters?.prompt_category) params.set('prompt_category', filters.prompt_category)
   if (filters?.prompt_text) params.set('prompt_text', filters.prompt_text)
+  if (filters?.brand_presence) params.set('brand_presence', filters.brand_presence)
 
   const query = params.toString()
   const basePath = `/projects/${projectId}/geo-dashboard`
   const path = query ? `${basePath}?${query}` : basePath
 
   return http.get<GeoDashboard>(path).then(r => r.data)
+}
+
+export type GeoDashboardFiltersResponse = {
+  llm_models: Array<{ value: string; label: string; model_name?: string }>
+  subprojects: Array<{ value: string; label: string; description?: string }>
+  prompts: Array<{ value: string; label: string; text_preview?: string; run_count?: number }>
+  prompt_categories: Array<{ value: string; label: string; run_count?: number }>
+  brand_presence_options: Array<{ value: string; label: string }>
+}
+
+export const getGeoDashboardFilters = (projectId: string) => {
+  return http.get<GeoDashboardFiltersResponse>(`/projects/${projectId}/geo-dashboard/filters`).then(r => r.data)
 }
 
 export const getGeoStatsByProduct = (projectId: string, days = 30) =>

@@ -5244,6 +5244,7 @@ def get_geo_dashboard(
     llm_model: Optional[str] = None,
     prompt_category: Optional[str] = None,
     prompt_text: Optional[str] = None,
+    brand_presence: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> GeoDashboardOut:
     """
@@ -5259,6 +5260,7 @@ def get_geo_dashboard(
     - llm_model: Filter by LLM model name (e.g., 'gpt', 'claude', 'gemini')
     - prompt_category: Filter by prompt template category
     - prompt_text: Filter by prompt text (partial match on name or text)
+    - brand_presence: Filter by brand citations ('with_brand', 'without_brand', 'all')
     """
     from app.services.geo_dashboard import compute_geo_dashboard
     from datetime import date as date_type
@@ -5297,9 +5299,154 @@ def get_geo_dashboard(
         llm_model=llm_model,
         prompt_category=prompt_category,
         prompt_text=prompt_text,
+        brand_presence=brand_presence,
     )
 
     return result
+
+
+@api_router.get("/projects/{project_id}/geo-dashboard/filters")
+def get_geo_dashboard_filters(
+    project_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get available filter options for GEO Dashboard based on existing runs.
+    
+    Returns:
+    - llm_models: List of LLM models/engines used in runs
+    - subprojects: List of subprojects (temas)
+    - prompts: List of prompts used
+    - prompt_categories: List of prompt categories
+    - brand_presence_options: Options for filtering by brand citations
+    """
+    from app.models.models import Run, Engine, SubProject, PromptVersion, Prompt
+    from sqlalchemy import distinct, func
+    
+    # Get distinct LLM models from runs
+    llm_models_query = (
+        db.query(
+            Run.model_name,
+            Engine.name.label('engine_name')
+        )
+        .join(Engine, Run.engine_id == Engine.id)
+        .filter(Run.project_id == project_id)
+        .distinct()
+        .all()
+    )
+    
+    llm_models = []
+    seen_engines = set()
+    for model_name, engine_name in llm_models_query:
+        if engine_name and engine_name not in seen_engines:
+            seen_engines.add(engine_name)
+            # Map engine names to user-friendly labels
+            label_map = {
+                'chatgpt': 'ChatGPT',
+                'gemini': 'Gemini',
+                'claude': 'Claude',
+                'perplexity': 'Perplexity',
+                'gpt': 'OpenAI GPT',
+            }
+            engine_lower = engine_name.lower()
+            label = label_map.get(engine_lower, engine_name)
+            llm_models.append({
+                'value': engine_lower,
+                'label': label,
+                'model_name': model_name
+            })
+    
+    # Get distinct subprojects
+    subprojects_query = (
+        db.query(SubProject)
+        .join(Run, Run.subproject_id == SubProject.id)
+        .filter(Run.project_id == project_id)
+        .distinct()
+        .all()
+    )
+    
+    subprojects = [
+        {
+            'value': sp.id,
+            'label': sp.name,
+            'description': sp.description
+        }
+        for sp in subprojects_query
+    ]
+    
+    # Get distinct prompts
+    prompts_query = (
+        db.query(Prompt, func.count(Run.id).label('run_count'))
+        .join(PromptVersion, Prompt.id == PromptVersion.prompt_id)
+        .join(Run, Run.prompt_version_id == PromptVersion.id)
+        .filter(Run.project_id == project_id)
+        .group_by(Prompt.id)
+        .all()
+    )
+    
+    prompts = [
+        {
+            'value': prompt.id,
+            'label': prompt.name,
+            'text_preview': prompt.text[:100] + '...' if len(prompt.text) > 100 else prompt.text,
+            'run_count': run_count
+        }
+        for prompt, run_count in prompts_query
+    ]
+    
+    # Get distinct prompt categories (from prompt text/name patterns)
+    categories_query = (
+        db.query(Run.product_category, func.count(Run.id).label('run_count'))
+        .filter(Run.project_id == project_id)
+        .filter(Run.product_category.isnot(None))
+        .group_by(Run.product_category)
+        .all()
+    )
+    
+    prompt_categories = [
+        {
+            'value': category,
+            'label': category.title() if category else 'Sem categoria',
+            'run_count': run_count
+        }
+        for category, run_count in categories_query
+    ]
+    
+    # Brand presence options
+    from sqlalchemy import case
+    
+    brand_stats = (
+        db.query(
+            func.count(Run.id).label('total_runs'),
+            func.sum(case((Run.our_citations_count > 0, 1), else_=0)).label('with_brand'),
+            func.sum(case((Run.our_citations_count == 0, 1), (Run.our_citations_count.is_(None), 1), else_=0)).label('without_brand')
+        )
+        .filter(Run.project_id == project_id)
+        .first()
+    )
+    
+    brand_presence_options = [
+        {
+            'value': 'all',
+            'label': f'Todas as respostas ({brand_stats.total_runs or 0})'
+        },
+        {
+            'value': 'with_brand',
+            'label': f'Com citação da marca ({brand_stats.with_brand or 0})'
+        },
+        {
+            'value': 'without_brand',
+            'label': f'Sem citação da marca ({brand_stats.without_brand or 0})'
+        }
+    ]
+    
+    return {
+        'llm_models': llm_models,
+        'subprojects': subprojects,
+        'prompts': prompts,
+        'prompt_categories': prompt_categories,
+        'brand_presence_options': brand_presence_options
+    }
 
 
 @api_router.post("/crawl-urls")

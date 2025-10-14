@@ -616,6 +616,10 @@ class GeoDashboardFilters(BaseModel):
     date_from: Optional[str] = None
     date_to: Optional[str] = None
     bank_ids: Optional[List[str]] = None
+    llm_model: Optional[str] = None
+    prompt_category: Optional[str] = None
+    prompt_text: Optional[str] = None
+    brand_presence: Optional[str] = None
 
 
 class GeoTimelinePoint(BaseModel):
@@ -645,6 +649,12 @@ class GeoSummary(BaseModel):
     perceived_value_categories: Optional[List[Dict[str, Any]]] = None
 
 
+class GeoContextInsights(BaseModel):
+    """Context-based insights."""
+    performance_by_context: Optional[List[Dict[str, Any]]] = None
+    total_contexts: Optional[int] = None
+
+
 class GeoDashboardOut(BaseModel):
     """Complete GEO dashboard response."""
     project_id: Optional[str]
@@ -661,3 +671,6 @@ class GeoDashboardOut(BaseModel):
     raw_samples: List[GeoRawSample]
     timeline: Optional[List[GeoTimelinePoint]] = None
     geo_summary: Optional[GeoSummary] = None
+    context_insights: Optional[GeoContextInsights] = None
+    cocitation_breakdown: Optional[List[Dict[str, Any]]] = None
+    exclusive_citations_count: Optional[int] = None

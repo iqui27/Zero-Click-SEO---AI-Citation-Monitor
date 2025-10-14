@@ -60,6 +60,8 @@ export type GeoDashboardFilters = {
   llm_model?: string
   prompt_category?: string
   prompt_text?: string
+  prompt_id?: string
+  brand_presence?: string
 }
 
 export function useGeoDashboard(projectId: string | undefined, filters?: GeoDashboardFilters) {
@@ -86,6 +88,8 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
       llm_model: filters?.llm_model !== 'all' ? filters?.llm_model : undefined,
       prompt_category: filters?.prompt_category !== 'all' ? filters?.prompt_category : undefined,
       prompt_text: filters?.prompt_text !== 'all' ? filters?.prompt_text : undefined,
+      prompt_id: filters?.prompt_id !== 'all' ? filters?.prompt_id : undefined,
+      brand_presence: filters?.brand_presence !== 'all' ? filters?.brand_presence : undefined,
     }
 
     getGeoDashboard(projectId, apiFilters)
@@ -101,7 +105,7 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
     return () => {
       mounted = false
     }
-  }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text])
+  }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text, filters?.prompt_id, filters?.brand_presence])
 
   const overview: GeoOverviewData | null = useMemo(() => {
     if (!state.data) return null

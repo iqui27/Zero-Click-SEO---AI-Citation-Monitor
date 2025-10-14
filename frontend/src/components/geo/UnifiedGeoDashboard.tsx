@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, useEffect, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../ui/card'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -35,7 +35,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { TrendingUp, TrendingDown, Minus, ExternalLink, Trash2 } from 'lucide-react'
 import { useGeoDashboard, useGeoAggregations, type GeoDashboardFilters } from '../../lib/geo'
 import type { GeoDashboard } from '../../lib/api'
-import { deleteProjectRuns } from '../../lib/api'
+import { deleteProjectRuns, getGeoDashboardFilters, type GeoDashboardFiltersResponse } from '../../lib/api'
 
 export type UnifiedGeoDashboardProps = {
   projectId: string
@@ -103,29 +103,41 @@ function ExamplesSection({ data }: { data: GeoDashboard | null }) {
 const COLORS = ['#2563eb', '#f97316', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#6366f1']
 
 export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
-  const [filters, setFilters] = useState<GeoDashboardFilters>({
-    llm_model: undefined,
-    subproject_id: undefined,
-    prompt_category: undefined,
-    date_from: undefined,
-    date_to: undefined,
-  })
+  const [filters, setFilters] = useState<GeoDashboardFilters>({})
+  const [availableFilters, setAvailableFilters] = useState<GeoDashboardFiltersResponse | null>(null)
+  const [loadingFilters, setLoadingFilters] = useState(true)
+  const { data, loading, error, overview } = useGeoDashboard(projectId, filters)
+  const aggregations = useGeoAggregations(projectId)
 
-  const { loading, error, data, overview } = useGeoDashboard(projectId, filters)
-  const aggregations = useGeoAggregations(projectId, { days: 30 })
+  // Load available filters
+  useEffect(() => {
+    if (!projectId) return
+    
+    setLoadingFilters(true)
+    getGeoDashboardFilters(projectId)
+      .then(setAvailableFilters)
+      .catch((err) => {
+        console.error('Erro ao carregar filtros:', err)
+        toast.error('Erro ao carregar opções de filtro')
+      })
+      .finally(() => setLoadingFilters(false))
+  }, [projectId])
 
-  if (loading) {
+  if (loading || loadingFilters) {
     return (
-      <div className="space-y-6">
-        <Card><CardContent className="h-32 animate-pulse bg-slate-100" /></Card>
-        <Card><CardContent className="h-64 animate-pulse bg-slate-100" /></Card>
-      </div>
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-900"></div>
+          </div>
+        </CardContent>
+      </Card>
     )
   }
 
   if (error) {
     return (
-      <Card className="border-red-200 bg-red-50">
+      <Card>
         <CardContent className="p-6">
           <p className="text-sm text-red-600">{error}</p>
         </CardContent>
@@ -135,8 +147,8 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
 
   if (!data) {
     return (
-      <Card className="border-dashed">
-        <CardContent className="p-6 text-sm text-slate-500">
+      <Card>
+        <CardContent className="p-6">
           Nenhum dado disponível para este projeto.
         </CardContent>
       </Card>
@@ -168,10 +180,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       label: 'LLM',
       options: [
         { value: 'all', label: 'Todos os modelos' },
-        { value: 'gpt', label: 'OpenAI GPT' },
-        { value: 'claude', label: 'Anthropic Claude' },
-        { value: 'gemini', label: 'Gemini' },
-        { value: 'perplexity', label: 'Perplexity' },
+        ...(availableFilters?.llm_models || []),
       ],
     },
     {
@@ -179,7 +188,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       label: 'Tema (Subprojeto)',
       options: [
         { value: 'all', label: 'Todos os temas' },
-        // TODO: Carregar subprojects dinamicamente
+        ...(availableFilters?.subprojects || []),
       ],
     },
     {
@@ -187,7 +196,25 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       label: 'Categoria',
       options: [
         { value: 'all', label: 'Todas as categorias' },
-        // TODO: Carregar categorias dinamicamente
+        ...(availableFilters?.prompt_categories || []),
+      ],
+    },
+    {
+      key: 'prompt_id' as keyof GeoDashboardFilters,
+      label: 'Prompt',
+      options: [
+        { value: 'all', label: 'Todos os prompts' },
+        ...(availableFilters?.prompts || []).map(p => ({
+          value: p.value,
+          label: `${p.label} (${p.run_count} runs)`,
+        })),
+      ],
+    },
+    {
+      key: 'brand_presence' as keyof GeoDashboardFilters,
+      label: 'Marca',
+      options: availableFilters?.brand_presence_options || [
+        { value: 'all', label: 'Todas as respostas' },
       ],
     },
   ]
@@ -211,7 +238,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
           </Button>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {filterConfigs.map((filter) => (
             <div key={filter.key} className="space-y-1">
               <label className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">
@@ -239,14 +266,18 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       {/* Presença da Marca */}
       <BrandPresenceSection data={data} overview={overview} />
 
-      {/* Análise Competitiva - 3 Componentes Separados */}
+      {/* Análise Competitiva */}
       <div className="space-y-6">
         <h2 className="text-2xl font-semibold text-slate-900">Análise Competitiva</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Share of Voice e Co-citação lado a lado */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <ShareOfVoiceSection data={data} />
           <CocitationSection data={data} />
-          <ContextSection data={data} aggregations={aggregations.data} />
         </div>
+        
+        {/* Performance por Contexto - largura total */}
+        <ContextSection data={data} aggregations={aggregations.data} />
       </div>
 
       {/* Engajamento & Potencial de Conversão */}
