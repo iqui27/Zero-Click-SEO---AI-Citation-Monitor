@@ -868,13 +868,13 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
 
 function CitationsSection({ data }: { data: GeoDashboard }) {
   const topUrls = useMemo(() => {
-    const ranking = data.positioning?.brand_ranking || []
-    return ranking.slice(0, 10).filter((item) => item.sample_url)
+    const ours = data.positioning?.our_top_urls || []
+    return ours.slice(0, 10)
   }, [data])
 
   const topDomains = useMemo(() => {
-    const ranking = data.positioning?.brand_ranking || []
-    return ranking.slice(0, 8)
+    const breakdown = data.positioning?.brand_domain_breakdown || []
+    return breakdown.slice(0, 8)
   }, [data])
 
   const radarMetrics = useMemo(() => {
@@ -926,7 +926,7 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
         <p className="text-sm text-slate-500 mt-1">Análise de URLs, domínios e qualidade semântica</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 mb-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 mb-6 lg:grid-cols-3">
         <Card className="h-full border-slate-200 bg-white/90">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold text-slate-900">Principais URLs Citadas da Marca</CardTitle>
@@ -944,25 +944,69 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
                       variant="outline"
                       className="mt-0.5 shrink-0 rounded-md border-slate-200 bg-slate-50 px-2 text-[11px] font-medium text-slate-600"
                     >
-                      {item.mentions}x
+                      {item.share != null ? `${item.share.toFixed(1)}%` : `${item.mentions}x`}
                     </Badge>
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <a
-                        href={item.sample_url}
+                        href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="group flex items-center gap-1.5 text-sm font-medium text-blue-600 transition hover:text-blue-700"
                       >
-                        <span className="truncate">{item.sample_url}</span>
+                        <span className="truncate">{item.url}</span>
                         <ExternalLink className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
                       </a>
-                      <p className="text-[11px] text-slate-400">{item.brand}</p>
+                      <p className="text-[11px] text-slate-400">{item.domain}</p>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-slate-500">Nenhuma URL citada encontrada.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="h-full border-slate-200 bg-white/90">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold text-slate-900">Principais Domínios da Marca</CardTitle>
+            <CardDescription className="text-xs uppercase tracking-[0.22em] text-slate-400">Domínios próprios mais citados</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 pt-0">
+            {topDomains.length ? (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                {topDomains.map((item, index) => {
+                  const baseColor = getGeoColorByIndex(index)
+                  return (
+                    <div
+                      key={item.normalized_domain ?? index}
+                      className="flex items-center justify-between rounded-lg border border-slate-200/60 bg-white px-3 py-2 text-sm"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: baseColor }}
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-900">{item.domain}</p>
+                          <p className="text-[11px] text-slate-400">{item.mentions} citações</p>
+                        </div>
+                      </div>
+                      <span
+                        className="ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold"
+                        style={{
+                          backgroundColor: geoColorWithAlpha(baseColor, 0.18),
+                          color: baseColor,
+                        }}
+                      >
+                        {item.share.toFixed(1)}%
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">Sem domínios próprios citados no período.</p>
             )}
           </CardContent>
         </Card>

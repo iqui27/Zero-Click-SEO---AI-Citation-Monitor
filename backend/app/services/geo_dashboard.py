@@ -31,6 +31,7 @@ from app.models.models import (
     SerpFeature,
     Project,
     Domain,
+    DomainVariant,
     Prompt,
     PromptTemplate,
     SubProject,
@@ -224,10 +225,46 @@ def compute_geo_dashboard(
     our_domains = {normalize_domain(d.domain) for d in domains if d.domain}
     our_label = project.name if project and project.name else "Nossa marca"
 
+    # Build canonical mapping using domain variants (if configured)
+    our_domain_canonical_map: Dict[str, str] = {}
+    our_domain_labels: Dict[str, str] = {}
+
+    for domain in domains:
+        normalized = normalize_domain(domain.domain)
+        if normalized:
+            our_domain_labels.setdefault(normalized, domain.domain)
+
+    variants = db.query(DomainVariant).filter(DomainVariant.project_id == project_id).all()
+    for variant in variants:
+        variant_norm = normalize_domain(variant.variant_domain)
+        canonical_norm = normalize_domain(variant.canonical_domain)
+
+        if variant_norm and canonical_norm:
+            our_domain_canonical_map[variant_norm] = canonical_norm
+
+            # Ensure canonical domain is tracked as ours
+            our_domains.add(canonical_norm)
+
+            if variant.display_name:
+                our_domain_labels.setdefault(canonical_norm, variant.display_name)
+            else:
+                our_domain_labels.setdefault(canonical_norm, variant.canonical_domain)
+
+            # Also allow variant label fallback if canonical label missing
+            our_domain_labels.setdefault(variant_norm, variant.variant_domain)
+
     # Aggregate data
     kpis = _compute_kpis(runs, our_domains, bank_ids)
     radar = _compute_radar(runs, bank_ids)
-    positioning = _compute_positioning(db, run_ids, bank_ids, our_domains, our_label)
+    positioning = _compute_positioning(
+        db,
+        run_ids,
+        bank_ids,
+        our_domains,
+        our_label,
+        our_domain_labels=our_domain_labels,
+        our_domain_canonical_map=our_domain_canonical_map,
+    )
     keywords_entities = _compute_keywords_entities(db, run_ids)
     panorama = _compute_panorama(db, run_ids, runs)
     web_structure = _compute_web_structure(db, run_ids, bank_ids)
@@ -500,24 +537,57 @@ def _compute_positioning(
     bank_ids: Optional[List[str]],
     our_domains: Set[str],
     our_label: str,
+    our_domain_labels: Optional[Dict[str, str]] = None,
+    our_domain_canonical_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Compute brand ranking, share of voice and perception breakdown."""
 
     # Get all citations from runs
     citations = db.query(Citation).filter(Citation.run_id.in_(run_ids)).all()
 
-    # Count mentions by domain
-    domain_counts = Counter(c.domain for c in citations if c.domain)
+    # Aggregate mentions by normalized domain and capture sample URLs
+    domain_counts: Counter[str] = Counter()
+    domain_labels: Dict[str, str] = {}
+    urls_by_domain: Dict[str, List[str]] = defaultdict(list)
+    our_url_counts: Counter[str] = Counter()
+    url_domains: Dict[str, str] = {}
+
+    for citation in citations:
+        if not citation.domain:
+            continue
+
+        normalized_domain = normalize_domain(citation.domain)
+        canonical_domain = normalized_domain
+        if our_domain_canonical_map:
+            canonical_domain = our_domain_canonical_map.get(normalized_domain, canonical_domain)
+
+        label_default = citation.domain
+        if our_domain_labels:
+            label_default = our_domain_labels.get(canonical_domain, label_default)
+        domain_labels.setdefault(canonical_domain, label_default)
+
+        domain_counts[canonical_domain] += 1
+
+        url_value = (citation.url or "").strip()
+        if url_value and url_value not in urls_by_domain[canonical_domain]:
+            if len(urls_by_domain[canonical_domain]) < 5:
+                urls_by_domain[canonical_domain].append(url_value)
+
+        is_ours = getattr(citation, "is_ours", None)
+        if (
+            (is_ours is True)
+            or _domain_matches(canonical_domain, our_domains)
+            or _domain_matches(normalized_domain, our_domains)
+        ) and url_value:
+            our_url_counts[url_value] += 1
+            url_domains.setdefault(url_value, domain_labels.get(canonical_domain, canonical_domain))
 
     total_mentions = sum(domain_counts.values()) or 0
-    our_mentions = 0
-    competitor_mentions: Dict[str, int] = {}
-
-    for domain, count in domain_counts.items():
-        if _domain_matches(domain, our_domains):
-            our_mentions += count
-        else:
-            competitor_mentions[domain] = competitor_mentions.get(domain, 0) + count
+    our_domain_counts = Counter({
+        domain: count for domain, count in domain_counts.items() if _domain_matches(domain, our_domains)
+    })
+    our_mentions = sum(our_domain_counts.values())
+    competitor_counts = {domain: count for domain, count in domain_counts.items() if domain not in our_domain_counts}
 
     share_of_voice: Dict[str, float] = {}
     if total_mentions > 0:
@@ -526,26 +596,86 @@ def _compute_positioning(
             share_of_voice[label] = round((our_mentions / total_mentions) * 100, 2)
 
         # Ordenar concorrentes por menções e limitar para manter visual limpo
-        sorted_competitors = sorted(competitor_mentions.items(), key=lambda item: item[1], reverse=True)
+        sorted_competitors = sorted(competitor_counts.items(), key=lambda item: item[1], reverse=True)
         other_total = 0
         for domain, count in sorted_competitors[:6]:
-            share_of_voice[domain] = round((count / total_mentions) * 100, 2)
+            display_name = domain_labels.get(domain, domain)
+            share_of_voice[display_name] = round((count / total_mentions) * 100, 2)
         if len(sorted_competitors) > 6:
             other_total = sum(count for _, count in sorted_competitors[6:])
         if other_total:
             share_of_voice["Outros"] = round((other_total / total_mentions) * 100, 2)
 
     # Build ranking table
-    brand_ranking = [
-        {"rank": i + 1, "brand": domain, "mentions": count, "sample_url": next((c.url for c in citations if c.domain == domain and c.url), None)}
-        for i, (domain, count) in enumerate(domain_counts.most_common(20))
+    brand_ranking: List[Dict[str, Any]] = []
+    for index, (domain, count) in enumerate(domain_counts.most_common(20)):
+        sample_urls = urls_by_domain.get(domain, [])
+        brand_ranking.append({
+            "rank": index + 1,
+            "brand": domain_labels.get(domain, domain),
+            "domain": domain,
+            "mentions": count,
+            "sample_url": sample_urls[0] if sample_urls else None,
+            "sample_urls": sample_urls,
+            "is_ours": _domain_matches(domain, our_domains),
+        })
+
+    our_total_mentions = sum(our_domain_counts.values())
+    brand_domain_breakdown = [
+        {
+            "domain": domain_labels.get(domain, domain),
+            "normalized_domain": domain,
+            "mentions": count,
+            "share": round((count / our_total_mentions) * 100, 1) if our_total_mentions else 0.0,
+            "sample_urls": urls_by_domain.get(domain, []),
+        }
+        for domain, count in our_domain_counts.most_common(10)
     ]
+
+    if not brand_domain_breakdown:
+        fallback_domains = [entry for entry in brand_ranking if entry.get("is_ours")]
+        our_total_mentions = sum(entry.get("mentions", 0) for entry in fallback_domains)
+        brand_domain_breakdown = [
+            {
+                "domain": entry.get("brand") or entry.get("domain"),
+                "normalized_domain": entry.get("domain"),
+                "mentions": entry.get("mentions", 0),
+                "share": round((entry.get("mentions", 0) / our_total_mentions) * 100, 1) if our_total_mentions else 0.0,
+                "sample_urls": entry.get("sample_urls", []),
+            }
+            for entry in fallback_domains[:10]
+        ]
+
+    total_our_urls = sum(our_url_counts.values())
+    our_top_urls = [
+        {
+            "url": url,
+            "domain": url_domains.get(url),
+            "mentions": count,
+            "share": round((count / total_our_urls) * 100, 1) if total_our_urls else 0.0,
+        }
+        for url, count in our_url_counts.most_common(10)
+    ]
+
+    if not our_top_urls and brand_domain_breakdown:
+        expanded: List[Dict[str, Any]] = []
+        for entry in brand_domain_breakdown:
+            for sample_url in entry.get("sample_urls", [])[:3]:
+                expanded.append({
+                    "url": sample_url,
+                    "domain": entry.get("domain"),
+                    "mentions": entry.get("mentions", 0),
+                    "share": entry.get("share", 0.0),
+                })
+        our_top_urls = expanded[:10]
 
     # Perception breakdown (placeholder - needs more sophisticated analysis)
     perception_breakdown = []
 
     return {
         "brand_ranking": brand_ranking,
+        "brand_domain_breakdown": brand_domain_breakdown,
+        "our_top_urls": our_top_urls,
         "perception_breakdown": perception_breakdown,
         "share_of_voice": share_of_voice,
         "total_mentions": total_mentions,

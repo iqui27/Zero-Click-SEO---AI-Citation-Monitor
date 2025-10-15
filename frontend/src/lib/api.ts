@@ -491,14 +491,31 @@ export type GeoRadarSeries = {
 export type GeoBrandRanking = {
   rank: number
   brand: string
+  domain?: string
   mentions: number
-  sample_url?: string
+  sample_url?: string | null
+  sample_urls?: string[]
+  is_ours?: boolean
 }
 
 export type GeoPerceptionBreakdown = {
-  dimension: string
-  bank_a?: number
-  bank_b?: number
+  label: string
+  value: number
+}
+
+export type GeoBrandDomainBreakdown = {
+  domain: string
+  normalized_domain: string
+  mentions: number
+  share: number
+  sample_urls: string[]
+}
+
+export type GeoTopUrl = {
+  url: string
+  domain?: string | null
+  mentions: number
+  share: number
 }
 
 export type GeoPositioningTimelineMetrics = {
@@ -513,6 +530,8 @@ export type GeoPositioningTimelinePoint = {
 
 export type GeoPositioning = {
   brand_ranking: GeoBrandRanking[]
+  brand_domain_breakdown?: GeoBrandDomainBreakdown[]
+  our_top_urls?: GeoTopUrl[]
   perception_breakdown: GeoPerceptionBreakdown[]
   share_of_voice?: Record<string, number>
   timeline?: GeoPositioningTimelinePoint[]

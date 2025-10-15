@@ -21,6 +21,8 @@ from app.models.models import (
     DomainVariant,
     ContentGap,
     Citation,
+    Domain,
+    gen_id,
 )
 from app.schemas.schemas import (
     DomainVariantCreate,
@@ -56,6 +58,7 @@ def list_domain_variants(
 ):
     """Lista todas as variantes de domínio configuradas para o projeto."""
     variants = db.query(DomainVariant).filter(
+        DomainVariant.project_id == project_id
     ).order_by(DomainVariant.canonical_domain, DomainVariant.variant_domain).all()
     
     return variants
@@ -124,13 +127,11 @@ def bulk_create_domain_variants(
             continue
         
         # Criar
-        from app.models.models import gen_id
         domain_variant = DomainVariant(
-            id=gen_id("dv"),
+            id=gen_id("dmv"),
             project_id=project_id,
             variant_domain=variant_domain,
             canonical_domain=canonical_domain,
-            is_active=True,
             created_at=datetime.utcnow(),
         )
         db.add(domain_variant)
@@ -168,13 +169,12 @@ def create_domain_variant(
     if existing:
         raise HTTPException(status_code=400, detail="Variant domain already exists")
     
-    from app.models.models import gen_id
     domain_variant = DomainVariant(
-        id=gen_id("dv"),
+        id=gen_id("dmv"),
         project_id=project_id,
         variant_domain=variant.variant_domain,
         canonical_domain=variant.canonical_domain,
-        is_active=True,
+        display_name=variant.display_name,
         created_at=datetime.utcnow(),
     )
     
@@ -1080,7 +1080,6 @@ def reprocess_geo_metrics(
     # Domain variants map
     variants = db.query(DomainVariant).filter(
         DomainVariant.project_id == project_id,
-        DomainVariant.is_active == True,
     ).all()
     domain_variants_map = {v.variant_domain.lower(): v.canonical_domain.lower() for v in variants}
     

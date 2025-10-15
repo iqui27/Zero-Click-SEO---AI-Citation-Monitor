@@ -423,8 +423,28 @@ class GeoBrandRanking(BaseModel):
     """Brand ranking entry."""
     rank: int
     brand: str
+    domain: Optional[str] = None
     mentions: int
     sample_url: Optional[str] = None
+    sample_urls: Optional[List[str]] = None
+    is_ours: Optional[bool] = None
+
+
+class GeoBrandDomainBreakdown(BaseModel):
+    """Brand domain breakdown entry."""
+    domain: str
+    normalized_domain: Optional[str] = None
+    mentions: int
+    share: float
+    sample_urls: Optional[List[str]] = None
+
+
+class GeoTopUrl(BaseModel):
+    """Top URL cited for the brand."""
+    url: str
+    domain: Optional[str] = None
+    mentions: int
+    share: float
 
 
 class GeoPerceptionBreakdown(BaseModel):
@@ -437,6 +457,8 @@ class GeoPerceptionBreakdown(BaseModel):
 class GeoPositioning(BaseModel):
     """Positioning section data."""
     brand_ranking: List[GeoBrandRanking]
+    brand_domain_breakdown: Optional[List[GeoBrandDomainBreakdown]] = None
+    our_top_urls: Optional[List[GeoTopUrl]] = None
     perception_breakdown: List[GeoPerceptionBreakdown]
     share_of_voice: Optional[Dict[str, float]] = None
     total_mentions: Optional[int] = None
