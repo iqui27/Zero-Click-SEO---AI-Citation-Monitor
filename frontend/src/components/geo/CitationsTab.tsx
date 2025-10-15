@@ -2,6 +2,7 @@ import { GeoAggregations } from '../../lib/geo'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, Tooltip, XAxis, YAxis, Legend, BarChart, Bar } from 'recharts'
+import { getGeoColorByIndex, geoColorWithAlpha } from '../../lib/geoPalette'
 
 const formatPercent = (value: number | null | undefined) =>
   value == null ? '–' : `${value.toFixed(1)}%`
@@ -27,6 +28,10 @@ export function CitationsTab({ aggregations, isLoading }: CitationsTabProps) {
   const byProduct = aggregations?.byProduct || []
   const byFunnel = aggregations?.byFunnel || []
   const byQuestion = aggregations?.byQuestionType || []
+
+  const citationColor = getGeoColorByIndex(4)
+  const conversionColor = getGeoColorByIndex(3)
+  const engagementColor = getGeoColorByIndex(2)
 
   const summaryCards = [
     {
@@ -110,9 +115,9 @@ export function CitationsTab({ aggregations, isLoading }: CitationsTabProps) {
                     }
                   />
                   <Legend />
-                  <Bar dataKey="avg_citation_rate" name="CR Observado" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="avg_conversion_potential" name="Potencial de Conversão" fill="#f97316" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="avg_engagement" name="Engajamento" fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="avg_citation_rate" name="CR Observado" fill={citationColor} radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="avg_conversion_potential" name="Potencial de Conversão" fill={conversionColor} radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="avg_engagement" name="Engajamento" fill={engagementColor} radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -144,9 +149,9 @@ export function CitationsTab({ aggregations, isLoading }: CitationsTabProps) {
                   byFunnel.map((item) => (
                     <TableRow key={item.funnel_stage || 'unknown'}>
                       <TableCell className="capitalize">{item.funnel_stage || 'Sem estágio'}</TableCell>
-                      <TableCell className="text-right">{formatPercent(item.avg_citation_rate)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(item.avg_engagement)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(item.avg_conversion_potential)}</TableCell>
+                      <TableCell className="text-right" style={{ color: citationColor }}>{formatPercent(item.avg_citation_rate)}</TableCell>
+                      <TableCell className="text-right" style={{ color: engagementColor }}>{formatNumber(item.avg_engagement)}</TableCell>
+                      <TableCell className="text-right" style={{ color: conversionColor }}>{formatNumber(item.avg_conversion_potential)}</TableCell>
                       <TableCell className="text-right">{item.runs_count}</TableCell>
                     </TableRow>
                   ))
@@ -182,10 +187,10 @@ export function CitationsTab({ aggregations, isLoading }: CitationsTabProps) {
                   byQuestion.map((item) => (
                     <TableRow key={item.question_type || 'unknown'}>
                       <TableCell className="capitalize">{item.question_type || 'Sem tipo'}</TableCell>
-                      <TableCell className="text-right">{formatPercent(item.avg_citation_rate)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(item.avg_prominence)}</TableCell>
-                      <TableCell className="text-right">{formatPercent(item.avg_sov)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(item.avg_conversion_potential)}</TableCell>
+                      <TableCell className="text-right" style={{ color: citationColor }}>{formatPercent(item.avg_citation_rate)}</TableCell>
+                      <TableCell className="text-right" style={{ color: geoColorWithAlpha(engagementColor, 0.9) }}>{formatNumber(item.avg_prominence)}</TableCell>
+                      <TableCell className="text-right" style={{ color: geoColorWithAlpha(citationColor, 0.9) }}>{formatPercent(item.avg_sov)}</TableCell>
+                      <TableCell className="text-right" style={{ color: conversionColor }}>{formatNumber(item.avg_conversion_potential)}</TableCell>
                       <TableCell className="text-right">{item.runs_count}</TableCell>
                     </TableRow>
                   ))

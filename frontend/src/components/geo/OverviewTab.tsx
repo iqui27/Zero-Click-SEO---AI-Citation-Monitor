@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { GeoOverviewData, GeoOverviewKpi } from '../../lib/geo'
 import { GeoKpiCard } from './KpiCard'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../../components/ui/card'
+import { getGeoColorByIndex, getGeoColorByName, geoColorWithAlpha } from '../../lib/geoPalette'
 import {
   ResponsiveContainer,
   LineChart,
@@ -20,8 +21,6 @@ import {
   Bar,
 } from 'recharts'
 import { TrendingUp, TrendingDown } from 'lucide-react'
-
-const SOV_COLORS = ['#2563eb', '#8b5cf6', '#fb923c', '#34d399', '#facc15', '#f97316', '#ef4444']
 
 type OverviewTabProps = {
   overview: GeoOverviewData | null
@@ -89,7 +88,7 @@ function ShareOfVoiceSection({ shareOfVoice, metrics }: ShareOfVoiceSectionProps
       Object.entries(shareOfVoice || {}).map(([name, value], index) => ({
         name,
         value,
-        color: SOV_COLORS[index % SOV_COLORS.length],
+        color: getGeoColorByName(name, index),
       })),
     [shareOfVoice]
   )
@@ -118,6 +117,8 @@ function ShareOfVoiceSection({ shareOfVoice, metrics }: ShareOfVoiceSectionProps
   const activeSlice = data[activeIndex] || data[0]
   const ratio = metrics?.competitorMentionRatioAvg
   const cocitation = metrics?.cocitationPercentage
+  const accentColor = getGeoColorByIndex(0)
+  const accentBorderColor = geoColorWithAlpha(accentColor, 0.25)
 
   return (
     <Card className="flex h-full flex-col">
@@ -180,9 +181,18 @@ function ShareOfVoiceSection({ shareOfVoice, metrics }: ShareOfVoiceSectionProps
                   key={entry.name}
                   type="button"
                   onMouseEnter={() => setActiveIndex(index)}
-                  className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition hover:border-blue-500 ${
-                    index === activeIndex ? 'border-blue-500 bg-blue-500/5 text-blue-600' : 'border-slate-200'
-                  }`}
+                  className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition"
+                  style={
+                    index === activeIndex
+                      ? {
+                          borderColor: accentColor,
+                          backgroundColor: geoColorWithAlpha(accentColor, 0.08),
+                          color: accentColor,
+                        }
+                      : {
+                          borderColor: accentBorderColor,
+                        }
+                  }
                 >
                   <span className="flex items-center gap-2">
                     <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: entry.color }} />
@@ -201,7 +211,9 @@ function ShareOfVoiceSection({ shareOfVoice, metrics }: ShareOfVoiceSectionProps
               </div>
               <div>
                 <p className="uppercase text-[11px] tracking-[0.2em] text-slate-400">Co-citações</p>
-                <p className="text-lg font-semibold text-slate-900">{cocitation != null ? `${cocitation.toFixed(0)}%` : '–'}</p>
+                <p className="text-lg font-semibold" style={{ color: accentColor }}>
+                  {cocitation != null ? `${cocitation.toFixed(0)}%` : '–'}
+                </p>
                 <p className="text-xs text-slate-500 mt-1">runs com menções compartilhadas com concorrentes</p>
               </div>
             </div>
@@ -257,6 +269,10 @@ function renderBrandPresence(overview: GeoOverviewData | null) {
   const densityMetric = latest?.mentionDensity ?? null
   const firstMentionMetric = latest?.firstMentionPct ?? null
 
+  const mentionsColor = getGeoColorByIndex(0)
+  const firstMentionColor = getGeoColorByIndex(1)
+  const accentColor = getGeoColorByIndex(2)
+
   return (
     <Card className="flex h-full flex-col">
       <CardHeader className="pb-2">
@@ -268,11 +284,11 @@ function renderBrandPresence(overview: GeoOverviewData | null) {
             <ComposedChart data={chartData} margin={{ top: 16, right: 24, bottom: 12, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="label" stroke="#94a3b8" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
-              <YAxis yAxisId="mentions" stroke="#2563eb" tick={{ fontSize: 12 }} allowDecimals={false} />
+              <YAxis yAxisId="mentions" stroke={mentionsColor} tick={{ fontSize: 12 }} allowDecimals={false} />
               <YAxis
                 yAxisId="percent"
                 orientation="right"
-                stroke="#8b5cf6"
+                stroke={firstMentionColor}
                 tick={{ fontSize: 12 }}
                 tickFormatter={(value) => `${value.toFixed(0)}%`}
                 domain={[0, 100]}
@@ -301,8 +317,8 @@ function renderBrandPresence(overview: GeoOverviewData | null) {
                       : 'Densidade'
                 }
               />
-              <Bar yAxisId="mentions" dataKey="mentions" name="Menções" fill="#2563eb" radius={[6, 6, 0, 0]} />
-              <Bar yAxisId="percent" dataKey="firstMentionPct" name="Primeira menção (%)" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+              <Bar yAxisId="mentions" dataKey="mentions" name="Menções" fill={mentionsColor} radius={[6, 6, 0, 0]} />
+              <Bar yAxisId="percent" dataKey="firstMentionPct" name="Primeira menção (%)" fill={firstMentionColor} radius={[6, 6, 0, 0]} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -370,8 +386,12 @@ function renderTimeline(overview: GeoOverviewData | null) {
   const metricsRow = cards.length ? (
     <CardFooter className="border-t border-slate-100 bg-slate-50/40 px-6 py-5">
       <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-5">
-        {cards.map((card) => (
-          <div key={card.title} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        {cards.map((card, index) => (
+          <div
+            key={card.title}
+            className="rounded-xl border bg-white px-4 py-3 shadow-sm"
+            style={{ borderColor: geoColorWithAlpha(getGeoColorByIndex(index), 0.35) }}
+          >
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{card.title}</p>
             <p className="text-2xl font-semibold text-slate-900 mt-2">{card.value}</p>
             {card.description ? <p className="text-xs text-slate-500 mt-1">{card.description}</p> : null}

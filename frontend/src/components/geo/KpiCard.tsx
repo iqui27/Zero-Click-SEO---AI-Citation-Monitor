@@ -1,6 +1,7 @@
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { getGeoColorByIndex, geoColorWithAlpha } from '../../lib/geoPalette'
 
 export type GeoKpiCardProps = {
   title: string
@@ -23,6 +24,11 @@ export function GeoKpiCard({
   footerPrimary,
   footerSecondary,
 }: GeoKpiCardProps) {
+  const primaryColor = getGeoColorByIndex(0)
+  const positiveColor = getGeoColorByIndex(7)
+  const negativeColor = getGeoColorByIndex(8)
+  const neutralColor = getGeoColorByIndex(1)
+
   const resolvedDirection: 'up' | 'down' | 'neutral' = trendDirection
     ? trendDirection
     : delta == null
@@ -41,17 +47,41 @@ export function GeoKpiCard({
       ? `${delta > 0 ? '+' : ''}${delta.toFixed(1)} pts`
       : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`
 
-  const badgeClasses =
-    resolvedDirection === 'up'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-      : resolvedDirection === 'down'
-        ? 'border-rose-200 bg-rose-50 text-rose-600'
-        : 'border-slate-200 bg-slate-50 text-slate-500'
+  const badgeStyles = (() => {
+    const base = {
+      borderColor: geoColorWithAlpha(primaryColor, 0.25),
+      backgroundColor: geoColorWithAlpha(neutralColor, 0.15),
+      color: neutralColor,
+    }
+
+    if (resolvedDirection === 'up') {
+      return {
+        borderColor: geoColorWithAlpha(positiveColor, 0.25),
+        backgroundColor: geoColorWithAlpha(positiveColor, 0.2),
+        color: positiveColor,
+      }
+    }
+
+    if (resolvedDirection === 'down') {
+      return {
+        borderColor: geoColorWithAlpha(negativeColor, 0.25),
+        backgroundColor: geoColorWithAlpha(negativeColor, 0.2),
+        color: negativeColor,
+      }
+    }
+
+    return base
+  })()
 
   const hasFooter = Boolean(footerPrimary || footerSecondary)
 
   return (
-    <Card className="relative overflow-hidden border-slate-200 bg-gradient-to-t from-blue-50/40 via-white to-white shadow-sm dark:border-slate-800 dark:from-slate-900/30 dark:via-slate-900 dark:to-slate-900">
+    <Card
+      className="relative overflow-hidden border-slate-200 shadow-sm dark:border-slate-800 dark:from-slate-900/30 dark:via-slate-900 dark:to-slate-900"
+      style={{
+        background: `linear-gradient(180deg, ${geoColorWithAlpha(primaryColor, 0.18)} 0%, rgba(255,255,255,0.96) 60%, rgba(255,255,255,1) 100%)`,
+      }}
+    >
       <CardHeader className="gap-3 pb-4">
         <CardDescription className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.25em] text-slate-500">
           {title}
@@ -62,7 +92,11 @@ export function GeoKpiCard({
             {unit ? <span className="ml-1 text-base font-medium text-slate-500 dark:text-slate-300">{unit}</span> : null}
           </CardTitle>
           {showBadge ? (
-            <Badge variant="outline" className={`flex items-center gap-1 px-2 py-1 text-xs font-medium ${badgeClasses}`}>
+            <Badge
+              variant="outline"
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium"
+              style={badgeStyles}
+            >
               <TrendIcon className="h-4 w-4" />
               {formattedDelta}
             </Badge>

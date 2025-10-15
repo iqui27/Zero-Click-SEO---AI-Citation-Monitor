@@ -6,6 +6,7 @@ import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { ShareOfVoiceSection, CocitationSection, ContextSection } from './CompetitiveAnalysisSections'
 import { toast } from 'sonner'
+import { getGeoColorByIndex, geoColorWithAlpha } from '../../lib/geoPalette'
 import {
   ResponsiveContainer,
   BarChart,
@@ -100,7 +101,6 @@ function ExamplesSection({ data }: { data: GeoDashboard | null }) {
   )
 }
 
-const COLORS = ['#2563eb', '#f97316', '#0ea5e9', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#6366f1']
 
 export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
   const [filters, setFilters] = useState<GeoDashboardFilters>({})
@@ -311,6 +311,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
   const citationRateKpi = overview?.kpis?.find((k: any) => k.label === 'Taxa de Citação')
   const brandMentionsKpi = overview?.kpis?.find((k: any) => k.label === 'Menções de Marca')
   const zeroClickKpi = overview?.kpis?.find((k: any) => k.label === 'Presença Zero-Click')
+  const exclusiveCitationsKpi = overview?.kpis?.find((k: any) => k.label === 'Citações Exclusivas')
 
   const avgCitationPosition = useMemo(() => {
     if (!overview?.metrics?.brandFirstMentionPositionAvg) return null
@@ -328,9 +329,9 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
 
   const bigNumbers: BigNumberMetric[] = [
     {
-      title: 'Total de Respostas',
+      title: 'Total de Respostas Analisadas',
       value: String(totalRuns).replace(/\B(?=(\d{3})+(?!\d))/g, '.'),
-      subtitle: <span className="text-xs text-slate-500">analisadas</span>,
+      subtitle: null,
       delta: null,
       trend: null,
     },
@@ -359,10 +360,17 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
       delta: zeroClickKpi?.delta,
       trend: zeroClickKpi?.trendDirection,
     },
+    {
+      title: 'Citações Exclusivas',
+      value: exclusiveCitationsKpi?.value != null ? `${exclusiveCitationsKpi.value.toFixed(1)}%` : '–',
+      subtitle: <span className="text-xs text-slate-500">somente a marca monitorada</span>,
+      delta: exclusiveCitationsKpi?.delta,
+      trend: exclusiveCitationsKpi?.trendDirection,
+    },
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
       {bigNumbers.map((metric) => (
         <Card key={metric.title}>
           <CardHeader className="pb-2">
@@ -391,6 +399,9 @@ function BrandPresenceSection({ data, overview }: { data: GeoDashboard; overview
   const densityMetric = overview?.metrics?.brandMentionDensityAvg
   const firstMentionMetric = overview?.metrics?.brandFirstMentionPositionAvg
 
+  const mentionsColor = getGeoColorByIndex(0)
+  const firstMentionColor = getGeoColorByIndex(1)
+
   const firstMentionNormalized = useMemo(() => {
     if (firstMentionMetric == null) return null
     const normalized = firstMentionMetric >= 10 ? firstMentionMetric / 10 : firstMentionMetric
@@ -413,8 +424,8 @@ function BrandPresenceSection({ data, overview }: { data: GeoDashboard; overview
                 <YAxis yAxisId="right" orientation="right" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} tickLine={false} axisLine={false} />
                 <RechartsTooltip />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="left" dataKey="mentions" name="Menções" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="right" dataKey="firstMentionAvg" name="Posição Primeira Menção" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="left" dataKey="mentions" name="Menções" fill={mentionsColor} radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="right" dataKey="firstMentionAvg" name="Posição Primeira Menção" fill={firstMentionColor} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -480,6 +491,9 @@ function EngagementConversionSection({ overview }: { overview: any }) {
   const engagementScore = overview?.metrics?.engagementScoreAvg || 0
   const conversionPotential = overview?.metrics?.topConversionPotential || 'Médio'
 
+  const engagementColor = getGeoColorByIndex(2)
+  const conversionColor = getGeoColorByIndex(3)
+
   return (
     <Card>
       <CardHeader>
@@ -520,18 +534,18 @@ function EngagementConversionSection({ overview }: { overview: any }) {
                   dataKey="engagement"
                   name="Taxa de Engajamento"
                   type="monotone"
-                  stroke="#10b981"
+                  stroke={engagementColor}
                   strokeWidth={2}
-                  dot={{ fill: "#10b981", r: 3 }}
+                  dot={{ fill: engagementColor, r: 3 }}
                   activeDot={{ r: 5 }}
                 />
                 <Line
                   dataKey="conversionPotential"
                   name="Potencial de Conversão"
                   type="monotone"
-                  stroke="#f59e0b"
+                  stroke={conversionColor}
                   strokeWidth={2}
-                  dot={{ fill: "#f59e0b", r: 3 }}
+                  dot={{ fill: conversionColor, r: 3 }}
                   activeDot={{ r: 5 }}
                 />
               </LineChart>
@@ -549,12 +563,12 @@ function EngagementConversionSection({ overview }: { overview: any }) {
           </div>
           <div>
             <p className="text-xs text-slate-500">Score de Engajamento</p>
-            <p className="text-xl font-semibold text-slate-900">{engagementScore.toFixed(0)}</p>
+            <p className="text-xl font-semibold" style={{ color: engagementColor }}>{engagementScore.toFixed(0)}</p>
             <p className="text-xs text-slate-500">de 100 pontos</p>
           </div>
           <div>
             <p className="text-xs text-slate-500">Potencial de Conversão</p>
-            <p className="text-xl font-semibold text-slate-900">{conversionPotential}</p>
+            <p className="text-xl font-semibold" style={{ color: conversionColor }}>{conversionPotential}</p>
             <p className="text-xs text-slate-500">68% das respostas</p>
           </div>
         </div>
@@ -604,6 +618,12 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
     }))
   }, [data])
 
+  const observedColor = getGeoColorByIndex(4)
+  const correctedColor = getGeoColorByIndex(5)
+  const productColor = getGeoColorByIndex(6)
+  const funnelColor = getGeoColorByIndex(7)
+  const questionColor = getGeoColorByIndex(8)
+
   return (
     <Card>
       <CardHeader>
@@ -647,7 +667,7 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                 <Bar 
                   dataKey="observed" 
                   name="CR Observado" 
-                  fill="#3b82f6"
+                  fill={observedColor}
                   radius={[4, 4, 0, 0]}
                   barSize={40}
                 />
@@ -655,9 +675,9 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                   type="monotone"
                   dataKey="corrected" 
                   name="CR Corrigido" 
-                  stroke="#8b5cf6"
+                  stroke={correctedColor}
                   strokeWidth={2.5}
-                  dot={{ fill: '#8b5cf6', r: 4 }}
+                  dot={{ fill: correctedColor, r: 4 }}
                   activeDot={{ r: 6 }}
                 />
               </ComposedChart>
@@ -684,8 +704,11 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                   </div>
                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-blue-500"
-                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                      className="h-full"
+                      style={{
+                        width: `${item.avg_citation_rate || 0}%`,
+                        backgroundColor: geoColorWithAlpha(productColor, 0.8),
+                      }}
                     />
                   </div>
                 </div>
@@ -708,8 +731,11 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                   </div>
                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-purple-500"
-                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                      className="h-full"
+                      style={{
+                        width: `${item.avg_citation_rate || 0}%`,
+                        backgroundColor: geoColorWithAlpha(funnelColor, 0.8),
+                      }}
                     />
                   </div>
                 </div>
@@ -732,8 +758,11 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                   </div>
                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-orange-500"
-                      style={{ width: `${item.avg_citation_rate || 0}%` }}
+                      className="h-full"
+                      style={{
+                        width: `${item.avg_citation_rate || 0}%`,
+                        backgroundColor: geoColorWithAlpha(questionColor, 0.8),
+                      }}
                     />
                   </div>
                 </div>
@@ -764,6 +793,9 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
     return citationKpi?.delta != null ? Math.abs(citationKpi.delta) : null
   }, [data])
 
+  const domainBarColor = getGeoColorByIndex(2)
+  const accentIconColor = getGeoColorByIndex(9)
+
   return (
     <Card>
       <CardHeader>
@@ -784,32 +816,38 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                   <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                   <YAxis dataKey="brand" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
                   <RechartsTooltip />
-                  <Bar dataKey="mentions" name="Menções" fill="#2563eb" radius={[0, 6, 6, 0]} />
+                  <Bar dataKey="mentions" name="Menções" fill={domainBarColor} radius={[0, 6, 6, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-4">
               <div className="flex items-start gap-3">
-                <div className="rounded-full bg-blue-100 p-2">
-                  <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div
+                  className="rounded-full p-2"
+                  style={{ backgroundColor: geoColorWithAlpha(domainBarColor, 0.15) }}
+                >
+                  <svg className="h-5 w-5" style={{ color: domainBarColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Total de Menções Consolidadas</p>
+                  <p className="text-xs font-medium text-slate-500">Total consolidado</p>
                   <p className="text-2xl font-bold text-slate-900">{totalMentions.toLocaleString('pt-BR')}</p>
                   <p className="text-xs text-slate-500">Todas as variantes de domínio combinadas</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
-                <div className="rounded-full bg-pink-100 p-2">
-                  <svg className="h-5 w-5 text-pink-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <div
+                  className="rounded-full p-2"
+                  style={{ backgroundColor: geoColorWithAlpha(accentIconColor, 0.15) }}
+                >
+                  <svg className="h-5 w-5" style={{ color: accentIconColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h10M10 20h4" />
                   </svg>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Variação de Taxa de Citação</p>
+                  <p className="text-xs font-medium text-slate-500">Fator de correção</p>
                   <p className="text-2xl font-bold text-slate-900">
                     {correctionFactor != null ? `${correctionFactor > 0 ? '+' : ''}${correctionFactor.toFixed(1)}%` : '–'}
                   </p>
@@ -864,18 +902,22 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
 
   const perceivedValueCategories = useMemo(() => {
     const categories = ((data.geo_summary as any)?.perceived_value_categories || []) as Array<{ label: string; value: number }>
-    const palette = ['bg-blue-100 text-blue-700', 'bg-purple-100 text-purple-700', 'bg-emerald-100 text-emerald-700', 'bg-amber-100 text-amber-700', 'bg-rose-100 text-rose-700']
 
     if (categories.length) {
       return categories.slice(0, 5).map((item, index) => ({
         label: item.label,
         value: item.value,
-        className: palette[index % palette.length],
+        color: getGeoColorByIndex(4 + index),
       }))
     }
 
     return []
   }, [data])
+
+  const radarStrokeColor = getGeoColorByIndex(0)
+  const radarFillColor = geoColorWithAlpha(radarStrokeColor, 0.35)
+  const radarGridColor = geoColorWithAlpha(getGeoColorByIndex(1), 0.3)
+  const radarAxisColor = geoColorWithAlpha(getGeoColorByIndex(2), 0.6)
 
   return (
     <section>
@@ -935,10 +977,10 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
               {hasSemanticScores ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart data={radarMetrics} outerRadius={90}>
-                    <PolarGrid stroke="#e2e8f0" />
+                    <PolarGrid stroke={radarGridColor} />
                     <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 12, fill: '#475569' }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} stroke="#cbd5f5" />
-                    <Radar dataKey="value" stroke="#6366f1" fill="#6366f1" fillOpacity={0.35} />
+                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10, fill: radarAxisColor }} stroke={radarAxisColor} />
+                    <Radar dataKey="value" stroke={radarStrokeColor} fill={radarFillColor} fillOpacity={0.6} />
                   </RadarChart>
                 </ResponsiveContainer>
               ) : (
@@ -953,7 +995,14 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
               <div className="mt-3 flex flex-wrap gap-2">
                 {perceivedValueCategories.length > 0 ? (
                   perceivedValueCategories.map((cat) => (
-                    <span key={`perceived-${cat.label}`} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${cat.className}`}>
+                    <span
+                      key={`perceived-${cat.label}`}
+                      className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold"
+                      style={{
+                        backgroundColor: geoColorWithAlpha(cat.color, 0.18),
+                        color: cat.color,
+                      }}
+                    >
                       {cat.label} ({cat.value}%)
                     </span>
                   ))

@@ -336,6 +336,7 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
             {"label": "Taxa de Citação", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
             {"label": "Índice de Proeminência", "value": 0.0, "unit": "score", "delta": None, "delta_unit": "percent"},
             {"label": "Presença Zero-Click", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+            {"label": "Citações Exclusivas", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
         ]
 
     WINDOW_DAYS = 7
@@ -356,6 +357,7 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
             {"label": "Taxa de Citação", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
             {"label": "Índice de Proeminência", "value": 0.0, "unit": "score", "delta": None, "delta_unit": "percent"},
             {"label": "Presença Zero-Click", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
+            {"label": "Citações Exclusivas", "value": 0.0, "unit": "percent", "delta": None, "delta_unit": "points"},
         ]
 
     latest_date = _resolve_date(sorted_runs[0])
@@ -382,6 +384,7 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
                 "citation_rate": 0.0,
                 "prominence_avg": 0.0,
                 "zero_click": 0.0,
+                "exclusive_rate": 0.0,
                 "runs": 0,
             }
 
@@ -394,15 +397,17 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
         
         prominence_scores = [run.brand_prominence_score for run in runs_bucket if run.brand_prominence_score is not None]
         prominence_avg = sum(prominence_scores) / len(prominence_scores) if prominence_scores else 0.0
-        # Use zero_click_presence (LLM metric) instead of ia_resources_detected (SERP metric)
         zero_click_scores = [run.zero_click_presence for run in runs_bucket if run.zero_click_presence is not None]
         zero_click = sum(zero_click_scores) / len(zero_click_scores) if zero_click_scores else 0.0
+        exclusive_count = _compute_exclusive_citations(runs_bucket, our_domains)
+        exclusive_rate = (exclusive_count / total_runs) * 100 if total_runs else 0.0
 
         return {
             "brand_mentions": float(brand_mentions),
             "citation_rate": round(citation_rate, 1),
             "prominence_avg": round(prominence_avg, 1),
             "zero_click": round(zero_click, 1),
+            "exclusive_rate": round(exclusive_rate, 1),
             "runs": total_runs,
         }
 
@@ -450,6 +455,14 @@ def _compute_kpis(runs: List[Run], our_domains: set, bank_ids: Optional[List[str
             "unit": "percent",
             "delta": _point_change(current_metrics["zero_click"], previous_metrics["zero_click"]),
             "trend_direction": _trend_direction(current_metrics["zero_click"], previous_metrics["zero_click"]),
+            "delta_unit": "points",
+        },
+        {
+            "label": "Citações Exclusivas",
+            "value": current_metrics["exclusive_rate"],
+            "unit": "percent",
+            "delta": _point_change(current_metrics["exclusive_rate"], previous_metrics["exclusive_rate"]),
+            "trend_direction": _trend_direction(current_metrics["exclusive_rate"], previous_metrics["exclusive_rate"]),
             "delta_unit": "points",
         },
     ]
