@@ -38,7 +38,7 @@ from app.models.models import (
     RunSemanticInsight,
     PromptVersion,
 )
-from app.services.normalization import normalize_domain
+from app.services.normalization import normalize_domain, normalize_url
 
 
 # Official bank domains for web structure filtering
@@ -569,18 +569,21 @@ def _compute_positioning(
         domain_counts[canonical_domain] += 1
 
         url_value = (citation.url or "").strip()
-        if url_value and url_value not in urls_by_domain[canonical_domain]:
-            if len(urls_by_domain[canonical_domain]) < 5:
-                urls_by_domain[canonical_domain].append(url_value)
+        if url_value:
+            # Normalize URL to consolidate http/https and clean trailing chars
+            url_normalized = normalize_url(url_value)
+            if url_normalized not in urls_by_domain[canonical_domain]:
+                if len(urls_by_domain[canonical_domain]) < 5:
+                    urls_by_domain[canonical_domain].append(url_normalized)
 
-        is_ours = getattr(citation, "is_ours", None)
-        if (
-            (is_ours is True)
-            or _domain_matches(canonical_domain, our_domains)
-            or _domain_matches(normalized_domain, our_domains)
-        ) and url_value:
-            our_url_counts[url_value] += 1
-            url_domains.setdefault(url_value, domain_labels.get(canonical_domain, canonical_domain))
+            is_ours = getattr(citation, "is_ours", None)
+            if (
+                (is_ours is True)
+                or _domain_matches(canonical_domain, our_domains)
+                or _domain_matches(normalized_domain, our_domains)
+            ):
+                our_url_counts[url_normalized] += 1
+                url_domains.setdefault(url_normalized, domain_labels.get(canonical_domain, canonical_domain))
 
     total_mentions = sum(domain_counts.values()) or 0
     our_domain_counts = Counter({

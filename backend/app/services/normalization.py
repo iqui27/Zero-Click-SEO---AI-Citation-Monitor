@@ -57,6 +57,19 @@ def resolve_known_redirects(url: str) -> str:
     return url2
 
 
+def normalize_url(url: str) -> str:
+    """Normaliza URL: força https, remove www, limpa trailing chars (/, ), query params)."""
+    if not url:
+        return url
+    url = resolve_known_redirects(url)
+    url = url.strip().rstrip(')')
+    p = urlparse(url)
+    scheme = "https"
+    netloc = normalize_domain(p.netloc or "")
+    path = (p.path or "/").rstrip("/") or "/"
+    return urlunparse((scheme, netloc, path, "", "", ""))
+
+
 def normalize_url_for_dedupe(url: str) -> str:
     """Normaliza URL para deduplicação: schema/host lowercase, remove fragmentos e UTMs, remove trailing '/'."""
     if not url:
