@@ -12,9 +12,9 @@ export const GEO_PALETTE = [
 ] as const
 
 const BANK_COLOR_OVERRIDES: Record<string, string> = {
-  'Banco do Brasil': '#FCFC30',
-  'bb.com.br': '#FCFC30',
-  'Banco do B': '#FCFC30',
+  'Banco do Brasil': '#465EFF',
+  'bb.com.br': '#465EFF',
+  'Banco do B': '#465EFF',
   'Santander': '#F97A70',
   'santander.com.br': '#F97A70',
   'Banco Santander': '#F97A70',

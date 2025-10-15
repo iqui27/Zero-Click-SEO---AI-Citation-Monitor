@@ -454,6 +454,21 @@ class GeoPerceptionBreakdown(BaseModel):
     bank_b: Optional[float] = None
 
 
+class GeoProductPresenceBrand(BaseModel):
+    """Brand presence within a product category."""
+    brand: str
+    mentions: int
+    share: float
+
+
+class GeoProductPresence(BaseModel):
+    """Product category presence data."""
+    product: str
+    total_mentions: int
+    percentage: float
+    top_brands: List[GeoProductPresenceBrand]
+
+
 class GeoPositioning(BaseModel):
     """Positioning section data."""
     brand_ranking: List[GeoBrandRanking]
@@ -462,6 +477,7 @@ class GeoPositioning(BaseModel):
     perception_breakdown: List[GeoPerceptionBreakdown]
     share_of_voice: Optional[Dict[str, float]] = None
     total_mentions: Optional[int] = None
+    product_presence: Optional[List[GeoProductPresence]] = None
 
 
 class GeoWordCloudItem(BaseModel):

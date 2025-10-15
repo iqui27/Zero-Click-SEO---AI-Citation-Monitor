@@ -5,8 +5,9 @@ import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { ShareOfVoiceSection, CocitationSection, ContextSection } from './CompetitiveAnalysisSections'
+import { CompetitivePresenceSection } from './CompetitivePresenceSection'
 import { toast } from 'sonner'
-import { getGeoColorByIndex, geoColorWithAlpha } from '../../lib/geoPalette'
+import { getGeoColorByIndex, getGeoColorByName, geoColorWithAlpha } from '../../lib/geoPalette'
 import {
   ResponsiveContainer,
   BarChart,
@@ -275,6 +276,9 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
           <ShareOfVoiceSection data={data} />
           <CocitationSection data={data} />
         </div>
+        
+        {/* Presença Competitiva por Produto - largura total */}
+        <CompetitivePresenceSection data={data} />
         
         {/* Performance por Contexto - largura total */}
         <ContextSection data={data} aggregations={aggregations.data} />
@@ -901,12 +905,12 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
   }, [data])
 
   const perceivedValueCategories = useMemo(() => {
-    const categories = ((data.geo_summary as any)?.perceived_value_categories || []) as Array<{ label: string; value: number }>
+    const categories = ((data.geo_summary as any)?.perceived_value_categories || []) as Array<{ label: string; value: number; percentage: number }>
 
     if (categories.length) {
       return categories.slice(0, 5).map((item, index) => ({
         label: item.label,
-        value: item.value,
+        value: item.percentage,
         color: getGeoColorByIndex(4 + index),
       }))
     }
@@ -914,7 +918,9 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
     return []
   }, [data])
 
-  const radarStrokeColor = getGeoColorByIndex(0)
+  // Use brand color for radar if available
+  const brandName = data.positioning?.brand_ranking?.[0]?.brand || 'Banco do Brasil'
+  const radarStrokeColor = getGeoColorByName(brandName, 0)
   const radarFillColor = geoColorWithAlpha(radarStrokeColor, 0.35)
   const radarGridColor = geoColorWithAlpha(getGeoColorByIndex(1), 0.3)
   const radarAxisColor = geoColorWithAlpha(getGeoColorByIndex(2), 0.6)
@@ -976,7 +982,7 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
             {topDomains.length ? (
               <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                 {topDomains.map((item, index) => {
-                  const baseColor = getGeoColorByIndex(index)
+                  const baseColor = getGeoColorByName(item.domain, index)
                   return (
                     <div
                       key={item.normalized_domain ?? index}

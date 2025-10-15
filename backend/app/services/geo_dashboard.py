@@ -531,6 +531,39 @@ def _compute_radar(runs: List[Run], bank_ids: Optional[List[str]]) -> List[Dict[
     ]
 
 
+def _extract_product_from_url(url: str) -> Optional[str]:
+    """Extract product category from URL path."""
+    if not url:
+        return None
+    
+    url_lower = url.lower()
+    
+    # Product keywords mapping (order matters - check more specific first)
+    product_keywords = {
+        'cartao': ['cartao', 'cartoes', 'card'],
+        'conta': ['conta', 'account', 'corrente', 'poupanca', 'savings', 'universitario', 'universitaria'],
+        'emprestimo': ['emprestimo', 'credito-pessoal', 'loan', 'financiamento'],
+        'investimento': ['investimento', 'investment', 'renda-fixa', 'tesouro', 'cdb'],
+        'seguro': ['seguro', 'insurance', 'previdencia'],
+        'pix': ['pix'],
+        'consorcio': ['consorcio', 'consortium'],
+        'cambio': ['cambio', 'exchange', 'dolar'],
+    }
+    
+    for category, keywords in product_keywords.items():
+        for keyword in keywords:
+            if keyword in url_lower:
+                return category
+    
+    # If no specific product found but has a path, return 'outros'
+    # If it's just the homepage, return None
+    parsed = urlparse(url)
+    if parsed.path and parsed.path != '/' and len(parsed.path) > 1:
+        return 'outros'
+    
+    return None
+
+
 def _compute_positioning(
     db: Session,
     run_ids: List[str],
@@ -675,6 +708,65 @@ def _compute_positioning(
     # Perception breakdown (placeholder - needs more sophisticated analysis)
     perception_breakdown = []
 
+    # Product presence breakdown - aggregate citations by product category
+    product_mentions: Counter[str] = Counter()
+    product_by_brand: Dict[str, Counter[str]] = defaultdict(Counter)
+    
+    urls_checked = 0
+    products_found = 0
+    
+    for citation in citations:
+        if not citation.url:
+            continue
+        
+        urls_checked += 1
+        product = _extract_product_from_url(citation.url)
+        if not product:
+            continue
+        
+        products_found += 1
+        
+        # Count total mentions per product
+        product_mentions[product] += 1
+        
+        # Count mentions per product per brand
+        normalized_domain = normalize_domain(citation.domain) if citation.domain else None
+        if normalized_domain:
+            canonical_domain = normalized_domain
+            if our_domain_canonical_map:
+                canonical_domain = our_domain_canonical_map.get(normalized_domain, canonical_domain)
+            
+            brand_label = domain_labels.get(canonical_domain, canonical_domain)
+            product_by_brand[product][brand_label] += 1
+    
+    print(f"[DEBUG] Product extraction: checked {urls_checked} URLs, found {products_found} products, {len(product_mentions)} unique products")
+    if product_mentions:
+        print(f"[DEBUG] Product counts: {dict(product_mentions.most_common())}")
+    
+    # Build product presence list
+    product_presence = []
+    total_product_mentions = sum(product_mentions.values()) or 1
+    
+    for product, total_count in product_mentions.most_common():
+        brands_in_product = product_by_brand.get(product, {})
+        top_brands = sorted(brands_in_product.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        product_presence.append({
+            "product": product,
+            "total_mentions": total_count,
+            "percentage": round((total_count / total_product_mentions) * 100, 1),
+            "top_brands": [
+                {
+                    "brand": brand,
+                    "mentions": count,
+                    "share": round((count / total_count) * 100, 1)
+                }
+                for brand, count in top_brands
+            ]
+        })
+    
+    print(f"[DEBUG] Built product_presence list with {len(product_presence)} items")
+
     return {
         "brand_ranking": brand_ranking,
         "brand_domain_breakdown": brand_domain_breakdown,
@@ -682,6 +774,7 @@ def _compute_positioning(
         "perception_breakdown": perception_breakdown,
         "share_of_voice": share_of_voice,
         "total_mentions": total_mentions,
+        "product_presence": product_presence,
     }
 
 
