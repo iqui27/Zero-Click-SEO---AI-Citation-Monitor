@@ -37,6 +37,7 @@ from app.models.models import (
     SubProject,
     RunSemanticInsight,
     PromptVersion,
+    Engine,
 )
 from app.services.normalization import normalize_domain, normalize_url
 
@@ -204,7 +205,14 @@ def compute_geo_dashboard(
             query = query.filter(func.date(Run.started_at) <= date_to)
 
     if llm_model:
-        query = query.filter(Run.model_name.ilike(f"%{llm_model}%"))
+        llm_model_normalized = llm_model.strip().lower()
+        query = query.join(Engine, Run.engine_id == Engine.id)
+        query = query.filter(
+            or_(
+                func.lower(func.coalesce(Run.model_name, "")).like(f"%{llm_model_normalized}%"),
+                func.lower(func.coalesce(Engine.name, "")).like(f"%{llm_model_normalized}%"),
+            )
+        )
     
     # Filter by brand presence
     if brand_presence == 'with_brand':

@@ -193,13 +193,20 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
               </ResponsiveContainer>
             </div>
 
-            <div className="rounded-lg bg-slate-50 p-4">
-              <h4 className="text-sm font-semibold text-slate-900 mb-3">Top Concorrentes Mencionados</h4>
-              <ul className="space-y-2 text-sm text-slate-700">
-                {cocitationByCompetitor.slice(0, 5).map((item, index) => (
-                  <li key={`cocitation-list-${item.name}-${index}`} className="flex items-start gap-2">
-                    <span style={{ color: item.color }}>•</span>
-                    <span><strong>{item.name}</strong> representa <strong>{item.value.toFixed(1)}%</strong> das menções</span>
+            <div className="rounded-lg bg-slate-50/40 dark:bg-[color:var(--surface-subtle)] border border-slate-200/60 dark:border-[color:var(--border-strong)] p-4">
+              <h4 className="text-sm font-semibold text-slate-900 dark:text-[color:var(--text-primary)] mb-4 text-center">Concorrentes Mencionados</h4>
+              <ul className="space-y-2 text-sm text-slate-700 dark:text-[color:var(--text-muted)] max-h-64 overflow-y-auto pr-2">
+                {cocitationByCompetitor.map((item, index) => (
+                  <li
+                    key={`cocitation-list-${item.name}-${index}`}
+                    className="flex items-center justify-center gap-2 text-center flex-wrap"
+                  >
+                    <span className="font-semibold" style={{ color: item.color }}>
+                      {item.name}
+                    </span>
+                    <span>
+                      representa <strong>{item.value.toFixed(1)}%</strong> das menções
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -281,57 +288,45 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
     icon: ReactNode
     color: string
   }) => (
-    <div className={`${color} rounded-lg p-5 border border-gray-100`}>
+    <div className={`${color} dark:bg-[color:var(--surface-subtle)] rounded-lg p-5 border border-gray-200 dark:border-[color:var(--border-strong)]`}>
       <div className="flex items-center gap-2 mb-3">
         {icon}
-        <h3 className="text-xs font-medium text-gray-600 uppercase tracking-wider">{title}</h3>
+        <h3 className="text-xs font-medium text-gray-600 dark:text-[color:var(--text-muted)] uppercase tracking-wider">{title}</h3>
       </div>
       <div className="mt-2">
-        <p className="text-4xl font-bold text-gray-900">{value}</p>
-        <p className="text-sm text-gray-600 mt-2">{description}</p>
+        <p className="text-4xl font-bold text-gray-900 dark:text-[color:var(--text-primary)]">{value}</p>
+        <p className="text-sm text-gray-600 dark:text-[color:var(--text-muted)] mt-2">{description}</p>
       </div>
     </div>
   )
 
-  const ProductCard = ({ title, mentions, citationRate, engagement, conversion }: {
+  const ProductCard = ({ title, mentions, citationRate }: {
     title: string
     mentions: number
     citationRate: number
-    engagement: number
-    conversion: number
   }) => (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-      <div className="p-4 bg-gray-50 border-b border-gray-200">
+    <div className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg border border-gray-200 dark:border-[color:var(--border-strong)] overflow-hidden hover:shadow-md transition-shadow">
+      <div className="p-4 bg-gray-50 dark:bg-[color:var(--surface-subtle)] border-b border-gray-200 dark:border-[color:var(--border-strong)]">
         <div className="flex justify-between items-center">
-          <h3 className="font-semibold text-gray-800 capitalize">{title}</h3>
-          <span className="text-sm text-gray-500">{mentions.toFixed(0)} menções</span>
+          <h3 className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)] capitalize">{title}</h3>
+          <span className="text-sm text-gray-500 dark:text-[color:var(--text-muted)]">{mentions.toFixed(0)} menções</span>
         </div>
       </div>
-      <div className="divide-y divide-gray-100">
-        <div className="p-4">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm text-gray-600">Taxa de Citação</span>
-            <span className={`font-semibold text-lg ${citationRate > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
-              {citationRate.toFixed(1)}%
-            </span>
+      <div className="p-4">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-sm text-gray-600 dark:text-[color:var(--text-muted)]">Taxa de Citação</span>
+          <span className={`font-semibold text-lg ${citationRate > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-gray-600'}`}>
+            {citationRate.toFixed(1)}%
+          </span>
+        </div>
+        {citationRate > 0 && (
+          <div className="w-full bg-blue-100 dark:bg-blue-950/40 h-2 rounded-full overflow-hidden">
+            <div
+              className="bg-blue-500 dark:bg-blue-400 h-2 rounded-full transition-all"
+              style={{ width: `${Math.min(citationRate, 100)}%` }}
+            ></div>
           </div>
-          {citationRate > 0 && (
-            <div className="w-full bg-blue-100 h-2 rounded-full overflow-hidden">
-              <div
-                className="bg-blue-500 h-2 rounded-full transition-all"
-                style={{ width: `${Math.min(citationRate, 100)}%` }}
-              ></div>
-            </div>
-          )}
-        </div>
-        <div className="p-4 flex justify-between items-center">
-          <span className="text-sm text-gray-600">Engajamento</span>
-          <span className="font-semibold text-lg text-green-600">{engagement.toFixed(0)}</span>
-        </div>
-        <div className="p-4 flex justify-between items-center">
-          <span className="text-sm text-gray-600">Conversão</span>
-          <span className="font-semibold text-lg text-orange-500">{conversion.toFixed(0)}</span>
-        </div>
+        )}
       </div>
     </div>
   )
@@ -342,17 +337,17 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
     count: string
     color: string
   }) => (
-    <div className="bg-white rounded-lg p-4 border border-gray-100 hover:border-gray-200 transition-colors">
+    <div className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg p-4 border border-gray-200 dark:border-[color:var(--border-strong)] hover:border-gray-300 dark:hover:border-[color:var(--accent-primary)] transition-colors">
       <div className="flex justify-between mb-3">
         <div className="flex flex-col">
-          <span className="font-semibold text-gray-800">{label}</span>
-          <span className="text-xs text-gray-500 mt-1">{count}</span>
+          <span className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)]">{label}</span>
+          <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)] mt-1">{count}</span>
         </div>
-        <span className="text-blue-600 font-bold text-lg">{value.toFixed(0)}%</span>
+        <span className="text-blue-600 dark:text-blue-400 font-bold text-lg">{value.toFixed(0)}%</span>
       </div>
-      <div className="w-full bg-gray-200 h-2.5 rounded-full overflow-hidden">
+      <div className="w-full bg-gray-200 dark:bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
         <div
-          className={`${color} h-2.5 rounded-full transition-all`}
+          className={`${color} dark:bg-blue-500 h-2.5 rounded-full transition-all`}
           style={{ width: `${value}%` }}
         ></div>
       </div>
@@ -397,8 +392,8 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
         {valueCategories.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Categorias de Valor Percebido</h3>
-              <span className="text-xs text-gray-500">Classificação por tipo de valor</span>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-[color:var(--text-primary)]">Categorias de Valor Percebido</h3>
+              <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Classificação por tipo de valor</span>
             </div>
             <div className="space-y-3">
               {valueCategories.map((cat: { label: string; value: number; percentage: number }, index: number) => (
@@ -418,21 +413,29 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
         {productPerformance.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Performance por Categoria de Produto</h3>
-              <span className="text-xs text-gray-500">Métricas LLM agregadas</span>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-[color:var(--text-primary)]">Performance por Categoria de Produto</h3>
+              <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Taxa de Citação por Categoria</span>
             </div>
             
-            {/* Grid de Cards por Categoria */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Lista de barras horizontais */}
+            <div className="space-y-4">
               {productPerformance.map((item, index) => (
-                <ProductCard
-                  key={index}
-                  title={item.category}
-                  mentions={item.brandMentions}
-                  citationRate={item.citationRate}
-                  engagement={item.engagement}
-                  conversion={item.conversion}
-                />
+                <div key={index} className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg p-4 border border-gray-200 dark:border-[color:var(--border-strong)]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-base font-semibold text-gray-800 dark:text-[color:var(--text-primary)] capitalize">
+                      {item.category}
+                    </span>
+                    <span className="text-lg font-bold text-gray-900 dark:text-[color:var(--text-primary)]">
+                      {item.citationRate > 0 ? `${item.citationRate.toFixed(1)}%` : '–'}
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700/50 h-3 rounded-full overflow-hidden">
+                    <div
+                      className="bg-blue-500 dark:bg-blue-400 h-3 rounded-full transition-all"
+                      style={{ width: `${Math.min(item.citationRate, 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -442,24 +445,24 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
         {questionTypePerformance.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Performance por Tipo de Pergunta</h3>
-              <span className="text-xs text-gray-500">Análise por intent</span>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-[color:var(--text-primary)]">Performance por Tipo de Pergunta</h3>
+              <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Análise por intent</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {questionTypePerformance.map((item: { type: string; runs: number; mentions: number; engagement: number }, index: number) => (
-                <div key={index} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
-                    <h4 className="font-semibold text-gray-800 capitalize">{item.type}</h4>
-                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">{item.runs} runs</span>
+                <div key={index} className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg border border-gray-200 dark:border-[color:var(--border-strong)] p-5 hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100 dark:border-[color:var(--border-strong)]">
+                    <h4 className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)] capitalize">{item.type}</h4>
+                    <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)] bg-gray-100 dark:bg-[color:var(--surface-subtle)] px-2 py-1 rounded">{item.runs} runs</span>
                   </div>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Menções</span>
-                      <span className="text-xl font-bold text-gray-900">{item.mentions}</span>
+                      <span className="text-sm text-gray-600 dark:text-[color:var(--text-muted)]">Menções</span>
+                      <span className="text-xl font-bold text-gray-900 dark:text-[color:var(--text-primary)]">{item.mentions}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Engajamento</span>
-                      <span className="text-xl font-bold text-green-600">{item.engagement.toFixed(0)}</span>
+                      <span className="text-sm text-gray-600 dark:text-[color:var(--text-muted)]">Engajamento</span>
+                      <span className="text-xl font-bold text-green-600 dark:text-green-400">{item.engagement.toFixed(0)}</span>
                     </div>
                   </div>
                 </div>

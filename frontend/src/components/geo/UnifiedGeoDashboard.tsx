@@ -12,26 +12,19 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  LineChart,
-  Line,
   PieChart,
   Pie,
   RadarChart,
   Radar,
-  RadialBarChart,
-  RadialBar,
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
   Label,
-  LabelList,
   Cell,
   CartesianGrid,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
-  Legend,
-  ComposedChart,
 } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../ui/chart'
 import { TrendingUp, TrendingDown, Minus, ExternalLink, Trash2 } from 'lucide-react'
@@ -42,6 +35,7 @@ import { deleteProjectRuns, getGeoDashboardFilters, type GeoDashboardFiltersResp
 export type UnifiedGeoDashboardProps = {
   projectId: string
 }
+
 
 function ExamplesSection({ data }: { data: GeoDashboard | null }) {
   const samples = useMemo(() => {
@@ -264,9 +258,6 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
       {/* Big Numbers */}
       <BigNumbersSection data={data} overview={overview} />
 
-      {/* Presença da Marca */}
-      <BrandPresenceSection data={data} overview={overview} />
-
       {/* Análise Competitiva */}
       <div className="space-y-6">
         <h2 className="text-2xl font-semibold text-slate-900">Análise Competitiva</h2>
@@ -279,13 +270,7 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
         
         {/* Presença Competitiva por Produto - largura total */}
         <CompetitivePresenceSection data={data} />
-        
-        {/* Performance por Contexto - largura total */}
-        <ContextSection data={data} aggregations={aggregations.data} />
       </div>
-
-      {/* Engajamento & Potencial de Conversão */}
-      <EngagementConversionSection overview={overview} />
 
       {/* Monitoramento de Citações */}
       <CitationMonitoringSection data={data} aggregations={aggregations.data} />
@@ -295,6 +280,9 @@ export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
 
       {/* Acompanhamento de Domínio */}
       <DomainTrackingSection data={data} />
+
+      {/* Performance por Contexto */}
+      <ContextSection data={data} aggregations={aggregations.data} />
 
       {/* Exemplos */}
       <ExamplesSection data={data} />
@@ -397,189 +385,6 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
   )
 }
 
-function BrandPresenceSection({ data, overview }: { data: GeoDashboard; overview: any }) {
-  const timeline = overview?.brandTimeline || []
-  
-  const densityMetric = overview?.metrics?.brandMentionDensityAvg
-  const firstMentionMetric = overview?.metrics?.brandFirstMentionPositionAvg
-
-  const mentionsColor = getGeoColorByIndex(0)
-  const firstMentionColor = getGeoColorByIndex(1)
-
-  const firstMentionNormalized = useMemo(() => {
-    if (firstMentionMetric == null) return null
-    const normalized = firstMentionMetric >= 10 ? firstMentionMetric / 10 : firstMentionMetric
-    return Number.isFinite(normalized) ? normalized : null
-  }, [firstMentionMetric])
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Presença da Marca</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 pb-4">
-        <div className="h-[20rem]">
-          {timeline.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={timeline} margin={{ top: 16, right: 48, bottom: 40, left: 48 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
-                <YAxis yAxisId="left" stroke="#94a3b8" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
-                <YAxis yAxisId="right" orientation="right" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} tickLine={false} axisLine={false} />
-                <RechartsTooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="left" dataKey="mentions" name="Menções" fill={mentionsColor} radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="right" dataKey="firstMentionAvg" name="Posição Primeira Menção" fill={firstMentionColor} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
-              Sem dados de timeline para o período selecionado.
-            </div>
-          )}
-        </div>
-
-        <div className="text-xs text-slate-500 flex justify-between">
-          <span>Menções totais registradas no período</span>
-          <span>Posição média da primeira menção (%)</span>
-        </div>
-
-        <div className="grid gap-3 pt-2 sm:grid-cols-2 xl:grid-cols-2">
-          <MetricPanel
-            title="Densidade de Menções"
-            primary={densityMetric != null ? densityMetric.toFixed(1) : '–'}
-            secondary="por 1000 caracteres"
-          />
-          <MetricPanel
-            title="Posição Média Primeira Menção"
-            primary={firstMentionNormalized != null ? firstMentionNormalized.toFixed(1) : '–'}
-          />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-type MetricPanelProps = {
-  title: string
-  primary: string
-  secondary?: string
-}
-
-function MetricPanel({ title, primary, secondary }: MetricPanelProps) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">{title}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-900">{primary}</p>
-      {secondary ? <p className="text-xs text-slate-500 mt-1">{secondary}</p> : null}
-    </div>
-  )
-}
-
-
-function EngagementConversionSection({ overview }: { overview: any }) {
-  const timelineRaw = overview?.timeline || []
-  
-  // Filter timeline data - data already comes transformed from overview
-  const timeline = useMemo(() => {
-    const filtered = timelineRaw.filter((point: any) => 
-      (point.engagement != null && point.engagement > 0) || 
-      (point.conversionPotential != null && point.conversionPotential > 0)
-    )
-    
-    console.log('[EngagementConversion] Raw:', timelineRaw.length, 'Filtered:', filtered.length, 'Data:', filtered)
-    return filtered
-  }, [timelineRaw])
-  
-  const conversationalTriggers = overview?.metrics?.conversationalTriggerAvg || 0
-  const engagementScore = overview?.metrics?.engagementScoreAvg || 0
-  const conversionPotential = overview?.metrics?.topConversionPotential || 'Médio'
-
-  const engagementColor = getGeoColorByIndex(2)
-  const conversionColor = getGeoColorByIndex(3)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Engajamento & Potencial de Conversão</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {timeline.length > 0 ? (
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={timeline}
-                margin={{
-                  left: 12,
-                  right: 12,
-                  top: 12,
-                  bottom: 12,
-                }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  tick={{ fontSize: 11 }}
-                  stroke="#94a3b8"
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 11 }}
-                  stroke="#94a3b8"
-                  domain={[0, 100]}
-                />
-                <RechartsTooltip />
-                <Legend />
-                <Line
-                  dataKey="engagement"
-                  name="Taxa de Engajamento"
-                  type="monotone"
-                  stroke={engagementColor}
-                  strokeWidth={2}
-                  dot={{ fill: engagementColor, r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-                <Line
-                  dataKey="conversionPotential"
-                  name="Potencial de Conversão"
-                  type="monotone"
-                  stroke={conversionColor}
-                  strokeWidth={2}
-                  dot={{ fill: conversionColor, r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500">Sem dados de timeline.</p>
-        )}
-        
-        <div className="mt-6 grid grid-cols-3 gap-4">
-          <div>
-            <p className="text-xs text-slate-500">Gatilhos Conversacionais</p>
-            <p className="text-xl font-semibold text-slate-900">{conversationalTriggers.toFixed(1)}</p>
-            <p className="text-xs text-slate-500">média por resposta</p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Score de Engajamento</p>
-            <p className="text-xl font-semibold" style={{ color: engagementColor }}>{engagementScore.toFixed(0)}</p>
-            <p className="text-xs text-slate-500">de 100 pontos</p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Potencial de Conversão</p>
-            <p className="text-xl font-semibold" style={{ color: conversionColor }}>{conversionPotential}</p>
-            <p className="text-xs text-slate-500">68% das respostas</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
 
 // Label mappings for Portuguese
 const PRODUCT_LABELS: Record<string, string> = {
@@ -612,172 +417,114 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
   const byFunnel = (aggregations?.byFunnel || []).filter((item: any) => item.funnel_stage)
   const byQuestion = (aggregations?.byQuestionType || []).filter((item: any) => item.question_type)
 
-  // Prepare timeline data for Citation Rate graph
-  const timeline = useMemo(() => {
-    const timelineData = data.timeline || []
-    return timelineData.map((point: any) => ({
-      date: point.date,
-      observed: point.citation_rate_observed_avg || 0,
-      corrected: point.citation_rate_corrected_avg || 0,
-    }))
-  }, [data])
-
-  const observedColor = getGeoColorByIndex(4)
-  const correctedColor = getGeoColorByIndex(5)
   const productColor = getGeoColorByIndex(6)
   const funnelColor = getGeoColorByIndex(7)
   const questionColor = getGeoColorByIndex(8)
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Monitoramento de Citações</CardTitle>
-        <CardDescription>Taxa de Citação (CR)</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {/* Gráfico de linha temporal - Barras + Linha */}
-        <div className="h-80">
-          {timeline.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={timeline} margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="#94a3b8" 
-                  tick={{ fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis 
-                  stroke="#94a3b8" 
-                  tick={{ fontSize: 11 }} 
-                  domain={[0, 100]}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <RechartsTooltip 
-                  formatter={(value: any) => `${value.toFixed(1)}%`}
-                  contentStyle={{ 
-                    backgroundColor: 'white', 
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '6px',
-                    fontSize: '12px'
-                  }}
-                />
-                <Legend 
-                  wrapperStyle={{ fontSize: '12px' }}
-                  iconType="circle"
-                />
-                <Bar 
-                  dataKey="observed" 
-                  name="CR Observado" 
-                  fill={observedColor}
-                  radius={[4, 4, 0, 0]}
-                  barSize={40}
-                />
-                <Line 
-                  type="monotone"
-                  dataKey="corrected" 
-                  name="CR Corrigido" 
-                  stroke={correctedColor}
-                  strokeWidth={2.5}
-                  dot={{ fill: correctedColor, r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
-              Gráfico de linha temporal (CR Observado vs CR Corrigido)
-            </div>
-          )}
-        </div>
-
-        {/* Por Produto, Funil e Tipo */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div>
-            <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Produto</h4>
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-slate-900">Monitoramento de Citações</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Por Produto</CardTitle>
+          </CardHeader>
+          <CardContent>
             {byProduct.length > 0 ? (
-              byProduct.slice(0, 5).map((item: any) => (
-                <div key={item.product_category} className="mb-2">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-slate-600">{PRODUCT_LABELS[item.product_category] || item.product_category}</span>
-                    <span className="font-semibold text-slate-900">
-                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                    </span>
+              <div className="space-y-3">
+                {byProduct.slice(0, 5).map((item: any) => (
+                  <div key={item.product_category}>
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <span className="text-slate-700 font-medium">{PRODUCT_LABELS[item.product_category] || item.product_category}</span>
+                      <span className="font-semibold text-slate-900">
+                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${item.avg_citation_rate || 0}%`,
+                          backgroundColor: geoColorWithAlpha(productColor, 0.8),
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full"
-                      style={{
-                        width: `${item.avg_citation_rate || 0}%`,
-                        backgroundColor: geoColorWithAlpha(productColor, 0.8),
-                      }}
-                    />
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             ) : (
-              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+              <p className="text-sm text-slate-500">Sem dados disponíveis</p>
             )}
-          </div>
+          </CardContent>
+        </Card>
 
-          <div>
-            <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Estágio do Funil</h4>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Por Estágio do Funil</CardTitle>
+          </CardHeader>
+          <CardContent>
             {byFunnel.length > 0 ? (
-              byFunnel.map((item: any) => (
-                <div key={item.funnel_stage} className="mb-2">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-slate-600">{FUNNEL_LABELS[item.funnel_stage] || item.funnel_stage}</span>
-                    <span className="font-semibold text-slate-900">
-                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                    </span>
+              <div className="space-y-3">
+                {byFunnel.map((item: any) => (
+                  <div key={item.funnel_stage}>
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <span className="text-slate-700 font-medium">{FUNNEL_LABELS[item.funnel_stage] || item.funnel_stage}</span>
+                      <span className="font-semibold text-slate-900">
+                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${item.avg_citation_rate || 0}%`,
+                          backgroundColor: geoColorWithAlpha(funnelColor, 0.8),
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full"
-                      style={{
-                        width: `${item.avg_citation_rate || 0}%`,
-                        backgroundColor: geoColorWithAlpha(funnelColor, 0.8),
-                      }}
-                    />
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             ) : (
-              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+              <p className="text-sm text-slate-500">Sem dados disponíveis</p>
             )}
-          </div>
+          </CardContent>
+        </Card>
 
-          <div>
-            <h4 className="text-sm font-semibold text-slate-700 mb-3">Por Tipo de Pergunta</h4>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Por Tipo de Pergunta</CardTitle>
+          </CardHeader>
+          <CardContent>
             {byQuestion.length > 0 ? (
-              byQuestion.slice(0, 4).map((item: any) => (
-                <div key={item.question_type} className="mb-2">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-slate-600">{QUESTION_LABELS[item.question_type] || item.question_type}</span>
-                    <span className="font-semibold text-slate-900">
-                      {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
-                    </span>
+              <div className="space-y-3">
+                {byQuestion.slice(0, 4).map((item: any) => (
+                  <div key={item.question_type}>
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <span className="text-slate-700 font-medium">{QUESTION_LABELS[item.question_type] || item.question_type}</span>
+                      <span className="font-semibold text-slate-900">
+                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${item.avg_citation_rate || 0}%`,
+                          backgroundColor: geoColorWithAlpha(questionColor, 0.8),
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full"
-                      style={{
-                        width: `${item.avg_citation_rate || 0}%`,
-                        backgroundColor: geoColorWithAlpha(questionColor, 0.8),
-                      }}
-                    />
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             ) : (
-              <p className="text-xs text-slate-500">Sem dados disponíveis</p>
+              <p className="text-sm text-slate-500">Sem dados disponíveis</p>
             )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   )
 }
 

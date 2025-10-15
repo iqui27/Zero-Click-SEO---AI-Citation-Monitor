@@ -3,17 +3,110 @@
 @tailwind utilities;
 
 :root {
-  /* Force built-in form controls (select, date, time, etc.) to render in light when not in .dark */
   color-scheme: light;
+  --color-body: #efefef;
+  --surface-card: #ffffff;
+  --surface-subtle: #f5f7fb;
+  --border-strong: #d7deef;
+  --text-primary: #0b1120;
+  --text-muted: #65748e;
+  --accent-primary: #2563eb;
+  --card-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
 }
+
 .dark {
-  /* And in dark when .dark class is present on <html> (tailwind darkMode: 'class') */
   color-scheme: dark;
+  --color-body: #050b1c;
+  --surface-card: #0d172d;
+  --surface-subtle: #101d34;
+  --border-strong: #233250;
+  --text-primary: #e8efff;
+  --text-muted: #b6c9ee;
+  --accent-primary: #7da8ff;
+  --card-shadow: 0 28px 65px rgba(4, 10, 28, 0.6);
 }
 
 body {
-  @apply bg-[#efefef] dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100;
+  background-color: var(--color-body);
+  color: var(--text-primary);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+select,
+input,
+textarea {
+  background-color: #ffffff;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.dark select,
+.dark input,
+.dark textarea {
+  background-color: var(--surface-subtle);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+a {
+  color: var(--accent-primary);
+}
+
+.dark a {
+  color: var(--accent-primary);
+}
+
+.dark .bg-white,
+.dark .bg-white\/90,
+.dark .bg-white\/80 {
+  background-color: var(--surface-card) !important;
+}
+
+.dark .bg-slate-50,
+.dark .bg-slate-50\/40,
+.dark .bg-slate-100,
+.dark .bg-slate-200,
+.dark .bg-blue-50,
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+.dark .bg-slate-100\/80,
+.dark .bg-slate-100\/60 {
+  background-color: var(--surface-subtle) !important;
+}
+
+.dark .border-slate-200,
+.dark .border-slate-200\/60,
+.dark .border-slate-200\/70,
+.dark .border-gray-200,
+.dark .border-gray-200\/70,
+.dark .border-blue-200,
+.dark .border-blue-200\/70,
+.dark .border-slate-100,
+.dark .border-slate-100\/60 {
+  border-color: var(--border-strong) !important;
+}
+
+.dark .text-slate-900,
+.dark .text-gray-900,
+.dark .text-slate-800,
+.dark .text-gray-800,
+.dark .text-slate-700,
+.dark .text-gray-700 {
+  color: var(--text-primary) !important;
+}
+
+.dark .text-slate-500,
+.dark .text-gray-500,
+.dark .text-slate-400,
+.dark .text-gray-400 {
+  color: var(--text-muted) !important;
+}
+
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg {
+  box-shadow: var(--card-shadow) !important;
 }
 
 code, pre, kbd, samp {
