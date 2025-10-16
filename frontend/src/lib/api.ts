@@ -754,6 +754,60 @@ export const getGeoDashboardFilters = (projectId: string) => {
   return http.get<GeoDashboardFiltersResponse>(`/projects/${projectId}/geo-dashboard/filters`).then(r => r.data)
 }
 
+// ---------- GEO Dashboard Async (Celery) ----------
+export type GeoDashboardTaskResponse = {
+  task_id: string
+  status: 'processing'
+  message: string
+}
+
+export type GeoDashboardStatusResponse = {
+  status: 'processing' | 'completed' | 'error'
+  data?: GeoDashboard
+  error?: string
+  message?: string
+}
+
+export const startGeoDashboardComputation = (
+  projectId: string,
+  filters?: {
+    prompt_id?: string
+    prompt_version_id?: string
+    subproject_id?: string
+    date_from?: string
+    date_to?: string
+    bank_ids?: string[]
+    llm_model?: string
+    prompt_category?: string
+    prompt_text?: string
+    brand_presence?: string
+  }
+) => {
+  const params = new URLSearchParams()
+  
+  if (filters?.prompt_id) params.set('prompt_id', filters.prompt_id)
+  if (filters?.prompt_version_id) params.set('prompt_version_id', filters.prompt_version_id)
+  if (filters?.subproject_id) params.set('subproject_id', filters.subproject_id)
+  if (filters?.date_from) params.set('date_from', filters.date_from)
+  if (filters?.date_to) params.set('date_to', filters.date_to)
+  if (filters?.bank_ids && filters.bank_ids.length > 0) {
+    params.set('bank_ids', filters.bank_ids.join(','))
+  }
+  if (filters?.llm_model) params.set('llm_model', filters.llm_model)
+  if (filters?.prompt_category) params.set('prompt_category', filters.prompt_category)
+  if (filters?.prompt_text) params.set('prompt_text', filters.prompt_text)
+  if (filters?.brand_presence) params.set('brand_presence', filters.brand_presence)
+
+  const query = params.toString()
+  const path = `/projects/${projectId}/geo-dashboard/compute${query ? `?${query}` : ''}`
+  
+  return http.post<GeoDashboardTaskResponse>(path).then(r => r.data)
+}
+
+export const getGeoDashboardStatus = (projectId: string, taskId: string) => {
+  return http.get<GeoDashboardStatusResponse>(`/projects/${projectId}/geo-dashboard/status/${taskId}`).then(r => r.data)
+}
+
 export const getGeoStatsByProduct = (projectId: string, days = 30) =>
   http.get<Record<string, GeoStatsByProductItem>>(`/projects/${projectId}/geo/stats-by-product`, {
     params: { days }

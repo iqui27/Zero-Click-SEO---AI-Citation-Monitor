@@ -35,6 +35,7 @@ from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_d
 from app.services.gemini_semantic import GeminiSemanticService
 from app.services.geo_metrics import calculate_all_geo_metrics
 from app.services.gemini_integration import GeminiClassificationIntegrator
+from app.services.geo_dashboard import compute_geo_dashboard
 
 celery = Celery(
     "seo_monitor",
@@ -1084,5 +1085,77 @@ def process_semantic_insights(run_id: str) -> None:
         run = db.get(Run, run_id)
         if run:
             _finalize_run(db, run, "Semantic insights failed")
+    finally:
+        db.close()
+
+
+@celery.task(name="compute_geo_dashboard_task", soft_time_limit=300, time_limit=360)
+def compute_geo_dashboard_task(
+    project_id: str,
+    prompt_id: str | None = None,
+    prompt_version_id: str | None = None,
+    subproject_id: str | None = None,
+    date_from_str: str | None = None,
+    date_to_str: str | None = None,
+    bank_ids: list[str] | None = None,
+    llm_model: str | None = None,
+    prompt_category: str | None = None,
+    prompt_text: str | None = None,
+    brand_presence: str | None = None,
+) -> dict:
+    """
+    Task Celery para processar GEO Dashboard em background.
+    Timeout de 5 minutos (soft) e 6 minutos (hard).
+    """
+    from datetime import date as date_type
+    
+    db = SessionLocal()
+    
+    try:
+        print(f"[GEO-TASK] Iniciando processamento para projeto {project_id}")
+        
+        # Parse dates
+        date_from = date_type.fromisoformat(date_from_str) if date_from_str else None
+        date_to = date_type.fromisoformat(date_to_str) if date_to_str else None
+        
+        # Compute dashboard
+        result = compute_geo_dashboard(
+            db=db,
+            project_id=project_id,
+            prompt_id=prompt_id,
+            prompt_version_id=prompt_version_id,
+            subproject_id=subproject_id,
+            date_from=date_from,
+            date_to=date_to,
+            bank_ids=bank_ids,
+            llm_model=llm_model,
+            prompt_category=prompt_category,
+            prompt_text=prompt_text,
+            brand_presence=brand_presence,
+        )
+        
+        print(f"[GEO-TASK] Processamento concluído para projeto {project_id}")
+        
+        # Converter para dict serializável
+        return {
+            "status": "completed",
+            "data": result.dict() if hasattr(result, 'dict') else result,
+            "project_id": project_id,
+        }
+        
+    except SoftTimeLimitExceeded:
+        print(f"[GEO-TASK] Timeout ao processar projeto {project_id}")
+        return {
+            "status": "timeout",
+            "error": "Processamento excedeu o tempo limite de 5 minutos",
+            "project_id": project_id,
+        }
+    except Exception as exc:
+        print(f"[GEO-TASK] Erro ao processar projeto {project_id}: {exc}")
+        return {
+            "status": "error",
+            "error": str(exc),
+            "project_id": project_id,
+        }
     finally:
         db.close()

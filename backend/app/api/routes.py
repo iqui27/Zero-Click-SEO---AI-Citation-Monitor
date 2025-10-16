@@ -5371,6 +5371,98 @@ def recalculate_run_metrics(run_id: str, db: Session = Depends(get_db)):
     }
 
 
+# Cache Redis para GEO Dashboard (TTL 6 horas - dados mudam 4x/dia)
+import redis
+import json as json_module
+from datetime import timedelta
+
+try:
+    redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+except:
+    redis_client = None
+
+def get_geo_cache_key(project_id: str, filters: dict) -> str:
+    """Gera chave única para cache baseado em projeto e filtros"""
+    import hashlib
+    filter_str = json_module.dumps(filters, sort_keys=True)
+    hash_key = hashlib.md5(filter_str.encode()).hexdigest()
+    return f"geo_dashboard:{project_id}:{hash_key}"
+
+@api_router.post("/projects/{project_id}/geo-dashboard/compute")
+def start_geo_dashboard_computation(
+    project_id: str,
+    prompt_id: Optional[str] = None,
+    prompt_version_id: Optional[str] = None,
+    subproject_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    bank_ids: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    prompt_category: Optional[str] = None,
+    prompt_text: Optional[str] = None,
+    brand_presence: Optional[str] = None,
+):
+    """
+    Inicia o processamento do GEO Dashboard em background.
+    Retorna task_id para polling do status.
+    """
+    from app.services.tasks import compute_geo_dashboard_task
+    
+    # Parse bank_ids
+    bank_ids_list = None
+    if bank_ids:
+        bank_ids_list = [b.strip() for b in bank_ids.split(",") if b.strip()]
+    
+    # Iniciar task em background
+    task = compute_geo_dashboard_task.delay(
+        project_id=project_id,
+        prompt_id=prompt_id,
+        prompt_version_id=prompt_version_id,
+        subproject_id=subproject_id,
+        date_from_str=date_from,
+        date_to_str=date_to,
+        bank_ids=bank_ids_list,
+        llm_model=llm_model,
+        prompt_category=prompt_category,
+        prompt_text=prompt_text,
+        brand_presence=brand_presence,
+    )
+    
+    return {
+        "task_id": task.id,
+        "status": "processing",
+        "message": "Dashboard sendo processado em background"
+    }
+
+
+@api_router.get("/projects/{project_id}/geo-dashboard/status/{task_id}")
+def get_geo_dashboard_status(project_id: str, task_id: str):
+    """
+    Verifica o status do processamento do GEO Dashboard.
+    """
+    from app.services.tasks import celery
+    
+    task = celery.AsyncResult(task_id)
+    
+    if task.ready():
+        result = task.get()
+        if result.get("status") == "completed":
+            return {
+                "status": "completed",
+                "data": result.get("data")
+            }
+        else:
+            return {
+                "status": "error",
+                "error": result.get("error", "Erro desconhecido")
+            }
+    else:
+        return {
+            "status": "processing",
+            "message": "Dashboard ainda sendo processado..."
+        }
+
+
 @api_router.get("/projects/{project_id}/geo-dashboard", response_model=GeoDashboardOut)
 def get_geo_dashboard(
     project_id: str,
@@ -5384,6 +5476,7 @@ def get_geo_dashboard(
     prompt_category: Optional[str] = None,
     prompt_text: Optional[str] = None,
     brand_presence: Optional[str] = None,
+    force_refresh: bool = False,
     db: Session = Depends(get_db)
 ) -> GeoDashboardOut:
     """
@@ -5400,9 +5493,12 @@ def get_geo_dashboard(
     - prompt_category: Filter by prompt template category
     - prompt_text: Filter by prompt text (partial match on name or text)
     - brand_presence: Filter by brand citations ('with_brand', 'without_brand', 'all')
+    - force_refresh: Force cache refresh (default: false)
     """
     from app.services.geo_dashboard import compute_geo_dashboard
-    from datetime import date as date_type
+    from datetime import date as date_type, timedelta, datetime
+    import hashlib
+    import json
 
     # Parse date filters
     date_from_parsed = None
@@ -5425,7 +5521,33 @@ def get_geo_dashboard(
     if bank_ids:
         bank_ids_list = [b.strip() for b in bank_ids.split(",") if b.strip()]
 
-    # Compute dashboard data
+    # Gerar chave de cache Redis
+    cache_filters = {
+        "prompt_id": prompt_id,
+        "prompt_version_id": prompt_version_id,
+        "subproject_id": subproject_id,
+        "date_from": str(date_from_parsed) if date_from_parsed else None,
+        "date_to": str(date_to_parsed) if date_to_parsed else None,
+        "bank_ids": bank_ids_list,
+        "llm_model": llm_model,
+        "prompt_category": prompt_category,
+        "prompt_text": prompt_text,
+        "brand_presence": brand_presence,
+    }
+    cache_key = get_geo_cache_key(project_id, cache_filters)
+
+    # Verificar cache Redis (TTL 6 horas)
+    if not force_refresh and redis_client:
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                print(f"[GEO-CACHE-REDIS] Cache hit para {project_id}")
+                return json_module.loads(cached_data)
+        except Exception as e:
+            print(f"[GEO-CACHE-REDIS] Erro ao ler cache: {e}")
+
+    # Cache miss - computar dados
+    print(f"[GEO-CACHE-REDIS] Cache miss para {project_id} - computando...")
     result = compute_geo_dashboard(
         db=db,
         project_id=project_id,
@@ -5440,6 +5562,24 @@ def get_geo_dashboard(
         prompt_text=prompt_text,
         brand_presence=brand_presence,
     )
+
+    # Armazenar no cache Redis (6 horas = 21600 segundos)
+    if redis_client:
+        try:
+            # Serializar resultado para JSON
+            if hasattr(result, 'dict'):
+                result_dict = result.dict()
+            else:
+                result_dict = result
+            
+            redis_client.setex(
+                cache_key,
+                21600,  # 6 horas
+                json_module.dumps(result_dict)
+            )
+            print(f"[GEO-CACHE-REDIS] Dados salvos no cache por 6 horas")
+        except Exception as e:
+            print(f"[GEO-CACHE-REDIS] Erro ao salvar cache: {e}")
 
     return result
 

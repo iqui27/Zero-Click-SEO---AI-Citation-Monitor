@@ -7,6 +7,8 @@ import {
   type GeoStatsByProductItem,
   type GeoStatsByQuestionTypeItem,
   getGeoDashboard,
+  startGeoDashboardComputation,
+  getGeoDashboardStatus,
   type GeoDashboard,
   type GeoPositioning,
   type GeoPositioningTimelinePoint,
@@ -74,6 +76,8 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
     }
 
     let mounted = true
+    let pollInterval: ReturnType<typeof setInterval> | null = null
+    
     setState((prev) => ({ ...prev, loading: true, error: null }))
 
     // Convert filter values to API format
@@ -92,18 +96,64 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
       brand_presence: filters?.brand_presence !== 'all' ? filters?.brand_presence : undefined,
     }
 
-    getGeoDashboard(projectId, apiFilters)
-      .then((data) => {
+    // Iniciar processamento assíncrono
+    startGeoDashboardComputation(projectId, apiFilters)
+      .then((response) => {
         if (!mounted) return
-        setState({ loading: false, error: null, data })
+        
+        const taskId = response.task_id
+        console.log('[GEO] Task iniciada:', taskId)
+        
+        // Polling do status a cada 2 segundos
+        const checkStatus = async () => {
+          try {
+            const status = await getGeoDashboardStatus(projectId, taskId)
+            
+            if (!mounted) return
+            
+            if (status.status === 'completed' && status.data) {
+              console.log('[GEO] Processamento concluído')
+              setState({ loading: false, error: null, data: status.data })
+              if (pollInterval) clearInterval(pollInterval)
+            } else if (status.status === 'error') {
+              console.error('[GEO] Erro no processamento:', status.error)
+              setState({ loading: false, error: status.error || 'Erro ao processar dashboard', data: null })
+              if (pollInterval) clearInterval(pollInterval)
+            }
+            // Se status === 'processing', continua polling
+          } catch (err: any) {
+            console.error('[GEO] Erro ao verificar status:', err)
+            if (!mounted) return
+            setState({ loading: false, error: err?.message || 'Erro ao verificar status', data: null })
+            if (pollInterval) clearInterval(pollInterval)
+          }
+        }
+        
+        // Primeira verificação imediata
+        checkStatus()
+        
+        // Polling a cada 2 segundos
+        pollInterval = setInterval(checkStatus, 2000)
+        
+        // Timeout de 5 minutos
+        setTimeout(() => {
+          if (pollInterval) {
+            clearInterval(pollInterval)
+            if (mounted && state.loading) {
+              setState({ loading: false, error: 'Timeout: processamento demorou mais de 5 minutos', data: null })
+            }
+          }
+        }, 300000)
       })
       .catch((err: any) => {
         if (!mounted) return
-        setState({ loading: false, error: err?.message || 'Erro ao carregar GEO dashboard', data: null })
+        console.error('[GEO] Erro ao iniciar processamento:', err)
+        setState({ loading: false, error: err?.message || 'Erro ao iniciar processamento', data: null })
       })
 
     return () => {
       mounted = false
+      if (pollInterval) clearInterval(pollInterval)
     }
   }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text, filters?.prompt_id, filters?.brand_presence])
 
