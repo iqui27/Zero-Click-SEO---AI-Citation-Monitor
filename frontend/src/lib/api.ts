@@ -769,4 +769,42 @@ export const getGeoStatsByQuestionType = (projectId: string, days = 30) =>
     params: { days }
   }).then(r => r.data)
 
+// ---------- Analytics Dashboard (Aggregated) ----------
+export type DashboardData = {
+  overview: {
+    total_runs: number
+    amr_avg: number
+    dcr_avg: number
+    zcrs_avg: number
+  }
+  costs: {
+    total_cost_usd: number
+    total_tokens: number
+    runs: number
+    avg_cost_per_run: number
+  }
+  series: Array<{
+    day: string
+    amr_avg: number
+    dcr_avg: number
+    zcrs_avg: number
+  }>
+  top_domains: Array<{
+    domain: string
+    count: number
+  }>
+  performance: Array<{
+    engine: string
+    amr_avg: number
+    dcr_avg: number
+    zcrs_avg: number
+    runs: number
+  }>
+}
+
+export const getDashboardData = (subproject_id?: string) =>
+  http.get<DashboardData>('/analytics/dashboard', {
+    params: subproject_id ? { subproject_id } : {}
+  }).then(r => r.data)
+
 export default http

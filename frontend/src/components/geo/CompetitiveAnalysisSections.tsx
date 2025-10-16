@@ -16,7 +16,7 @@ import {
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../ui/chart'
 import type { GeoDashboard } from '../../lib/api'
 import { Grid3x3, TrendingUp, MessageSquare } from 'lucide-react'
-import { getGeoColorByName } from '../../lib/geoPalette'
+import { getGeoColorByName, getGeoColorByIndex } from '../../lib/geoPalette'
 
 // Função para simplificar nomes de domínios
 function simplifyBankName(name: string): string {
@@ -239,10 +239,13 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
   // Percived Value Categories
   const valueCategories = useMemo(() => {
     const categories = data.geo_summary?.perceived_value_categories || []
-    return categories.map((cat: any) => ({
+    // Use laranja (índice 9) ao invés de amarelo (índice 4)
+    const colorIndices = [9, 0, 1, 2, 3] // Começa com laranja
+    return categories.map((cat: any, index: number) => ({
       label: cat.label,
       value: cat.value,
       percentage: cat.percentage,
+      color: getGeoColorByIndex(colorIndices[index % colorIndices.length]),
     }))
   }, [data])
 
@@ -343,12 +346,12 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
           <span className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)]">{label}</span>
           <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)] mt-1">{count}</span>
         </div>
-        <span className="text-blue-600 dark:text-blue-400 font-bold text-lg">{value.toFixed(0)}%</span>
+        <span className="font-bold text-lg" style={{ color }}>{value.toFixed(0)}%</span>
       </div>
       <div className="w-full bg-gray-200 dark:bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
         <div
-          className={`${color} dark:bg-blue-500 h-2.5 rounded-full transition-all`}
-          style={{ width: `${value}%` }}
+          className="h-2.5 rounded-full transition-all"
+          style={{ width: `${value}%`, backgroundColor: color }}
         ></div>
       </div>
     </div>
@@ -396,13 +399,13 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
               <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Classificação por tipo de valor</span>
             </div>
             <div className="space-y-3">
-              {valueCategories.map((cat: { label: string; value: number; percentage: number }, index: number) => (
+              {valueCategories.map((cat: { label: string; value: number; percentage: number; color: string }, index: number) => (
                 <ProgressBar
                   key={index}
                   label={cat.label.charAt(0).toUpperCase() + cat.label.slice(1)}
                   value={cat.percentage}
                   count={`${cat.value} runs`}
-                  color="bg-blue-500"
+                  color={cat.color}
                 />
               ))}
             </div>

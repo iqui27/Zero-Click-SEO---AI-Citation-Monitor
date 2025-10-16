@@ -1,38 +1,26 @@
 import React, { useEffect, useState } from 'react'
 import { formatNumberCompact } from '../lib/utils'
-import axios from 'axios'
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts'
 import { Button } from '../components/ui/button'
 import { Select } from '../components/ui/select'
 import { Skeleton } from '../components/ui/skeleton'
-
-import { OverviewAnalytics, SeriesPoint, TopDomain, PerfByEngine, CostsResponse } from '../types/analytics'
-
-const API = '/api'
+import { getDashboardData, DashboardData } from '../lib/api'
+import axios from 'axios'
 
 export default function Dashboard() {
-  const [overview, setOverview] = useState<OverviewAnalytics | null>(null)
-  const [series, setSeries] = useState<SeriesPoint[] | null>(null)
-  const [topDomains, setTopDomains] = useState<TopDomain[] | null>(null)
-  const [perf, setPerf] = useState<PerfByEngine[] | null>(null)
-  const [costs, setCosts] = useState<CostsResponse | null>(null)
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    axios.get(`${API}/analytics/overview`).then((r) => setOverview(r.data))
     const sp = localStorage.getItem('theme_focus') || localStorage.getItem('subproject_focus')
-    if (sp) {
-      axios.get(`${API}/analytics/subprojects/${sp}/series`).then(r => setSeries(r.data))
-      axios.get(`${API}/analytics/subprojects/${sp}/top-domains`).then(r => setTopDomains(r.data))
-      axios.get(`${API}/analytics/performance-by-engine`, { params: { subproject_id: sp } }).then(r => setPerf(r.data))
-      axios.get(`${API}/analytics/costs`, { params: { subproject_id: sp } }).then(r => setCosts(r.data)).catch(()=>{})
-    } else {
-      axios.get(`${API}/runs`).then((r) => {
-        const s = (r.data as any[]).map((it) => ({ day: it.started_at || it.id, amr_avg: 0, dcr_avg: 0, zcrs_avg: it.zcrs || 0 }))
-        setSeries(s.reverse().slice(-30))
+    
+    setLoading(true)
+    getDashboardData(sp || undefined)
+      .then(setData)
+      .catch(err => {
+        console.error('Failed to load dashboard:', err)
       })
-      axios.get(`${API}/analytics/performance-by-engine`).then(r => setPerf(r.data))
-      axios.get(`${API}/analytics/costs`).then(r => setCosts(r.data)).catch(()=>{})
-    }
+      .finally(() => setLoading(false))
   }, [])
 
   const fmtDate = (s: string) => {
@@ -56,11 +44,11 @@ export default function Dashboard() {
         <Button variant="secondary" className="ml-auto" onClick={() => window.location.href = '/runs'}>Nova Run</Button>
       </div>
       <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {overview ? (
+        {data?.overview ? (
           <>
-            <KpiCard title="AMR" value={(overview.amr_avg * 100).toFixed(0) + '%'} subtitle="Absolute Mention Rate" barColor="bg-blue-500" />
-            <KpiCard title="DCR" value={(overview.dcr_avg * 100).toFixed(0) + '%'} subtitle="Direct Citation Rate" barColor="bg-green-500" />
-            <KpiCard title="ZCRS" value={(overview.zcrs_avg || 0).toFixed(0) + '%'} subtitle="Zero‑Click Rate Score" barColor="bg-purple-500" />
+            <KpiCard title="AMR" value={(data.overview.amr_avg * 100).toFixed(0) + '%'} subtitle="Absolute Mention Rate" barColor="bg-blue-500" />
+            <KpiCard title="DCR" value={(data.overview.dcr_avg * 100).toFixed(0) + '%'} subtitle="Direct Citation Rate" barColor="bg-green-500" />
+            <KpiCard title="ZCRS" value={(data.overview.zcrs_avg || 0).toFixed(0) + '%'} subtitle="Zero‑Click Rate Score" barColor="bg-purple-500" />
           </>
         ) : (
           <>
@@ -71,11 +59,11 @@ export default function Dashboard() {
         )}
       </div>
       <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {costs ? (
+        {data?.costs ? (
           <>
-            <KpiCard title="Custo (30d)" value={`$${(costs.total_cost_usd || 0).toFixed(4)}`} subtitle="Soma aproximada" barColor="bg-amber-500" />
-            <KpiCard title="Tokens (30d)" value={formatNumberCompact(costs.total_tokens || 0)} subtitle="Total estimado" barColor="bg-zinc-500" />
-            <KpiCard title="Média por Run" value={`$${(costs.avg_cost_per_run || 0).toFixed(4)}`} subtitle="Ticket médio" barColor="bg-sky-500" />
+            <KpiCard title="Custo (30d)" value={`$${(data.costs.total_cost_usd || 0).toFixed(4)}`} subtitle="Soma aproximada" barColor="bg-amber-500" />
+            <KpiCard title="Tokens (30d)" value={formatNumberCompact(data.costs.total_tokens || 0)} subtitle="Total estimado" barColor="bg-zinc-500" />
+            <KpiCard title="Média por Run" value={`$${(data.costs.avg_cost_per_run || 0).toFixed(4)}`} subtitle="Ticket médio" barColor="bg-sky-500" />
           </>
         ) : (
           <>
@@ -88,10 +76,10 @@ export default function Dashboard() {
       <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
           <div className="text-sm opacity-70 mb-2">Evolução Temporal</div>
-          {series ? (
+          {data?.series ? (
             <div style={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                <LineChart data={data.series} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" hide />
                   <YAxis domain={[0, 100]} />
@@ -107,10 +95,10 @@ export default function Dashboard() {
         </div>
         <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
           <div className="text-sm opacity-70 mb-2">Top Domínios Citados</div>
-          {topDomains ? (
+          {data?.top_domains && data.top_domains.length > 0 ? (
             <div style={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topDomains} layout="vertical" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                <BarChart data={data.top_domains} layout="vertical" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="domain" width={240} tick={{ fontSize: 12 }} />
@@ -124,10 +112,10 @@ export default function Dashboard() {
       </div>
       <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm bg-white dark:bg-neutral-900 p-3 md:p-4">
         <div className="text-sm opacity-70 mb-2">Desempenho por Engine</div>
-        {perf ? (
+        {data?.performance ? (
           <div style={{ height: 350 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={perf} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+              <BarChart data={data.performance} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="engine" />
                 <YAxis domain={[0, 100]} />

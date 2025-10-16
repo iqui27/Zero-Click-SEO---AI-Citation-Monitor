@@ -2759,6 +2759,145 @@ def delete_template(template_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@api_router.get("/analytics/dashboard")
+def analytics_dashboard(subproject_id: str | None = None, db: Session = Depends(get_db)):
+    """
+    Endpoint agregado otimizado que retorna todos os dados do dashboard em uma única chamada.
+    Reduz de 5-6 requests para 1 request.
+    """
+    # Query base otimizada com índices
+    base_query = db.query(Run).filter(Run.started_at.isnot(None))
+    if subproject_id:
+        base_query = base_query.filter(Run.subproject_id == subproject_id)
+    
+    # Overview - usando agregação SQL direta (mais rápido)
+    overview_sql = text("""
+        SELECT 
+            COUNT(*) as total_runs,
+            AVG(CASE WHEN amr_flag = 1 THEN 1.0 ELSE 0.0 END) as amr_avg,
+            AVG(CASE WHEN dcr_flag = 1 THEN 1.0 ELSE 0.0 END) as dcr_avg,
+            AVG(COALESCE(zcrs, 0.0)) as zcrs_avg
+        FROM runs
+        WHERE started_at IS NOT NULL
+        {subproject_filter}
+    """.format(
+        subproject_filter="AND subproject_id = :sp" if subproject_id else ""
+    ))
+    params = {"sp": subproject_id} if subproject_id else {}
+    overview_row = db.execute(overview_sql, params).fetchone()
+    
+    overview = {
+        "total_runs": int(overview_row[0] or 0),
+        "amr_avg": float(overview_row[1] or 0.0),
+        "dcr_avg": float(overview_row[2] or 0.0),
+        "zcrs_avg": float(overview_row[3] or 0.0)
+    }
+    
+    # Costs (últimos 30 dias) - query otimizada
+    costs_sql = text("""
+        SELECT 
+            SUM(COALESCE(cost_usd, 0.0)) as total_cost,
+            SUM(COALESCE(tokens_total, 0)) as total_tokens,
+            COUNT(*) as runs_count
+        FROM runs
+        WHERE started_at >= DATEADD(day, -30, GETDATE())
+        {subproject_filter}
+    """.format(
+        subproject_filter="AND subproject_id = :sp" if subproject_id else ""
+    ))
+    costs_row = db.execute(costs_sql, params).fetchone()
+    
+    total_cost = float(costs_row[0] or 0.0)
+    total_tokens = int(costs_row[1] or 0)
+    runs_count = int(costs_row[2] or 0)
+    
+    costs = {
+        "total_cost_usd": total_cost,
+        "total_tokens": total_tokens,
+        "runs": runs_count,
+        "avg_cost_per_run": (total_cost / runs_count) if runs_count > 0 else 0.0
+    }
+    
+    # Series (últimos 30 dias) - query otimizada
+    series_sql = text("""
+        SELECT
+            CAST(started_at AS DATE) AS day,
+            AVG(CASE WHEN amr_flag = 1 THEN 1.0 ELSE 0.0 END) AS amr_avg,
+            AVG(CASE WHEN dcr_flag = 1 THEN 1.0 ELSE 0.0 END) AS dcr_avg,
+            AVG(COALESCE(zcrs, 0.0)) AS zcrs_avg
+        FROM runs
+        WHERE started_at >= DATEADD(day, -30, GETDATE())
+        {subproject_filter}
+        GROUP BY CAST(started_at AS DATE)
+        ORDER BY day ASC
+    """.format(
+        subproject_filter="AND subproject_id = :sp" if subproject_id else ""
+    ))
+    series_rows = db.execute(series_sql, params).fetchall()
+    series = [
+        {
+            "day": row[0].isoformat(),
+            "amr_avg": float(row[1] or 0.0),
+            "dcr_avg": float(row[2] or 0.0),
+            "zcrs_avg": float(row[3] or 0.0)
+        }
+        for row in series_rows
+    ]
+    
+    # Top domains - query otimizada com JOIN
+    top_domains = []
+    if subproject_id:
+        domains_sql = text("""
+            SELECT TOP 10
+                c.domain,
+                COUNT(*) as count
+            FROM citations c
+            JOIN runs r ON r.id = c.run_id
+            WHERE r.subproject_id = :sp
+            GROUP BY c.domain
+            ORDER BY count DESC
+        """)
+        domains_rows = db.execute(domains_sql, params).fetchall()
+        top_domains = [{"domain": row[0] or "", "count": int(row[1])} for row in domains_rows]
+    
+    # Performance by engine - query otimizada
+    perf_sql = text("""
+        SELECT 
+            e.name as engine,
+            AVG(CASE WHEN r.amr_flag = 1 THEN 1.0 ELSE 0.0 END) AS amr_avg,
+            AVG(CASE WHEN r.dcr_flag = 1 THEN 1.0 ELSE 0.0 END) AS dcr_avg,
+            AVG(COALESCE(r.zcrs, 0.0)) AS zcrs_avg,
+            COUNT(*) AS runs
+        FROM runs r
+        JOIN engines e ON e.id = r.engine_id
+        WHERE r.started_at IS NOT NULL
+        {subproject_filter}
+        GROUP BY e.name
+        ORDER BY runs DESC
+    """.format(
+        subproject_filter="AND r.subproject_id = :sp" if subproject_id else ""
+    ))
+    perf_rows = db.execute(perf_sql, params).fetchall()
+    performance = [
+        {
+            "engine": row[0],
+            "amr_avg": float(row[1] or 0.0),
+            "dcr_avg": float(row[2] or 0.0),
+            "zcrs_avg": float(row[3] or 0.0),
+            "runs": int(row[4] or 0)
+        }
+        for row in perf_rows
+    ]
+    
+    return {
+        "overview": overview,
+        "costs": costs,
+        "series": series,
+        "top_domains": top_domains,
+        "performance": performance
+    }
+
+
 @api_router.get("/analytics/subprojects/{subproject_id}/overview")
 def subproject_overview(subproject_id: str, db: Session = Depends(get_db)):
     # KPIs médios para runs do subprojeto

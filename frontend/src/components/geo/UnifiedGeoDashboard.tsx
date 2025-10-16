@@ -363,24 +363,30 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-      {bigNumbers.map((metric) => (
-        <Card key={metric.title}>
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs font-medium text-slate-500">{metric.title}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-baseline justify-between">
-              <p className="text-2xl font-bold text-slate-900">{metric.value}</p>
-              {metric.delta != null && (
-                <span className={`text-xs font-medium ${metric.trend === 'up' ? 'text-emerald-600' : metric.trend === 'down' ? 'text-rose-600' : 'text-slate-500'}`}>
-                  {metric.trend === 'up' ? '↑' : metric.trend === 'down' ? '↓' : '→'} {metric.delta > 0 ? '+' : ''}{metric.delta.toFixed(1)}%
-                </span>
-              )}
-            </div>
-            <div className="mt-1">{metric.subtitle}</div>
-          </CardContent>
-        </Card>
-      ))}
+      {bigNumbers.map((metric) => {
+        const delta = metric.delta
+        const deltaClass = delta != null ? (delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-500') : 'text-slate-500'
+        const deltaSymbol = delta != null ? (delta > 0 ? '↑' : delta < 0 ? '↓' : '→') : '→'
+
+        return (
+          <Card key={metric.title}>
+            <CardHeader className="pb-2">
+              <CardDescription className="text-xs font-medium text-slate-500">{metric.title}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-baseline justify-between">
+                <p className="text-2xl font-bold text-slate-900">{metric.value}</p>
+                {delta != null && (
+                  <span className={`text-xs font-medium ${deltaClass}`}>
+                    {deltaSymbol} {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
+                  </span>
+                )}
+              </div>
+              <div className="mt-1">{metric.subtitle}</div>
+            </CardContent>
+          </Card>
+        )
+      })}
     </div>
   )
 }
@@ -655,10 +661,12 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
     const categories = ((data.geo_summary as any)?.perceived_value_categories || []) as Array<{ label: string; value: number; percentage: number }>
 
     if (categories.length) {
+      // Use laranja (índice 9) ao invés de amarelo (índice 4)
+      const colorIndices = [9, 0, 1, 2, 3] // Começa com laranja
       return categories.slice(0, 5).map((item, index) => ({
         label: item.label,
         value: item.percentage,
-        color: getGeoColorByIndex(4 + index),
+        color: getGeoColorByIndex(colorIndices[index]),
       }))
     }
 
@@ -669,8 +677,8 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
   const brandName = data.positioning?.brand_ranking?.[0]?.brand || 'Banco do Brasil'
   const radarStrokeColor = getGeoColorByName(brandName, 0)
   const radarFillColor = geoColorWithAlpha(radarStrokeColor, 0.35)
-  const radarGridColor = geoColorWithAlpha(getGeoColorByIndex(1), 0.3)
-  const radarAxisColor = geoColorWithAlpha(getGeoColorByIndex(2), 0.6)
+  const radarGridColor = geoColorWithAlpha(getGeoColorByIndex(1), 0.5) // Aumentado de 0.3 para 0.5
+  const radarAxisColor = geoColorWithAlpha(getGeoColorByIndex(2), 0.8) // Aumentado de 0.6 para 0.8
 
   return (
     <section>
