@@ -455,6 +455,21 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
             run.our_citations_count = our_citations_count
             run.unique_domains_count = unique_domains_count
             run.cost_usd = cost_usd
+            
+            # Log web_search_calls para tracking
+            web_search_calls = (meta or {}).get("web_search_calls", 0)
+            web_search_used = (meta or {}).get("web_search_used", False)
+            search_context_size = (meta or {}).get("search_context_size")
+            
+            if web_search_calls > 0 or web_search_used:
+                import json
+                ws_info = {
+                    "web_search_calls": web_search_calls,
+                    "web_search_used": web_search_used,
+                    "search_context_size": search_context_size,
+                    "model": model_name,
+                }
+                _log(db, run.id, "web_search", "ok", json.dumps(ws_info))
         except Exception:
             pass
 
@@ -1089,7 +1104,7 @@ def process_semantic_insights(run_id: str) -> None:
         db.close()
 
 
-@celery.task(name="compute_geo_dashboard_task", soft_time_limit=300, time_limit=360)
+@celery.task(name="compute_geo_dashboard_task", soft_time_limit=600, time_limit=720)
 def compute_geo_dashboard_task(
     project_id: str,
     prompt_id: str | None = None,

@@ -5413,19 +5413,23 @@ def start_geo_dashboard_computation(
     if bank_ids:
         bank_ids_list = [b.strip() for b in bank_ids.split(",") if b.strip()]
     
-    # Iniciar task em background
-    task = compute_geo_dashboard_task.delay(
-        project_id=project_id,
-        prompt_id=prompt_id,
-        prompt_version_id=prompt_version_id,
-        subproject_id=subproject_id,
-        date_from_str=date_from,
-        date_to_str=date_to,
-        bank_ids=bank_ids_list,
-        llm_model=llm_model,
-        prompt_category=prompt_category,
-        prompt_text=prompt_text,
-        brand_presence=brand_presence,
+    # Iniciar task em background na fila 'runs'
+    task = compute_geo_dashboard_task.apply_async(
+        args=[],
+        kwargs={
+            'project_id': project_id,
+            'prompt_id': prompt_id,
+            'prompt_version_id': prompt_version_id,
+            'subproject_id': subproject_id,
+            'date_from_str': date_from,
+            'date_to_str': date_to,
+            'bank_ids': bank_ids_list,
+            'llm_model': llm_model,
+            'prompt_category': prompt_category,
+            'prompt_text': prompt_text,
+            'brand_presence': brand_presence,
+        },
+        queue='runs'
     )
     
     return {
@@ -5546,6 +5550,29 @@ def get_geo_dashboard(
         except Exception as e:
             print(f"[GEO-CACHE-REDIS] Erro ao ler cache: {e}")
 
+    # Cache miss - verificar se já está processando
+    processing_key = f"geo_processing:{project_id}"
+    if redis_client:
+        try:
+            is_processing = redis_client.get(processing_key)
+            if is_processing:
+                # Já está processando em outra request
+                raise HTTPException(
+                    status_code=202,
+                    detail="Dashboard sendo processado. Aguarde alguns segundos e recarregue a página."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[GEO-CACHE-REDIS] Erro ao verificar processamento: {e}")
+
+    # Marcar como processando (TTL 10 minutos)
+    if redis_client:
+        try:
+            redis_client.setex(processing_key, 600, "1")
+        except Exception as e:
+            print(f"[GEO-CACHE-REDIS] Erro ao marcar processamento: {e}")
+
     # Cache miss - computar dados
     print(f"[GEO-CACHE-REDIS] Cache miss para {project_id} - computando...")
     result = compute_geo_dashboard(
@@ -5577,9 +5604,16 @@ def get_geo_dashboard(
                 21600,  # 6 horas
                 json_module.dumps(result_dict)
             )
+            # Limpar flag de processamento
+            redis_client.delete(processing_key)
             print(f"[GEO-CACHE-REDIS] Dados salvos no cache por 6 horas")
         except Exception as e:
             print(f"[GEO-CACHE-REDIS] Erro ao salvar cache: {e}")
+            # Tentar limpar flag mesmo com erro
+            try:
+                redis_client.delete(processing_key)
+            except:
+                pass
 
     return result
 
