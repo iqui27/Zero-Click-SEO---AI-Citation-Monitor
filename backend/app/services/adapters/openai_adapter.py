@@ -72,7 +72,7 @@ class OpenAIAdapter:
                 "gpt5": "gpt-5",
                 "gpt5mini": "gpt-5-mini",
                 # normalize o5mini spacing (se usado)
-                "o5mini": "o5-mini",
+                "o5mini": "gpt-5-mini",
             }
             model = alias_map.get(m, raw_model)
         except Exception:
@@ -164,7 +164,7 @@ class OpenAIAdapter:
                     chat_model = model
                     # Alguns modelos (o5/razonadores) não suportam chat.completions; mapear para gpt-4o
                     if isinstance(chat_model, str) and chat_model.lower().startswith("o5"):
-                        chat_model = "gpt-4o"
+                        chat_model = "gpt-5-mini"
                     comp = await asyncio.to_thread(
                         lambda: client.chat.completions.create(
                             model=chat_model,
@@ -262,7 +262,7 @@ class OpenAIAdapter:
                     try:
                         chat_model = model
                         if isinstance(chat_model, str) and chat_model.lower().startswith("o5"):
-                            chat_model = "gpt-4o"
+                            chat_model = "gpt-5-mini"
                         comp = await asyncio.to_thread(
                             lambda: client.chat.completions.create(
                                 model=chat_model,

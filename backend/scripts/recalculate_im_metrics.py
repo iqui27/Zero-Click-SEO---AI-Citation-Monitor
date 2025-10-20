@@ -12,6 +12,7 @@ from app.db.session import SessionLocal
 from app.models.models import Run, Citation, Evidence, Domain, Project
 from app.services.im_metrics_simple import SimpleIMMetrics
 from app.services.kpis import compute_run_report
+from app.services.evidence_payload import load_evidence_payload
 from sqlalchemy import func
 
 
@@ -82,22 +83,25 @@ def recalculate_all_metrics(limit: int = None, project_id: str = None):
                 serp_data = None
                 project_domains = []
                 target_url = None
-                
                 try:
                     # Buscar evidence para extrair dados SERP
                     evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
-                    if evidence and evidence.parsed_json:
-                        serp_data = evidence.parsed_json.get("raw", {})
-                        
-                        # Se não tem response_text, tentar extrair do evidence
-                        if not run.response_text:
-                            try:
-                                parsed = evidence.parsed_json.get("parsed", {})
-                                response_text = parsed.get("text")
-                                if response_text:
-                                    run.response_text = response_text[:50000]
-                            except:
-                                pass
+                    if evidence:
+                        payload = load_evidence_payload(evidence)
+                        if isinstance(payload, dict):
+                            serp_data = payload.get("raw", {})
+
+                            # Se não tem response_text, tentar extrair do payload
+                            if not run.response_text:
+                                try:
+                                    parsed = payload.get("parsed", {}) if isinstance(payload.get("parsed"), dict) else {}
+                                    response_text = parsed.get("text")
+                                    if response_text:
+                                        run.response_text = str(response_text)[:50000]
+                                except Exception:
+                                    pass
+                        if not run.response_text and (evidence.response_text or "").strip():
+                            run.response_text = str(evidence.response_text)[:50000]
                     
                     # Buscar domínios do projeto
                     project = db.query(Project).filter(Project.id == run.project_id).first()

@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.db.session import SessionLocal
-from app.models.models import Monitor, MonitorTemplate, PromptTemplate, PromptVersion, Engine, Run
+from app.models.models import Monitor, MonitorTemplate, PromptTemplate, PromptVersion, Run
 from app.services.tasks import enqueue_run
+from app.services.engine_registry import ensure_engine
 
 logger = logging.getLogger(__name__)
 
@@ -324,99 +325,20 @@ class MonitorScheduler:
                 # Create runs for each engine
                 for engine_config in engines_config:
                     try:
-                        # Find or create engine
-                        engine = db.query(Engine).filter(
-                            and_(
-                                Engine.project_id == monitor.project_id,
-                                Engine.name == engine_config.get('name'),
-                                Engine.region == engine_config.get('region'),
-                                Engine.device == engine_config.get('device')
-                            )
-                        ).first()
-                        
-                        if not engine:
-                            # Defensive defaults for Engines from monitor config
-                            cfg_json = dict(engine_config.get('config_json') or {})
-                            try:
-                                name_lower = str(engine_config.get('name') or '').lower()
-                            except Exception:
-                                name_lower = ''
-                            # Gemini defaults: ensure search is enabled and forced; set a safe token cap if missing
-                            try:
-                                if name_lower == 'gemini':
-                                    cfg_json.setdefault('use_search', True)
-                                    cfg_json.setdefault('force_search', True)
-                                    cfg_json.setdefault('max_output_tokens', 9000)
-                            except Exception:
-                                pass
-                            # OpenAI defaults: prefer enabling web_search unless explicitly disabled
-                            try:
-                                if name_lower == 'openai':
-                                    cfg_json.setdefault('web_search', True)
-                            except Exception:
-                                pass
-                            engine = Engine(
-                                project_id=monitor.project_id,
-                                name=engine_config.get('name'),
-                                region=engine_config.get('region'),
-                                device=engine_config.get('device'),
-                                config_json=cfg_json
-                            )
-                            db.add(engine)
-                            db.commit()
-                            db.refresh(engine)
-                        else:
-                            # If exists but config differs, create an ephemeral engine for this run using MERGED config
-                            req_cfg = (engine_config.get('config_json') or {})
-                            cur_cfg = (engine.config_json or {})
-                            # Merge preserving credentials stored in cur_cfg; req_cfg overrides model / tuning
-                            merged_cfg = dict(cur_cfg)
-                            try:
-                                merged_cfg.update(req_cfg)
-                            except Exception:
-                                pass
-                            # Mark as ephemeral and clean flags
-                            try:
-                                merged_cfg.setdefault('_ephemeral', True)
-                                merged_cfg.pop('_main', None)
-                            except Exception:
-                                pass
-                            # Apply defensive defaults again over the merged cfg
-                            try:
-                                name_lower = str(engine_config.get('name') or '').lower()
-                            except Exception:
-                                name_lower = ''
-                            try:
-                                if name_lower == 'gemini':
-                                    merged_cfg.setdefault('use_search', True)
-                                    merged_cfg.setdefault('force_search', True)
-                                    merged_cfg.setdefault('max_output_tokens', 9000)
-                            except Exception:
-                                pass
-                            try:
-                                if name_lower == 'openai':
-                                    merged_cfg.setdefault('web_search', True)
-                            except Exception:
-                                pass
-                            # Only create ephemeral if something actually differs; otherwise reuse existing engine
-                            cfg_differs = (merged_cfg != cur_cfg)
-                            if cfg_differs:
-                                engine = Engine(
-                                    project_id=monitor.project_id,
-                                    name=engine_config.get('name'),
-                                    region=engine_config.get('region'),
-                                    device=engine_config.get('device'),
-                                    config_json=merged_cfg,
-                                )
-                                db.add(engine)
-                                db.commit()
-                                db.refresh(engine)
-                        
+                        canonical_engine, override = ensure_engine(
+                            db=db,
+                            project_id=monitor.project_id,
+                            name=engine_config.get('name'),
+                            region=engine_config.get('region'),
+                            device=engine_config.get('device'),
+                            requested_config=engine_config.get('config_json') or {},
+                        )
+
                         # Create run
                         run = Run(
                             project_id=monitor.project_id,
                             prompt_version_id=pv.id,
-                            engine_id=engine.id,
+                            engine_id=canonical_engine.id,
                             subproject_id=(template.subproject_id or monitor.subproject_id),
                             monitor_id=monitor.id,
                             status="queued",
@@ -426,19 +348,24 @@ class MonitorScheduler:
                             schedule_slot=slot,
                             schedule_index_today=idx_today,
                             schedule_total_today=total_today,
+                            engine_override_json=override,
                         )
                         db.add(run)
                         db.commit()
                         db.refresh(run)
-                        
+
                         # Enqueue the run for execution
                         enqueue_run(run.id, cycles=1)
                         created_runs.append(run.id)
-                        
-                        logger.info(f"Created run {run.id} for monitor {monitor.id}, template {template.name}, engine {engine.name}")
-                        
+
+                        logger.info(
+                            f"Created run {run.id} for monitor {monitor.id}, template {template.name}, engine {canonical_engine.name}"
+                        )
+
                     except Exception as e:
-                        logger.error(f"Error creating run for monitor {monitor.id}, template {template.id}, engine {engine_config}: {e}")
+                        logger.error(
+                            f"Error creating run for monitor {monitor.id}, template {template.id}, engine {engine_config}: {e}"
+                        )
                         continue
             
             logger.info(f"Monitor {monitor.id} executed successfully. Created {len(created_runs)} runs: {created_runs}")

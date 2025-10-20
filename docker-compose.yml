@@ -12,7 +12,8 @@ services:
       - .env
     environment:
       # Forçar SQLite no ambiente local (prod usa Azure SQL)
-      DATABASE_URL: sqlite:////app/data/app.db
+      DATABASE_URL: ${DATABASE_URL}
+      # sqlite:////app/data/app.db
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"
@@ -36,7 +37,8 @@ services:
       - .env
     environment:
       # Forçar SQLite no ambiente local (prod usa Azure SQL)
-      DATABASE_URL: sqlite:////app/data/app.db
+      DATABASE_URL: ${DATABASE_URL}
+      # sqlite:////app/data/app.db
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: devsecret
       PYTHONUNBUFFERED: "1"

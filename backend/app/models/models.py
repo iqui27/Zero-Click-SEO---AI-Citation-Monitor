@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -120,6 +120,7 @@ class Engine(Base):
     region: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    config_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
 
     project: Mapped[Project] = relationship(back_populates="engines")
 
@@ -141,6 +142,7 @@ class Run(Base):
     zcrs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     amr_flag: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     dcr_flag: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    engine_override_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Métricas e observabilidade
     tokens_input: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -292,6 +294,11 @@ class Evidence(Base):
     parsed_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     screenshot_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    payload_blob_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    response_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    response_links_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    response_meta_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    has_text: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Citation(Base):
@@ -523,7 +530,8 @@ class RunSemanticInsight(Base):
     run_id: Mapped[str] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
     )
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    payload_blob_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

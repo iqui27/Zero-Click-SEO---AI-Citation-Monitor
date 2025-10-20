@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db.session import SessionLocal
 from app.models.models import Citation, Entity, Run, SerpFeature, RunSemanticInsight
+from app.services.semantic_payload import load_insight_payload
 
 router = APIRouter(tags=["export"])
 
@@ -943,8 +944,9 @@ def export_serp_table(
         
         # Ranking de texto (competitors mencionados)
         ranking_txt = []
-        if run.semantic_insights and run.semantic_insights.payload.get("competitors"):
-            for comp in run.semantic_insights.payload["competitors"]:
+        insight_payload = load_insight_payload(run.semantic_insights)
+        if insight_payload.get("competitors"):
+            for comp in insight_payload["competitors"]:
                 ranking_txt.append({
                     "name": comp.get("name"),
                     "mentions": comp.get("mentions", 0)
@@ -1084,14 +1086,17 @@ def export_indicadores_table(
         
         # Percepção
         perception_scores = {"inovador": 0, "seguranca": 0, "custo": 0, "atendimento": 0}
-        if run.semantic_insights and run.semantic_insights.payload.get("perception"):
-            perception_scores = _calculate_perception_scores(run.semantic_insights.payload["perception"])
+        insight_payload = load_insight_payload(run.semantic_insights)
+        perception_data = insight_payload.get("perception")
+        if perception_data:
+            perception_scores = _calculate_perception_scores(perception_data)
         
         # Entidades
         qt_total_entidades = run.entities_detected or 0
         qt_entidades_bb = 0
-        if run.semantic_insights and run.semantic_insights.payload.get("entities"):
-            for entity in run.semantic_insights.payload["entities"]:
+        entities_payload = insight_payload.get("entities") if 'insight_payload' in locals() else []
+        if entities_payload:
+            for entity in entities_payload:
                 if _check_bb_mention(entity.get("name", "")):
                     qt_entidades_bb += 1
         

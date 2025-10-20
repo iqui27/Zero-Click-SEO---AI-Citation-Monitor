@@ -1,6 +1,6 @@
 ---
 trigger: model_decision
-description: Abouth OCI Oracle Cloud Instance
+description: SSH connection OCI Oracle Cloud Instance
 ---
 
 # 📋 Oracle Cloud Infrastructure (OCI) Agent Documentation
@@ -25,6 +25,8 @@ Fingerprint:  40:46:e0:0d:18:5e:ab:bd:ad:ec:b9:e9:56:54:cd:2a
 Private Key:  /Users/hrocha/.oci/oci_api_key.pem
 Public Key:   /Users/hrocha/.oci/oci_api_key_public.pem
 Config File:  /Users/hrocha/.oci/config
+SSH Key:      /Users/hrocha/Documents/SSH Oracle/oci_ed25519
+
 ```
 
 ### **Arquivo de Configuração OCI CLI**
@@ -353,18 +355,7 @@ Ev0lut10n_G10b4l_API_K3y_2024!@#$
 - Availability Domain: SA-SAOPAULO-1-AD-1
 - Tenancy: Compartilhado com outros recursos
 
----
 
-## 🆘 Contatos e Suporte
-
-### **Oracle Cloud Support**
-- Console: https://cloud.oracle.com/
-- Documentação: https://docs.oracle.com/iaas/
-- OCI CLI Reference: https://docs.oracle.com/iaas/tools/oci-cli/
-
-### **Aplicações**
-- Evolution API Docs: https://doc.evolution-api.com/
-- n8n Documentation: https://docs.n8n.io/
 
 ---
 

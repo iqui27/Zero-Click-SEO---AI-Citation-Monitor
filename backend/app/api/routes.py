@@ -54,12 +54,14 @@ from app.schemas.schemas import (
     RunReport,
     CitationOut,
     EvidenceOut,
+    EvidencePayloadOut,
     OverviewAnalytics,
     RunsBySubprojectGroup,
     GroupedRunWithEvidences,
     GeoDashboardOut,
 )
 from app.services.tasks import enqueue_run
+from app.services.evidence_payload import load_evidence_payload
 from app.services.scheduler import stop_scheduler, start_scheduler
 from app.services.kpis import compute_run_report
 from app.services.engine_runner import run_engine
@@ -316,13 +318,11 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
     Somente inclui runs que possuem resposta não vazia (parsed.text).
     """
     # Subconsulta: existe Evidence com parsed.text não nulo/não vazio?
-    txt = func.json_value(Evidence.parsed_json, '$.parsed.text')
     subq = (
         select(1)
         .select_from(Evidence)
         .where(Evidence.run_id == Run.id)
-        .where(txt.isnot(None))
-        .where(func.ltrim(func.rtrim(txt)) != '')
+        .where(Evidence.has_text == True)
     )
 
     rows = (
@@ -378,13 +378,8 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         for ev in evs:
             if ev.run_id in ev_map:
                 continue
-            try:
-                parsed = (ev.parsed_json or {}).get("parsed") if isinstance(ev.parsed_json, dict) else {}
-                text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
-                if (text_val or "").strip():
-                    ev_map[ev.run_id] = ev
-            except Exception:
-                continue
+            if (ev.response_text or "").strip():
+                ev_map[ev.run_id] = ev
 
     # Coletar citações por run
     cits_by_run: dict[str, list[tuple[str | None, str | None, bool]] ] = {}
@@ -479,9 +474,7 @@ def export_monitor_runs_csv(monitor_id: str, db: Session = Depends(get_db)):
         rid = r.id
         # Extrair texto de resposta da evidência mais recente
         ev = ev_map.get(rid)
-        parsed = (ev.parsed_json or {}).get("parsed") if ev and isinstance(ev.parsed_json, dict) else {}
-        text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
-        text_str = (text_val or "").strip()
+        text_str = (ev.response_text or "").strip() if ev else ""
         if not text_str:
             # Defesa extra (deveria ter sido filtrado pela subconsulta)
             continue
@@ -570,15 +563,12 @@ def count_runs(
     if date_to:
         q = q.filter(Run.started_at <= text(":dt")).params(dt=date_to)
     if has_text:
-        txt = func.json_value(Evidence.parsed_json, '$.text')
-        subq = (
-            select(1)
-            .select_from(Evidence)
-            .where(Evidence.run_id == Run.id)
-            .where(txt.isnot(None))
-            .where(func.ltrim(func.rtrim(txt)) != '')
+        q = q.filter(
+            db.query(Evidence.run_id)
+            .filter(Evidence.run_id == Run.id)
+            .filter(Evidence.has_text == True)
+            .exists()
         )
-        q = q.filter(subq.exists())
 
     total = q.scalar() or 0
     return {"count": int(total)}
@@ -673,14 +663,8 @@ def _stream_runs_full_csv(db: Session, run_ids: list[str], filename: str) -> Str
     )
     for ev in evs:
         rid = ev.run_id
-        if rid not in ev_text:
-            try:
-                parsed = (ev.parsed_json or {}).get("parsed") if isinstance(ev.parsed_json, dict) else {}
-                text_val = (parsed or {}).get("text") if isinstance(parsed, dict) else None
-                if (text_val or "").strip():
-                    ev_text[rid] = str(text_val).strip()
-            except Exception:
-                pass
+        if rid not in ev_text and (ev.response_text or "").strip():
+            ev_text[rid] = (ev.response_text or "").strip()
         if rid not in ev_shot and (ev.screenshot_url or "").strip():
             ev_shot[rid] = ev.screenshot_url or ""
 
@@ -1271,7 +1255,31 @@ def list_run_evidences(run_id: str, db: Session = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="Run não encontrado")
     evs = db.query(Evidence).filter(Evidence.run_id == run_id).all()
-    return [EvidenceOut(id=e.id, run_id=e.run_id, parsed_json=e.parsed_json) for e in evs]
+    return [
+        EvidenceOut(
+            id=e.id,
+            run_id=e.run_id,
+            response_text=e.response_text,
+            has_text=bool(e.has_text),
+            response_links=e.response_links_json or [],
+            response_meta=e.response_meta_json or {},
+            payload_blob_path=e.payload_blob_path,
+        )
+        for e in evs
+    ]
+
+
+@api_router.get("/runs/{run_id}/evidences/{evidence_id}/payload", response_model=EvidencePayloadOut)
+def get_run_evidence_payload(run_id: str, evidence_id: str, db: Session = Depends(get_db)):
+    evidence = (
+        db.query(Evidence)
+        .filter(Evidence.id == evidence_id, Evidence.run_id == run_id)
+        .first()
+    )
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence não encontrado")
+    payload = load_evidence_payload(evidence)
+    return EvidencePayloadOut(evidence_id=evidence.id, run_id=evidence.run_id, payload=payload)
 
 
 @api_router.get("/runs", response_model=list[RunListItem])
@@ -1588,7 +1596,15 @@ def list_runs_grouped_by_subproject(
         runs_out: list[GroupedRunWithEvidences] = []
         for rr in g["runs"]:
             ev_list = [
-                EvidenceOut(id=e.id, run_id=e.run_id, parsed_json=e.parsed_json)
+                EvidenceOut(
+                    id=e.id,
+                    run_id=e.run_id,
+                    response_text=e.response_text,
+                    has_text=bool(e.has_text),
+                    response_links=e.response_links_json or [],
+                    response_meta=e.response_meta_json or {},
+                    payload_blob_path=e.payload_blob_path,
+                )
                 for e in evidences_by_run.get(rr["id"], [])
             ]
             runs_out.append(
@@ -1735,6 +1751,7 @@ def export_runs_csv(
                 ai_overview_id = r.id
         except Exception:
             ai_overview_id = ai_overview_id or ""
+
         writer.writerow([
             r.id,
             r.engine,
@@ -1962,12 +1979,13 @@ def get_run_semantic_insights(run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Run não encontrado")
 
     insight = db.get(RunSemanticInsight, run_id)
+    payload = load_insight_payload(insight)
 
     return RunSemanticInsightOut(
         run_id=run_id,
         perceived_value_category=run.perceived_value_category,
         semantic_summary=run.semantic_summary,
-        payload=insight.payload if insight else None,
+        payload=payload or None,
         updated_at=insight.updated_at if insight else None,
     )
 
@@ -2078,7 +2096,7 @@ def debug_full_pipeline(payload: Dict[str, Any] = Body(...)):
                             # _detect_serp_features espera (raw_data_dict, serpapi_data_dict)
                             serp_features = SerpAnalyzer._detect_serp_features(raw, serpapi_data)
                             knowledge_panel = SerpAnalyzer._extract_knowledge_panel(serpapi_data)
-                except Exception as e:
+                except Exception:
                     pass  # Silenciosamente ignora erros de extração
             
             flow_log.append({
@@ -3653,7 +3671,7 @@ def generate_subproject_insights(subproject_id: str, db: Session = Depends(get_d
         )
         for ev in ev_rows:
             if ev.run_id not in ev_map:
-                ev_map[ev.run_id] = ev.parsed_json or {}
+                ev_map[ev.run_id] = load_evidence_payload(ev)
     opts_map: Dict[str, Any] = {}
     if run_ids:
         evt_rows = (
@@ -4503,16 +4521,16 @@ def delete_project_runs(project_id: str, db: Session = Depends(get_db)):
 
 @api_router.post("/runs/{run_id}/classify")
 def classify_run(run_id: str, db: Session = Depends(get_db)):
-    """Classifica uma run específica usando o sistema Zero-Click"""
-    from app.services.classification_integration import classify_run_async
+    """Classifica uma run específica usando o Gemini"""
+    from app.services.gemini_integration import classify_run_with_gemini
 
     # Verificar se a run existe
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run não encontrada")
 
-    # Executar classificação
-    result = classify_run_async(run_id)
+    # Executar classificação com Gemini
+    result = classify_run_with_gemini(run_id)
 
     if result is None:
         raise HTTPException(status_code=400, detail="Falha ao classificar a run")
@@ -4529,7 +4547,7 @@ def classify_run(run_id: str, db: Session = Depends(get_db)):
             "reasoning": result.reasoning
         },
         "classified_at": datetime.utcnow().isoformat(),
-        "version": "1.0"
+        "version": "2.0-gemini"
     }
 
 
@@ -4541,7 +4559,7 @@ def classify_project_runs(
     db: Session = Depends(get_db)
 ):
     """Classifica todas as runs de um projeto em lote"""
-    from app.services.classification_integration import retroactively_classify_all_runs
+    from app.services.gemini_integration import batch_classify_with_gemini_service
 
     # Verificar se o projeto existe
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -4549,9 +4567,8 @@ def classify_project_runs(
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
     # Executar classificação em lote
-    results = retroactively_classify_all_runs(
+    results = batch_classify_with_gemini_service(
         project_id=project_id,
-        force_update=force_update,
         limit=limit
     )
 
@@ -4669,26 +4686,6 @@ def get_classification_stats(project_id: str, db: Session = Depends(get_db)):
         "funnel_stages": {
             row.funnel_stage: row.count for row in funnel_stats
         }
-    }
-
-
-@api_router.get("/classification/unprocessed")
-def get_unprocessed_runs(
-    project_id: str = None,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """Retorna lista de runs que ainda não foram classificadas"""
-    from app.services.classification_integration import ClassificationIntegrator
-
-    with ClassificationIntegrator(db) as integrator:
-        unclassified_ids = integrator.get_unclassified_runs(project_id, limit)
-
-    return {
-        "unclassified_runs": unclassified_ids,
-        "count": len(unclassified_ids),
-        "project_id": project_id,
-        "limit": limit
     }
 
 
@@ -5406,7 +5403,8 @@ def start_geo_dashboard_computation(
     Inicia o processamento do GEO Dashboard em background.
     Retorna task_id para polling do status.
     """
-    from app.services.tasks import compute_geo_dashboard_task
+    from app.services.tasks import enqueue_run, compute_geo_dashboard_task
+    from app.services.semantic_payload import load_insight_payload
     
     # Parse bank_ids
     bank_ids_list = None

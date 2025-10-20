@@ -5,10 +5,12 @@ import json
 import time
 import os
 import asyncio
+import logging
 from typing import Any
 
-from celery import Celery
-from celery.exceptions import SoftTimeLimitExceeded
+from celery import Celery, Task
+from celery.exceptions import SoftTimeLimitExceeded, Retry
+from celery.signals import task_prerun, task_postrun, task_failure, task_retry
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -31,21 +33,121 @@ from app.services.insights import generate_basic_insights
 from app.services.kpis import compute_run_report
 from app.services.normalization import normalize_domain, normalize_url_for_dedupe
 from app.services.engine_runner import run_engine
+from app.services.engine_registry import apply_overrides, get_engine_base_config
 from app.services.costs import compute_cost_usd, estimate_usage_from_text, get_default_pricing
 from app.services.gemini_semantic import GeminiSemanticService
 from app.services.geo_metrics import calculate_all_geo_metrics
 from app.services.gemini_integration import GeminiClassificationIntegrator
+from app.services.semantic_payload import store_insight_payload, load_insight_payload
+from app.services.evidence_payload import store_evidence_payload, load_evidence_payload
 from app.services.geo_dashboard import compute_geo_dashboard
 
+logger = logging.getLogger(__name__)
+
+# Initialize Celery with optimized configuration
 celery = Celery(
     "seo_monitor",
-    broker=settings.redis_url,
-    backend=settings.redis_url,
+    broker=settings.get_celery_broker_url(),
+    backend=settings.get_celery_result_backend(),
 )
 
-# Global task time limits (soft/hard) via env, to avoid indefinite runs
-_SOFT_TL = int(os.getenv("CELERY_SOFT_TIME_LIMIT", os.getenv("RUN_SOFT_TIME_LIMIT", "900")))  # 15 min default
-_HARD_TL = int(os.getenv("CELERY_TIME_LIMIT", os.getenv("RUN_HARD_TIME_LIMIT", "1200")))     # 20 min default
+# Celery configuration
+celery.conf.update(
+    # Task execution
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+
+    # Task routing
+    task_default_queue="runs",
+    task_default_exchange="runs",
+    task_default_routing_key="runs",
+
+    # Worker optimization
+    worker_prefetch_multiplier=settings.celery_worker_prefetch_multiplier,
+    worker_max_tasks_per_child=settings.celery_worker_max_tasks_per_child,
+    worker_disable_rate_limits=True,
+
+    # Result backend
+    result_backend_transport_options={
+        "master_name": "mymaster",
+        "socket_keepalive": True,
+        "socket_connect_timeout": 5,
+    },
+    result_expires=3600 * 24,  # 24 hours
+
+    # Task retry policy
+    task_acks_late=True,  # Acknowledge tasks after execution
+    task_reject_on_worker_lost=True,
+
+    # Broker connection
+    broker_connection_retry=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=10,
+
+    # Redis broker options
+    broker_transport_options={
+        "visibility_timeout": 3600,  # 1 hour
+        "max_connections": settings.redis_max_connections,
+        "socket_keepalive": True,
+        "socket_connect_timeout": 5,
+    },
+)
+
+# Task time limits from settings
+_SOFT_TL = settings.celery_task_soft_time_limit
+_HARD_TL = settings.celery_task_time_limit
+
+
+# Custom base task with logging
+class LoggingTask(Task):
+    """Base task class with automatic logging"""
+
+    def on_success(self, retval, task_id, args, kwargs):
+        logger.info(f"Task {self.name}[{task_id}] succeeded", extra={
+            "task_id": task_id,
+            "task_name": self.name,
+            "args": args,
+        })
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        logger.error(f"Task {self.name}[{task_id}] failed: {exc}", extra={
+            "task_id": task_id,
+            "task_name": self.name,
+            "args": args,
+            "error": str(exc),
+        }, exc_info=True)
+
+    def on_retry(self, exc, task_id, args, kwargs, einfo):
+        logger.warning(f"Task {self.name}[{task_id}] retrying: {exc}", extra={
+            "task_id": task_id,
+            "task_name": self.name,
+            "args": args,
+            "error": str(exc),
+        })
+
+
+# Celery signals for monitoring
+@task_prerun.connect
+def task_prerun_handler(task_id, task, *args, **kwargs):
+    logger.debug(f"Task {task.name}[{task_id}] starting")
+
+
+@task_postrun.connect
+def task_postrun_handler(task_id, task, *args, **kwargs):
+    logger.debug(f"Task {task.name}[{task_id}] completed")
+
+
+@task_failure.connect
+def task_failure_handler(task_id, exception, *args, **kwargs):
+    logger.error(f"Task {task_id} failed: {exception}")
+
+
+@task_retry.connect
+def task_retry_handler(task_id, *args, **kwargs):
+    logger.warning(f"Task {task_id} retrying")
 
 
 def _log(db: Session, run_id: str, step: str, status: str, message: str | None = None) -> None:
@@ -147,51 +249,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         ).mappings().first()
         prompt_text = query_text["text"] if query_text else ""
 
-        # Construir config EFETIVO por engine (evita nulls e reflete defaults reais)
-        cfg_raw = dict(engine.config_json or {})
+        base_cfg = get_engine_base_config(engine)
+        cfg_eff = apply_overrides(base_cfg, run.engine_override_json)
         name_lower = (engine.name or "").lower()
-        cfg_eff = dict(cfg_raw)
-        try:
-            if name_lower in ("openai", "gpt"):
-                # defaults para OpenAI Responses/Chat (aplicar também quando vier None ou vazio)
-                if cfg_eff.get("web_search") is None:
-                    cfg_eff["web_search"] = True
-                if cfg_eff.get("use_search") is None:
-                    # espelhar web_search para ter um campo comum nas UIs
-                    try:
-                        cfg_eff["use_search"] = bool(cfg_eff.get("web_search"))
-                    except Exception:
-                        cfg_eff["use_search"] = True
-                if not cfg_eff.get("search_context_size"):
-                    cfg_eff["search_context_size"] = "low"
-                if cfg_eff.get("reasoning_effort") is None:
-                    cfg_eff["reasoning_effort"] = "low"
-                try:
-                    mot = cfg_eff.get("max_output_tokens")
-                    mot_i = int(mot) if mot is not None else None
-                except Exception:
-                    mot_i = None
-                if mot_i is None or mot_i <= 0:
-                    cfg_eff["max_output_tokens"] = 8192
-            elif name_lower in ("gemini", "google_gemini"):
-                if cfg_eff.get("use_search") is None:
-                    cfg_eff["use_search"] = True
-                # Default: enable force_search unless explicitly set by user/config
-                if cfg_eff.get("force_search") is None:
-                    cfg_eff["force_search"] = True
-                try:
-                    mot = cfg_eff.get("max_output_tokens")
-                    mot_i = int(mot) if mot is not None else None
-                except Exception:
-                    mot_i = None
-                if mot_i is None or mot_i <= 0:
-                    cfg_eff["max_output_tokens"] = 9000
-            elif name_lower in ("perplexity", "pplx"):
-                # Defaults: model seguro e citações
-                if not cfg_eff.get("model"):
-                    cfg_eff["model"] = "sonar-pro"
-        except Exception:
-            pass
 
         # Forçar país/region BR em todas as runs, conforme política do projeto
         fetch_input = {
@@ -204,18 +264,17 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
         # Logar opções efetivas usadas no fetch para auditoria/debug
         try:
-            cfg = dict(cfg_eff)
             cfg_used = {
-                "model": cfg.get("model"),
+                "model": cfg_eff.get("model"),
                 # valores efetivos (sem null) após merge de defaults
-                "web_search": cfg.get("web_search"),
-                "use_search": cfg.get("use_search"),
-                "force_search": cfg.get("force_search"),
-                "search_context_size": cfg.get("search_context_size"),
-                "reasoning_effort": cfg.get("reasoning_effort"),
-                "max_output_tokens": cfg.get("max_output_tokens"),
-                "web_search_force": cfg.get("web_search_force"),
-                "user_location": cfg.get("user_location"),
+                "web_search": cfg_eff.get("web_search"),
+                "use_search": cfg_eff.get("use_search"),
+                "force_search": cfg_eff.get("force_search"),
+                "search_context_size": cfg_eff.get("search_context_size"),
+                "reasoning_effort": cfg_eff.get("reasoning_effort"),
+                "max_output_tokens": cfg_eff.get("max_output_tokens"),
+                "web_search_force": cfg_eff.get("web_search_force"),
+                "user_location": cfg_eff.get("user_location"),
                 # Contexto efetivo
                 "language": fetch_input.get("language"),
                 "region": fetch_input.get("region"),
@@ -235,10 +294,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         last_parsed: dict[str, Any] | None = None
         # Per-cycle timeout (sec): Engine config wins, else env RUN_CYCLE_TIMEOUT_SECONDS, else default 180s
         timeout_cfg = None
-        try:
-            timeout_cfg = (engine.config_json or {}).get("timeout_seconds")
-        except Exception:
-            timeout_cfg = None
+        timeout_cfg = cfg_eff.get("timeout_seconds")
         timeout_env = os.getenv("RUN_CYCLE_TIMEOUT_SECONDS") or os.getenv("RUN_TIMEOUT_SECONDS")
         try:
             timeout_seconds: float | None = float(timeout_cfg) if timeout_cfg is not None else (float(timeout_env) if timeout_env else 180.0)
@@ -254,10 +310,7 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 time.sleep(delay_seconds)
                 _log(db, run.id, "delay", "ok", f"Delay completed for cycle {i+1}")
             
-            try:
-                model_for_log = (engine.config_json or {}).get("model")
-            except Exception:
-                model_for_log = None
+            model_for_log = cfg_eff.get("model")
             _log(db, run.id, "fetch", "started", f"Engine: {engine.name} model={model_for_log} (cycle {i+1}/{total_cycles})")
             t_fetch0 = time.perf_counter()
             try:
@@ -309,13 +362,33 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 "meta": parsed.get("meta"),
             })
             try:
+                response_text_value = None
+                if isinstance(parsed_safe, dict):
+                    response_text_value = parsed_safe.get("text")
+                text_trimmed = (response_text_value or "")
+                text_trimmed = text_trimmed if isinstance(text_trimmed, str) else str(text_trimmed)
+                links_value = None
+                if isinstance(parsed_safe, dict) and isinstance(parsed_safe.get("links"), list):
+                    links_value = parsed_safe.get("links")
+                meta_value = None
+                if isinstance(parsed_safe, dict) and isinstance(parsed_safe.get("meta"), dict):
+                    meta_value = parsed_safe.get("meta")
+
+                payload = {"raw": raw_safe, "parsed": parsed_safe}
+
                 ev = Evidence(
                     run_id=run.id,
                     raw_url=raw.get("raw_url"),
-                    parsed_json={"raw": raw_safe, "parsed": parsed_safe},
                     screenshot_url=None,
                     content_hash=None,
+                    response_text=text_trimmed or None,
+                    response_links_json=links_value,
+                    response_meta_json=meta_value,
+                    has_text=bool((text_trimmed or "").strip()),
                 )
+
+                store_evidence_payload(ev, payload)
+
                 db.add(ev)
                 db.commit()
                 t_persist1 = time.perf_counter()
@@ -479,21 +552,6 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
         except Exception:
             pass
 
-        # Classificação Zero-Click da resposta
-        try:
-            from app.services.classification_integration import classify_run_async
-            response_text = (last_parsed or {}).get("text") if last_parsed else None
-            if response_text:
-                classification_result = classify_run_async(run.id, response_text)
-                if classification_result:
-                    _log(db, run.id, "classify", "ok", f"Classified as {classification_result.response_type}/{classification_result.brand_positioning}")
-                else:
-                    _log(db, run.id, "classify", "fail", "Classification failed")
-            else:
-                _log(db, run.id, "classify", "skip", "No response text found")
-        except Exception as e:
-            _log(db, run.id, "classify", "fail", f"Classification error: {str(e)}")
-
         # === VERIFICAR TIPO DE ENGINE: SERP vs LLM ===
         engine = db.get(Engine, run.engine_id) if run.engine_id else None
         engine_name = engine.name.lower() if engine else ""
@@ -582,11 +640,9 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
                 try:
                     # Buscar evidence para extrair dados SERP
                     evidence = db.query(Evidence).filter(Evidence.run_id == run.id).first()
-                    if evidence and evidence.parsed_json:
-                        # Passar o payload completo para o SerpAnalyzer, que espera a estrutura
-                        # com as chaves `raw.serpapi_search` e `raw.serpapi_ai`.
-                        serp_data = evidence.parsed_json
-                    
+                    if evidence:
+                        serp_data = load_evidence_payload(evidence)
+
                     # Buscar domínios do projeto
                     project = db.query(Project).filter(Project.id == run.project_id).first()
                     if project:
@@ -844,12 +900,11 @@ def process_semantic_insights(run_id: str) -> None:
         )
 
         insight = db.get(RunSemanticInsight, run_id)
-        if insight:
-            insight.payload = payload
-            insight.updated_at = datetime.utcnow()
-        else:
-            insight = RunSemanticInsight(run_id=run_id, payload=payload)
+        if insight is None:
+            insight = RunSemanticInsight(run_id=run_id)
             db.add(insight)
+        store_insight_payload(insight, payload)
+        insight.updated_at = datetime.utcnow()
 
         perception = payload.get("perception") or {}
         primary_category = perception.get("primary_category") or perception.get("category")
@@ -1055,16 +1110,14 @@ def process_semantic_insights(run_id: str) -> None:
             if semantic_scores and any(v is not None for v in semantic_scores.values()):
                 # Armazenar scores no RunSemanticInsight (adicionar ao payload existente)
                 insight = db.get(RunSemanticInsight, run_id)
-                if insight:
-                    payload = insight.payload or {}
-                    payload["semantic_scores"] = semantic_scores
-                    insight.payload = payload
-                    insight.updated_at = datetime.utcnow()
-                else:
-                    # Criar novo insight se não existir
-                    payload = {"semantic_scores": semantic_scores}
-                    insight = RunSemanticInsight(run_id=run_id, payload=payload)
+                if insight is None:
+                    insight = RunSemanticInsight(run_id=run_id)
                     db.add(insight)
+
+                existing_payload = load_insight_payload(insight)
+                existing_payload["semantic_scores"] = semantic_scores
+                store_insight_payload(insight, existing_payload)
+                insight.updated_at = datetime.utcnow()
 
                 db.commit()
 

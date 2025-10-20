@@ -368,7 +368,17 @@ class RunReport(BaseModel):
 class EvidenceOut(BaseModel):
     id: str
     run_id: str
-    parsed_json: Any
+    response_text: Optional[str] = None
+    has_text: bool = False
+    response_links: List[Dict[str, Any]] = Field(default_factory=list)
+    response_meta: Dict[str, Any] = Field(default_factory=dict)
+    payload_blob_path: Optional[str] = None
+
+
+class EvidencePayloadOut(BaseModel):
+    evidence_id: str
+    run_id: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OverviewAnalytics(BaseModel):

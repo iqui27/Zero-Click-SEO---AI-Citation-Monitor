@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import os
 
-from app.models.models import Run, Citation, Insight, Domain, Engine, PromptVersion
+from app.models.models import Run, Citation, Insight, Domain, Engine, PromptVersion, Evidence
+from app.services.evidence_payload import load_evidence_payload
 
 
 def generate_basic_insights(db: Session, run: Run) -> List[Insight]:
@@ -97,7 +98,7 @@ def generate_subproject_insights(db: Session, subproject_id: str) -> Dict[str, A
     run_ids = [r.id for r in runs]
     ev_map: Dict[str, Dict[str, Any]] = {}
     if run_ids:
-        from app.models.models import Evidence, RunEvent  # import local para evitar ciclos
+        from app.models.models import RunEvent  # import local para evitar ciclos
         ev_rows = (
             db.query(Evidence)
             .filter(Evidence.run_id.in_(run_ids))
@@ -106,7 +107,7 @@ def generate_subproject_insights(db: Session, subproject_id: str) -> Dict[str, A
         )
         for ev in ev_rows:
             if ev.run_id not in ev_map:
-                ev_map[ev.run_id] = ev.parsed_json or {}
+                ev_map[ev.run_id] = load_evidence_payload(ev)
     opts_map: Dict[str, Any] = {}
     if run_ids:
         from app.models.models import RunEvent  # local
@@ -149,8 +150,8 @@ def generate_subproject_insights(db: Session, subproject_id: str) -> Dict[str, A
     runs_ctx: List[Dict[str, Any]] = []
     for r in runs:
         rid = r.id
-        ev = ev_map.get(rid) or {}
-        parsed = ev.get("parsed") or {}
+        ev_payload = ev_map.get(rid) or {}
+        parsed = ev_payload.get("parsed") or {}
         meta = parsed.get("meta") or {}
         text = parsed.get("text") or ""
         links = parsed.get("links") or []

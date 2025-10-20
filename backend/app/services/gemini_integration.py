@@ -8,12 +8,15 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from app.models.models import Run, Domain, Evidence, Citation
+from app.models.models import Run, Evidence, Citation
+from app.services.evidence_payload import load_evidence_payload
 from app.services.gemini_classifier import (
-    GeminiZeroClickAnalyzer, GeminiAnalysisResult, analyze_with_gemini_classifier
+    GeminiZeroClickAnalyzer, GeminiAnalysisResult
 )
-from app.services.question_funnel_whitelist import RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE
 from app.db.session import SessionLocal
+
+
+RUN_IDS_ALLOWED_FOR_QUESTION_FUNNEL_UPDATE = set()
 
 
 class GeminiClassificationIntegrator:
@@ -79,8 +82,8 @@ class GeminiClassificationIntegrator:
                     citations=citations
                 )
             else:
-                # Fallback para análise local
-                result = analyze_with_gemini_classifier(prompt_text, response_text, citations)
+                # Fallback indisponível: manter compatibilidade
+                raise RuntimeError("Gemini não disponível e fallback foi removido")
 
             # Atualizar a run no banco
             self._update_run_with_gemini_result(run, result)
@@ -219,17 +222,26 @@ class GeminiClassificationIntegrator:
 
         response_texts = []
         for evidence in evidences:
-            if evidence.parsed_json:
-                parsed = evidence.parsed_json
-                if isinstance(parsed, dict):
-                    # Extrair de diferentes estruturas
-                    if "parsed" in parsed and isinstance(parsed["parsed"], dict):
-                        if "text" in parsed["parsed"]:
-                            response_texts.append(str(parsed["parsed"]["text"]))
-                    elif "response" in parsed:
-                        response_texts.append(str(parsed["response"]))
-                    elif "text" in parsed:
-                        response_texts.append(str(parsed["text"]))
+            if (evidence.response_text or "").strip():
+                response_texts.append(str(evidence.response_text).strip())
+                continue
+
+            payload = load_evidence_payload(evidence)
+            if not isinstance(payload, dict):
+                continue
+            parsed = payload.get("parsed") if isinstance(payload.get("parsed"), dict) else {}
+            if parsed:
+                text_val = parsed.get("text")
+                if text_val:
+                    response_texts.append(str(text_val))
+                    continue
+                response_val = parsed.get("response")
+                if response_val:
+                    response_texts.append(str(response_val))
+                    continue
+            root_text = payload.get("text")
+            if root_text:
+                response_texts.append(str(root_text))
 
         return " ".join(response_texts) if response_texts else None
 

@@ -1,0 +1,129 @@
+# =============================================================================
+# Docker ignore file - Excludes unnecessary files from Docker build context
+# This significantly speeds up Docker builds and reduces image size
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation (not needed in container)
+*.md
+!README.md
+docs/
+CLAUDE.md
+AGENTS.md
+PRODUCTION_DEPLOYMENT.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Virtual Environments (huge waste in build context)
+.venv/
+.venv_*/
+venv/
+ENV/
+env/
+.codex_*/
+*.pyenv
+
+# IDEs and Editors
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-*
+.project
+.settings/
+
+# Frontend (don't include in backend image)
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/.cache/
+frontend/coverage/
+
+# Environment files
+.env*
+!.env.production.template
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.coveragerc
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+Thumbs.db
+.DS_Store
+*.swp
+
+# Database (local dev only)
+*.db
+*.sqlite
+*.sqlite3
+app_data/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+*~
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Docker (don't recurse)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Deploy and infrastructure files
+deploy/
+kubernetes/
+terraform/
+ansible/
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+*.ppk
+
+# Certificates (should be mounted at runtime)
+*.crt
+*.cert
+*.cer
+deploy/ssl/

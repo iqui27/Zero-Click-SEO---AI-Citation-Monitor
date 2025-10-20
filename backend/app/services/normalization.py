@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlparse, parse_qs, urlunparse
+
 import httpx
+
+
+logger = logging.getLogger(__name__)
+_httpx_logger = logging.getLogger("httpx")
+if _httpx_logger.level == logging.NOTSET:
+    _httpx_logger.setLevel(logging.WARNING)
 
 
 def normalize_domain(url_or_domain: str) -> str:
@@ -44,6 +52,11 @@ def resolve_vertexai_grounding_redirect(url: str, timeout_seconds: float = 8.0) 
                     loc = r.headers.get("location") or r.headers.get("Location")
                     if loc:
                         return loc
+                if r.status_code == 404:
+                    logger.debug(
+                        "[GEMINI] Grounding redirect expired (404) for %s; using original URL",
+                        url,
+                    )
     except Exception:
         pass
     return url

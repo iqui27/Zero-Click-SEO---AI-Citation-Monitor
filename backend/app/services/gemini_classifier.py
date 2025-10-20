@@ -5,9 +5,10 @@ Fornece classificações mais precisas e insights detalhados para métricas Zero
 
 import json
 import re
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 try:
     import google.generativeai as genai
@@ -17,19 +18,86 @@ except ImportError:
     GENAI_AVAILABLE = False
 
 from app.core.config import settings
-from app.services.response_classifier import (
-    ResponseType,
-    SufficiencyLevel,
-    ActionabilityType,
-    TrustSource,
-    BrandPositioning,
-    QuestionType,
-    FunnelStage,
-    ClassificationResult,
-)
-from app.services.advanced_metrics import (
-    UserIntent, ConversionPotential, AdvancedMetrics
-)
+
+
+class ResponseType(str, Enum):
+    DIRETA = "direta"
+    EXPLICATIVA = "explicativa"
+    INSTRUCIONAL = "instrucional"
+    COMPARATIVA = "comparativa"
+    CONSULTIVA = "consultiva"
+    NAVEGACIONAL = "navegacional"
+
+
+class SufficiencyLevel(str, Enum):
+    TOTAL = "total"
+    PARCIAL = "parcial"
+    INSUFICIENTE = "insuficiente"
+
+
+class ActionabilityType(str, Enum):
+    TRANSACIONAL = "transacional"
+    INFORMATIVA = "informativa"
+
+
+class TrustSource(str, Enum):
+    CITADA = "citada"
+    GENERICA = "generica"
+
+
+class BrandPositioning(str, Enum):
+    PROTAGONISTA = "protagonista"
+    COMPETIDOR = "competidor"
+    AUSENTE = "ausente"
+
+
+class QuestionType(str, Enum):
+    MARCA = "marca"
+    PRODUTO = "produto"
+    INFORMACAO = "informacao"
+    COMPARACAO = "comparacao"
+
+
+class FunnelStage(str, Enum):
+    RECONHECIMENTO = "reconhecimento"
+    CONSIDERACAO = "consideracao"
+    CONVERSAO = "conversao"
+
+
+class UserIntent(str, Enum):
+    INFORMATIONAL = "informational"
+    TRANSACTIONAL = "transactional"
+    NAVIGATIONAL = "navigational"
+    COMMERCIAL = "commercial"
+
+
+class ConversionPotential(str, Enum):
+    ALTO = "alto"
+    MEDIO = "medio"
+    BAIXO = "baixo"
+
+
+@dataclass
+class AdvancedMetrics:
+    user_intent: UserIntent
+    satisfaction_score: float
+    competitive_mentions: int
+    financial_value_score: float
+    content_gap_detected: bool
+    conversion_potential: ConversionPotential
+
+
+@dataclass
+class ClassificationResult:
+    response_type: ResponseType
+    sufficiency_level: SufficiencyLevel
+    actionability_type: ActionabilityType
+    trust_source: TrustSource
+    brand_positioning: BrandPositioning
+    question_type: QuestionType
+    funnel_stage: FunnelStage
+    confidence: float
+    reasoning: Dict[str, str]
 
 @dataclass
 class GeminiAnalysisResult:
@@ -131,8 +199,7 @@ class GeminiZeroClickAnalyzer:
 
         except Exception as e:
             print(f"[GEMINI_CLASSIFIER] Erro na análise: {e}")
-            # Fallback para classificação básica
-            return self._fallback_analysis(prompt_text, response_text, citations)
+            raise
 
     def _build_analysis_prompt(self, prompt: str, response: str, citations: List[Dict]) -> str:
         """Constrói prompt estruturado para análise do Gemini"""
@@ -306,38 +373,6 @@ Seja preciso, objetivo e foque em insights acionáveis para otimização SEO.
             reasoning=reasoning,
             strategic_insights=strategic_insights,
             optimization_suggestions=optimization_suggestions
-        )
-
-    def _fallback_analysis(self, prompt: str, response: str, citations: List[Dict]) -> GeminiAnalysisResult:
-        """Análise de fallback se Gemini falhar"""
-        from app.services.response_classifier import ResponseClassifier
-        from app.services.advanced_metrics import AdvancedMetricsAnalyzer
-
-        # Usar classificadores locais como fallback
-        basic_classifier = ResponseClassifier(self.target_domains, self.bank_keywords)
-        basic_result = basic_classifier.classify_response(response, citations, prompt)
-
-        advanced_analyzer = AdvancedMetricsAnalyzer(self.bank_keywords, self.competitor_keywords)
-        advanced_result = advanced_analyzer.analyze_metrics(prompt, response, citations)
-
-        return GeminiAnalysisResult(
-            response_type=basic_result.response_type,
-            sufficiency_level=basic_result.sufficiency_level,
-            actionability_type=basic_result.actionability_type,
-            trust_source=basic_result.trust_source,
-            brand_positioning=basic_result.brand_positioning,
-            question_type=basic_result.question_type,
-            funnel_stage=basic_result.funnel_stage,
-            user_intent=advanced_result.user_intent,
-            satisfaction_score=advanced_result.satisfaction_score,
-            competitive_mentions=advanced_result.competitive_mentions,
-            financial_value_score=advanced_result.financial_value_score,
-            content_gap_detected=advanced_result.content_gap_detected,
-            conversion_potential=advanced_result.conversion_potential,
-            confidence=basic_result.confidence,
-            reasoning=basic_result.reasoning,
-            strategic_insights=["Análise fallback - Gemini indisponível"],
-            optimization_suggestions=["Verificar configuração da API do Gemini"]
         )
 
 def analyze_with_gemini_classifier(prompt_text: str, response_text: str,
