@@ -366,7 +366,7 @@ class RunEvent(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     version: Mapped[str] = mapped_column(VARCHAR(50))  # queued|fetch|parse|extract|persist|completed|error
     status: Mapped[str] = mapped_column(String)  # started|ok|fail
-    message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

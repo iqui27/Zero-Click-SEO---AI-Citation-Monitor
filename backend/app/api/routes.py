@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, literal_column, and_, or_, Date, select, case
@@ -62,6 +63,8 @@ from app.schemas.schemas import (
 )
 from app.services.tasks import enqueue_run
 from app.services.evidence_payload import load_evidence_payload
+from app.services.semantic_payload import load_insight_payload
+from app.services.engine_registry import apply_overrides, get_engine_base_config
 from app.services.scheduler import stop_scheduler, start_scheduler
 from app.services.kpis import compute_run_report
 from app.services.engine_runner import run_engine
@@ -80,6 +83,7 @@ import os
 from pathlib import Path
 
 api_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -1802,6 +1806,55 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Run não encontrado")
 
     engine = db.get(Engine, run.engine_id)
+    effective_config: Dict[str, Any] = {}
+    base_config: Dict[str, Any] = {}
+    if engine:
+        try:
+            base_config = get_engine_base_config(engine)
+            effective_config = apply_overrides(base_config, run.engine_override_json or {})
+        except Exception as exc:
+            logger.warning(
+                "run_detail_config_merge_failed",
+                extra={
+                    "run_id": run.id,
+                    "engine_id": run.engine_id,
+                    "error": str(exc),
+                },
+            )
+            effective_config = (run.engine_override_json or {})
+    else:
+        effective_config = run.engine_override_json or {}
+
+    evidence_meta: Dict[str, Any] | None = None
+    try:
+        evidence = (
+            db.query(Evidence)
+            .filter(Evidence.run_id == run.id)
+            .order_by(Evidence.created_at.desc())
+            .first()
+        )
+        if evidence and isinstance(evidence.response_meta_json, dict):
+            evidence_meta = evidence.response_meta_json
+    except Exception:
+        evidence_meta = None
+
+    logger.info(
+        "run_detail_resolved",
+        extra={
+            "run_id": run.id,
+            "status": run.status,
+            "model_name": run.model_name or effective_config.get("model"),
+            "engine_id": run.engine_id,
+            "engine_name": engine.name if engine else None,
+            "web_search": effective_config.get("web_search"),
+            "use_search": effective_config.get("use_search"),
+            "force_search": effective_config.get("force_search"),
+            "search_context_size": effective_config.get("search_context_size"),
+            "meta_web_search_used": evidence_meta.get("web_search_used") if evidence_meta else None,
+            "meta_web_search_calls": evidence_meta.get("web_search_calls") if evidence_meta else None,
+        },
+    )
+
     engine_payload = EngineCreate(
         name=engine.name if engine else run.engine_id,
         region=engine.region if engine else None,

@@ -72,7 +72,13 @@ class OpenAIAdapter:
                 "gpt5": "gpt-5",
                 "gpt5mini": "gpt-5-mini",
                 # normalize o5mini spacing (se usado)
+                "o5": "gpt-5",
                 "o5mini": "gpt-5-mini",
+                "o5-mini": "gpt-5-mini",
+                # handle zero-prefixed aliases (0 vs o)
+                "05": "gpt-5",
+                "05mini": "gpt-5-mini",
+                "05-mini": "gpt-5-mini",
             }
             model = alias_map.get(m, raw_model)
         except Exception:

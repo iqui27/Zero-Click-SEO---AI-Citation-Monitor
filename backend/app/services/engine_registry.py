@@ -61,8 +61,16 @@ def normalize_config(name: Optional[str], config: Any) -> ConfigDict:
             data["search_context_size"] = "low"
         if data.get("reasoning_effort") is None:
             data["reasoning_effort"] = "low"
+        if data.get("web_search") and not data.get("web_search_tool_choice"):
+            data["web_search_tool_choice"] = "auto"
         if not _is_positive_int(data.get("max_output_tokens")):
             data["max_output_tokens"] = 8192
+        # Ajuste para GPT-5 / O5: maior limite de tokens e reasoning médio por padrão
+        model_value = str(data.get("model") or "").strip().lower()
+        if model_value.startswith("gpt-5") or model_value.startswith("o5"):
+            if not _is_positive_int(data.get("max_output_tokens")) or data.get("max_output_tokens") == 8192:
+                data["max_output_tokens"] = 12000
+            data.setdefault("reasoning_effort", "medium")
     elif key in ("gemini", "google_gemini"):
         if data.get("use_search") is None:
             data["use_search"] = True
@@ -70,6 +78,9 @@ def normalize_config(name: Optional[str], config: Any) -> ConfigDict:
             data["force_search"] = True
         if not _is_positive_int(data.get("max_output_tokens")):
             data["max_output_tokens"] = 9000
+        # Configurar parâmetros de grounding dinâmico quando não especificado
+        if "dynamic_retrieval" not in data:
+            data["dynamic_retrieval"] = {"mode": "MODE_DYNAMIC", "dynamic_threshold": 0.7}
     elif key in ("perplexity", "pplx"):
         if not data.get("model"):
             data["model"] = "sonar-pro"

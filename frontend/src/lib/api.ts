@@ -718,7 +718,8 @@ export const getGeoDashboard = (
     prompt_category?: string
     prompt_text?: string
     brand_presence?: string
-  }
+  },
+  forceRefresh = false,
 ) => {
   const params = new URLSearchParams()
 
@@ -734,6 +735,7 @@ export const getGeoDashboard = (
   if (filters?.prompt_category) params.set('prompt_category', filters.prompt_category)
   if (filters?.prompt_text) params.set('prompt_text', filters.prompt_text)
   if (filters?.brand_presence) params.set('brand_presence', filters.brand_presence)
+  if (forceRefresh) params.set('force_refresh', 'true')
 
   const query = params.toString()
   const basePath = `/projects/${projectId}/geo-dashboard`

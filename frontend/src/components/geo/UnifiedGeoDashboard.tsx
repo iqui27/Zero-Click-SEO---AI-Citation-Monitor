@@ -34,6 +34,7 @@ import { deleteProjectRuns, getGeoDashboardFilters, type GeoDashboardFiltersResp
 
 export type UnifiedGeoDashboardProps = {
   projectId: string
+  refreshToken?: number
 }
 
 
@@ -97,12 +98,12 @@ function ExamplesSection({ data }: { data: GeoDashboard | null }) {
 }
 
 
-export function UnifiedGeoDashboard({ projectId }: UnifiedGeoDashboardProps) {
+export function UnifiedGeoDashboard({ projectId, refreshToken = 0 }: UnifiedGeoDashboardProps) {
   const [filters, setFilters] = useState<GeoDashboardFilters>({})
   const [availableFilters, setAvailableFilters] = useState<GeoDashboardFiltersResponse | null>(null)
   const [loadingFilters, setLoadingFilters] = useState(true)
-  const { data, loading, error, overview } = useGeoDashboard(projectId, filters)
-  const aggregations = useGeoAggregations(projectId)
+  const { data, loading, error, overview } = useGeoDashboard(projectId, filters, refreshToken)
+  const aggregations = useGeoAggregations(projectId, { refreshToken })
 
   // Load available filters
   useEffect(() => {
@@ -316,6 +317,12 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     return Number.isFinite(normalized) ? normalized : null
   }, [avgCitationPosition])
 
+  const runsWithBrandCitation = useMemo(() => {
+    if (!totalRuns || !citationRateKpi?.value || totalRuns <= 0) return null
+    const estimated = Math.round((citationRateKpi.value / 100) * totalRuns)
+    return Math.max(0, estimated)
+  }, [citationRateKpi?.value, totalRuns])
+
   const formatNumber = (value: number) =>
     value.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
@@ -332,7 +339,10 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
       value: citationRateKpi?.value != null ? `${citationRateKpi.value.toFixed(1)}%` : '–',
       subtitle: (
         <span className="text-xs text-slate-500">
-          <span className="font-semibold text-slate-900">{brandMentionsKpi?.value ?? 0}</span> menções de marca
+          <span className="font-semibold text-slate-900">{runsWithBrandCitation ?? 0}</span> respostas com citação
+          {brandMentionsKpi?.value != null && (
+            <> · <span className="font-semibold text-slate-900">{brandMentionsKpi.value}</span> menções totais</>
+          )}
         </span>
       ),
       delta: citationRateKpi?.delta,

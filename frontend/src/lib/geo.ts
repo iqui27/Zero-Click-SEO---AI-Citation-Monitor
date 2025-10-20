@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getGeoStatsByFunnel,
   getGeoStatsByProduct,
@@ -66,8 +66,9 @@ export type GeoDashboardFilters = {
   brand_presence?: string
 }
 
-export function useGeoDashboard(projectId: string | undefined, filters?: GeoDashboardFilters) {
+export function useGeoDashboard(projectId: string | undefined, filters?: GeoDashboardFilters, refreshToken = 0) {
   const [state, setState] = useState<GeoDashboardState>({ loading: !!projectId, error: null, data: null })
+  const lastRefreshRef = useRef<number>(refreshToken)
 
   useEffect(() => {
     if (!projectId) {
@@ -94,10 +95,12 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
       brand_presence: filters?.brand_presence !== 'all' ? filters?.brand_presence : undefined,
     }
 
+    const shouldForceRefresh = refreshToken > 0 && refreshToken !== lastRefreshRef.current
+
     // Carregar dados com retry para 202 (processando)
     const loadDashboard = async (retryCount = 0) => {
       try {
-        const data = await getGeoDashboard(projectId, apiFilters)
+        const data = await getGeoDashboard(projectId, apiFilters, shouldForceRefresh)
         if (!mounted) return
         console.log('[GEO] Dashboard carregado (cache ou processado)')
         setState({ loading: false, error: null, data })
@@ -123,11 +126,12 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
     }
     
     loadDashboard()
+    lastRefreshRef.current = refreshToken
 
     return () => {
       mounted = false
     }
-  }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text, filters?.prompt_id, filters?.brand_presence])
+  }, [projectId, filters?.subproject_id, filters?.date_from, filters?.date_to, filters?.llm_model, filters?.prompt_category, filters?.prompt_text, filters?.prompt_id, filters?.brand_presence, refreshToken])
 
   const overview: GeoOverviewData | null = useMemo(() => {
     if (!state.data) return null
@@ -196,11 +200,11 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
   }
 }
 
-export function useGeoAggregations(projectId: string | undefined, options: { days?: number } = {}) {
+export function useGeoAggregations(projectId: string | undefined, options: { days?: number; refreshToken?: number } = {}) {
   const [loading, setLoading] = useState<boolean>(!!projectId)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<GeoAggregations | null>(null)
-  const { days = 30 } = options
+  const { days = 30, refreshToken = 0 } = options
 
   useEffect(() => {
     if (!projectId) {
@@ -254,7 +258,7 @@ export function useGeoAggregations(projectId: string | undefined, options: { day
     return () => {
       mounted = false
     }
-  }, [projectId, days])
+  }, [projectId, days, refreshToken])
 
   return { loading, error, data }
 }

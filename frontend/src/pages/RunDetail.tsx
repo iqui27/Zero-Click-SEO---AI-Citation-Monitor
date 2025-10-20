@@ -11,8 +11,7 @@ import { Badge } from '../components/ui/badge'
 import { formatNumberCompact } from '../lib/utils'
 import { AiOverview } from '../components/AiOverview'
 import { Toaster, toast } from 'sonner'
-import { Search, Bot, Camera, Globe, Target, Zap } from 'lucide-react'
-import { IMMetricsCard } from '../components/IMMetricsCard'
+import { Search, Bot, Camera, Globe } from 'lucide-react'
 
 // API base handled by centralized api.ts
 
@@ -157,8 +156,6 @@ export default function RunDetail() {
   const [reprocessing, setReprocessing] = useState(false)
   const [useSearch, setUseSearch] = useState(false)
   const [selectedCycle, setSelectedCycle] = useState(1)
-  const [imMetrics, setImMetrics] = useState<any>(null)
-  const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [semantic, setSemantic] = useState<any>(null)
   const esRef = useRef<EventSource | null>(null)
   const pollRef = useRef<number | null>(null)
@@ -189,25 +186,8 @@ export default function RunDetail() {
     }
   }
 
-  const fetchIMMetrics = async () => {
-    if (!id) return
-    setLoadingMetrics(true)
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/runs/${id}/metrics`)
-      if (response.ok) {
-        const data = await response.json()
-        setImMetrics(data)
-      }
-    } catch (e) {
-      console.error('Failed to load IM metrics:', e)
-    } finally {
-      setLoadingMetrics(false)
-    }
-  }
-
   useEffect(() => {
     fetchAllData()
-    fetchIMMetrics()
   }, [id])
 
   useEffect(() => {
@@ -413,7 +393,11 @@ export default function RunDetail() {
     return chunks.map(c => c.message as string).join('\n')
   }, [eventsForView, selectedCycle, events.length])
 
-  const md = cycleMd || streamText || evidences?.[0]?.parsed_json?.parsed?.text || ''
+  const md = cycleMd ||
+    streamText ||
+    detail?.response_text ||
+    semantic?.semantic_summary ||
+    evidences?.[0]?.parsed_json?.parsed?.text || ''
 
   const meta = (evidences?.[0]?.parsed_json?.parsed?.meta) || {}
   // Para Gemini, o default é usar web search, então se não houver flags, considerar true
@@ -1067,29 +1051,6 @@ export default function RunDetail() {
             <div className="text-sm opacity-70 border rounded-lg p-4">Nenhuma citação.</div>
           )}
         </div>
-      </section>
-
-      {/* Métricas IM-SEO e IM-SEOIA */}
-      <section>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Target className="h-5 w-5 text-purple-600" />
-            <h2 className="text-lg font-medium">Métricas IM-SEO & IM-SEOIA</h2>
-          </div>
-          <Zap className="h-4 w-4 text-blue-500" />
-        </div>
-        {loadingMetrics ? (
-          <div className="text-sm opacity-70 border rounded-lg p-8 text-center">
-            Carregando métricas...
-          </div>
-        ) : imMetrics ? (
-          <IMMetricsCard metrics={imMetrics} />
-        ) : (
-          <div className="text-sm opacity-70 border rounded-lg p-8 text-center">
-            <p className="mb-2">Métricas IM não disponíveis para esta run.</p>
-            <p className="text-xs">As métricas são calculadas automaticamente em novas runs.</p>
-          </div>
-        )}
       </section>
 
       <section>

@@ -12,6 +12,7 @@ export default function GEODashboard() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [searchParams, setSearchParams] = useSearchParams()
   const [isLoading, setIsLoading] = useState(true)
+  const [refreshToken, setRefreshToken] = useState(0)
 
   useEffect(() => {
     getProjects()
@@ -84,7 +85,10 @@ export default function GEODashboard() {
               </option>
             ))}
           </Select>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+          <Button
+            variant="outline"
+            onClick={() => setRefreshToken((prev) => prev + 1)}
+          >
             Atualizar dados
           </Button>
         </div>
@@ -97,7 +101,7 @@ export default function GEODashboard() {
           </CardContent>
         </Card>
       ) : (
-        <UnifiedGeoDashboard projectId={selectedProjectId} />
+        <UnifiedGeoDashboard projectId={selectedProjectId} refreshToken={refreshToken} />
       )}
     </div>
   )

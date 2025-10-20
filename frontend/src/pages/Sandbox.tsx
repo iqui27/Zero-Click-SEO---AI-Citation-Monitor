@@ -25,7 +25,7 @@ export default function SandboxPage() {
   const [locCountry, setLocCountry] = useState<string>('')
   const [locRegion, setLocRegion] = useState<string>('')
   const [locCity, setLocCity] = useState<string>('')
-  const [maxOutputTokens, setMaxOutputTokens] = useState<number>(8192)
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number>(12000)
   // Gemini grounding options
   const [gemDynThreshold, setGemDynThreshold] = useState<number>(0.7)
   const [gemMaxOutputTokens, setGemMaxOutputTokens] = useState<number>(9000)
@@ -55,7 +55,16 @@ export default function SandboxPage() {
   const [listErr, setListErr] = useState<string | null>(null)
 
   // Popular models per engine
-  const OPENAI_MODELS = ['gpt-5-mini','gpt-5','gpt-4o-mini','gpt-4o','gpt-4.1','gpt-4.1-mini']
+  const OPENAI_MODELS = [
+    'gpt-5-mini',
+    'gpt-5',
+    'gpt-5-turbo',
+    'o5-mini',
+    'gpt-4.1-turbo',
+    'gpt-4.1',
+    'gpt-4o',
+    'gpt-4o-mini'
+  ]
   const GEMINI_MODELS = ['gemini-2.5-pro','gemini-2.5-flash','gemini-1.5-pro','gemini-1.5-flash','gemini-1.5-flash-8b']
   const PPLX_MODELS = ['sonar-pro','sonar','sonar-reasoning','sonar-small']
 
@@ -78,6 +87,15 @@ export default function SandboxPage() {
       default: return []
     }
   }
+
+  React.useEffect(() => {
+    const lower = (model || '').toLowerCase()
+    const isGpt5Family = lower.startsWith('gpt-5') || lower.startsWith('o5')
+    if (isGpt5Family) {
+      if (reasoningEffort === 'low') setReasoningEffort('medium')
+      if (maxOutputTokens < 12000) setMaxOutputTokens(12000)
+    }
+  }, [model])
 
   // Switch default model when engine changes
   React.useEffect(() => {
@@ -125,6 +143,8 @@ export default function SandboxPage() {
         const user_location = (locCountry || locRegion || locCity)
           ? { type: 'approximate', country: locCountry || undefined, region: locRegion || undefined, city: locCity || undefined }
           : undefined
+        const lowerModel = (model || '').toLowerCase()
+        const isGpt5Family = lowerModel.startsWith('gpt-5') || lowerModel.startsWith('o5')
         config = {
           organization: org || undefined,
           project: project || undefined,
@@ -136,7 +156,13 @@ export default function SandboxPage() {
         }
         if (toolChoice === 'force_tool') config.web_search_force = true
         if (toolChoice === 'auto') config.web_search_tool_choice = 'auto'
-        if (toolChoice === 'disabled') config.web_search = false
+        if (toolChoice === 'disabled') {
+          config.web_search = false
+          config.web_search_tool_choice = 'none'
+        }
+        if (isGpt5Family && config.reasoning_effort === 'low') {
+          config.reasoning_effort = 'medium'
+        }
       } else if (engine === 'gemini') {
         config = {
           use_search: useWebSearch,

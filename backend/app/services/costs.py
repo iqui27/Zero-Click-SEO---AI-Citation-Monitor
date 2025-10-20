@@ -23,7 +23,16 @@ DEFAULT_PRICING: Dict[Tuple[str, str], dict] = {
         "pricing": {
             "input_per_1k_usd": 0.00125,
             "output_per_1k_usd": 0.01,
-            # Not used by compute_cost_usd (informational for callers that count tool calls):
+            # Not used by compute_cost_usd (informacional para chamados que contabilizam tools):
+            "web_search_per_1k_calls_usd": 10.0,
+        }
+    },
+    # OpenAI — per 1M: GPT-5-mini Input $0.25 / Output $2.00 → per 1k: 0.00025 / 0.002
+    # Web search tool call: mesmo patamar de $10 / 1k chamadas (tokens buscados faturados à taxa do modelo)
+    ("openai", "gpt-5-mini"): {
+        "pricing": {
+            "input_per_1k_usd": 0.00025,
+            "output_per_1k_usd": 0.002,
             "web_search_per_1k_calls_usd": 10.0,
         }
     },

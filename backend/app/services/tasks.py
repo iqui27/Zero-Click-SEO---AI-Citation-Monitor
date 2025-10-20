@@ -329,6 +329,41 @@ def execute_run(run_id: str, cycles: int = 1) -> None:
 
             last_raw, last_parsed = raw, parsed
 
+            # Registrar métricas de uso e ferramentas quando disponíveis
+            try:
+                meta_obj = parsed.get("meta") if isinstance(parsed, dict) else None
+                usage_log: dict[str, Any] = {}
+                if isinstance(meta_obj, dict):
+                    raw_usage = meta_obj.get("raw_usage")
+                    if isinstance(raw_usage, dict):
+                        usage_log["usage"] = raw_usage
+                    for key in ("web_search_calls", "web_search_used", "search_context_size"):
+                        if key in meta_obj:
+                            usage_log[key] = meta_obj.get(key)
+
+                tool_types: set[str] = set()
+                tool_call_count = 0
+                raw_payload = raw.get("raw") if isinstance(raw, dict) else None
+                response_dict = raw_payload.get("response") if isinstance(raw_payload, dict) else None
+                if isinstance(response_dict, dict):
+                    output_items = response_dict.get("output")
+                    if isinstance(output_items, list):
+                        for item in output_items:
+                            if not isinstance(item, dict):
+                                continue
+                            item_type = item.get("type")
+                            if isinstance(item_type, str) and item_type.endswith("_call"):
+                                tool_call_count += 1
+                                tool_types.add(item_type)
+                if tool_call_count:
+                    usage_log["tool_calls"] = tool_call_count
+                    usage_log["tool_types"] = sorted(tool_types)
+
+                if usage_log:
+                    _log(db, run.id, "usage", "ok", json.dumps(usage_log, ensure_ascii=False)[:4000])
+            except Exception:
+                pass
+
             # stream simples do texto (chunk)
             if parsed.get("text"):
                 _log(db, run.id, "chunk", "ok", (parsed.get("text") or "")[:4000])

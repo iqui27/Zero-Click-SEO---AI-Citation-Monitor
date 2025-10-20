@@ -137,7 +137,7 @@ GO
 -- ⚠️ DESCOMENTE ESTE BLOCO APENAS SE TIVER CERTEZA ABSOLUTA
 -- ⚠️ TODOS OS DADOS SERÃO PERDIDOS PERMANENTEMENTE
 -- ============================
-/*
+
 PRINT '=== SEÇÃO 5: EXECUTANDO DROPS (IRREVERSÍVEL!) ===';
 PRINT '';
 
@@ -165,7 +165,7 @@ BEGIN TRY
 
     DECLARE @drop_fk_sql NVARCHAR(MAX);
     DECLARE fk_cursor CURSOR LOCAL FAST_FORWARD FOR
-    SELECT 
+    SELECT
         'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(tp.schema_id)) + '.' + QUOTENAME(tp.name) +
         ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
     FROM sys.foreign_keys fk
@@ -197,7 +197,7 @@ BEGIN TRY
 
     DECLARE @drop_table_sql NVARCHAR(MAX);
     DECLARE table_cursor CURSOR LOCAL FAST_FORWARD FOR
-    SELECT 
+    SELECT
         'DROP TABLE ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) + ';'
     FROM sys.tables t
     WHERE t.is_ms_shipped = 0
@@ -258,7 +258,6 @@ END CATCH;
 
 PRINT '';
 PRINT '=== FIM SEÇÃO 5 ===';
-*/
 GO
 
 -- ============================
@@ -267,7 +266,7 @@ GO
 PRINT '=== Verificação: Tabelas existentes no schema dbo ===';
 PRINT '';
 
-SELECT 
+SELECT
     t.name AS table_name,
     SCHEMA_NAME(t.schema_id) AS schema_name
 FROM sys.tables t
@@ -276,7 +275,7 @@ WHERE t.is_ms_shipped = 0
 ORDER BY t.name;
 
 DECLARE @remaining_tables INT;
-SELECT @remaining_tables = COUNT(*) 
+SELECT @remaining_tables = COUNT(*)
 FROM sys.tables t
 WHERE t.is_ms_shipped = 0
   AND SCHEMA_NAME(t.schema_id) = 'dbo';
