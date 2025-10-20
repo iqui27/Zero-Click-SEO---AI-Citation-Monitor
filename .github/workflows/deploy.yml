@@ -2,7 +2,7 @@ name: Deploy to Oracle Cloud
 
 on:
   push:
-    branches: [ main, production, POC, refactor]
+    branches: [ main, production, refactor ]
   workflow_dispatch:
 
 env:
