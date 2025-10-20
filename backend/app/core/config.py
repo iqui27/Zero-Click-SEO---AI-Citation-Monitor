@@ -2,12 +2,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BeforeValidator
 from typing import Annotated, Literal
 import os
+import json
+import re
 
 
 def parse_comma_separated_string(v):
-    """Parse comma-separated string into list"""
     if isinstance(v, str):
-        return [item.strip() for item in v.split(',') if item.strip()]
+        value = v.strip()
+        if not value:
+            return []
+        if value.startswith('[') and value.endswith(']'):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except json.JSONDecodeError:
+                pass
+        parts = re.split(r"[\s,;]+", value)
+        return [item.strip() for item in parts if item.strip()]
     return v
 
 
