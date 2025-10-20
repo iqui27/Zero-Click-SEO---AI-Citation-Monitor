@@ -11,6 +11,8 @@ def parse_comma_separated_string(v):
         value = v.strip()
         if not value:
             return []
+        if value[0] in {'"', "'"} and value[-1] == value[0]:
+            value = value[1:-1].strip()
         if value.startswith('[') and value.endswith(']'):
             try:
                 parsed = json.loads(value)
