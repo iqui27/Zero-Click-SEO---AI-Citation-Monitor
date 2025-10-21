@@ -13,7 +13,8 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+    env:
+      ALLOWED_HOSTS: ${{ secrets.AIO_ALLOWED_HOSTS }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -92,7 +93,16 @@ jobs:
 
     - name: Build and start services
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml build && sudo docker compose -f docker-compose.prod.yml up -d'
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          set -e
+          export ALLOWED_HOSTS="${ALLOWED_HOSTS}"
+          cd '$DEPLOY_DIR'
+          git fetch origin
+          git reset --hard origin/${{ github.ref_name }}
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml build --no-cache api worker
+          docker compose -f docker-compose.prod.yml up -d --force-recreate api worker
+        '
         
     - name: Restart nginx to refresh container IPs
       run: |
