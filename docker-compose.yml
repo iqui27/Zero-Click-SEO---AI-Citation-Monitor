@@ -21,12 +21,23 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       SERPAPI_KEY: ${SERPAPI_KEY}
       PAGESPEED_API_KEY: ${PAGESPEED_API_KEY}
+      DB_TUNNEL_ENABLED: ${DB_TUNNEL_ENABLED:-0}
+      DB_TUNNEL_LOCAL_PORT: ${DB_TUNNEL_LOCAL_PORT:-14331}
+      DB_TUNNEL_REMOTE_HOST: ${DB_TUNNEL_REMOTE_HOST:-db-aigeo.database.windows.net}
+      DB_TUNNEL_REMOTE_PORT: ${DB_TUNNEL_REMOTE_PORT:-1433}
+      BASTION_SSH_HOST: ${BASTION_SSH_HOST:-}
+      BASTION_SSH_USER: ${BASTION_SSH_USER:-}
+      BASTION_SSH_KEY_PATH: ${BASTION_SSH_KEY_PATH:-/home/appuser/.ssh/bastion_key}
+      BASTION_SSH_PRIVATE_KEY: ${BASTION_SSH_PRIVATE_KEY:-}
+      BASTION_SSH_PRIVATE_KEY_BASE64: ${BASTION_SSH_PRIVATE_KEY_BASE64:-}
     ports:
       - "8000:8000"
     depends_on:
       - redis
     volumes:
       - app_data:/app/data
+      - '/Users/hrocha/Documents/SSH Oracle/oci_ed25519:/home/appuser/.ssh/bastion_key:ro'
+    command: ["/app/scripts/run_with_tunnel.sh"]
   worker:
     build:
       context: .
