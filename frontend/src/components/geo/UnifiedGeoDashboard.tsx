@@ -301,6 +301,7 @@ type BigNumberMetric = {
 
 function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: any }) {
   const totalRuns = data.total_runs || 0
+  const analyzedResponses = totalRuns
   const citationRateKpi = overview?.kpis?.find((k: any) => k.label === 'Taxa de Citação')
   const brandMentionsKpi = overview?.kpis?.find((k: any) => k.label === 'Menções de Marca')
   const zeroClickKpi = overview?.kpis?.find((k: any) => k.label === 'Presença Zero-Click')
@@ -328,14 +329,22 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
 
   const bigNumbers: BigNumberMetric[] = [
     {
+      title: 'Total de Respostas Analisadas',
+      value: analyzedResponses.toLocaleString('pt-BR'),
+      subtitle: (
+        <span className="text-xs text-slate-500">
+          Runs com dados completos avaliadas no período
+        </span>
+      ),
+      delta: null,
+      trend: null,
+    },
+    {
       title: 'Taxa de Citação',
       value: citationRateKpi?.value != null ? `${citationRateKpi.value.toFixed(1)}%` : '–',
       subtitle: (
         <span className="text-xs text-slate-500">
           <span className="font-semibold text-slate-900">{runsWithBrandCitation ?? 0}</span> respostas com citação
-          {brandMentionsKpi?.value != null && (
-            <> · <span className="font-semibold text-slate-900">{brandMentionsKpi.value}</span> menções totais</>
-          )}
         </span>
       ),
       delta: citationRateKpi?.delta,
@@ -432,7 +441,10 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-slate-900">Monitoramento de Citações</h2>
+      <div className="space-y-1">
+        <h2 className="text-2xl font-semibold text-slate-900">Monitoramento de Citações · Banco do Brasil</h2>
+        <p className="text-sm text-slate-500">Indicadores referentes apenas às menções do Banco do Brasil</p>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader>
@@ -520,7 +532,7 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
           <CardContent>
             {byQuestion.length > 0 ? (
               <div className="space-y-3">
-                {byQuestion.slice(0, 4).map((item: any) => (
+                {byQuestion.map((item: any) => (
                   <div key={item.question_type}>
                     <div className="flex items-center justify-between text-sm mb-1.5">
                       <span className="text-slate-700 font-medium">{QUESTION_LABELS[item.question_type] || item.question_type}</span>
@@ -556,11 +568,11 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
 
 function DomainTrackingSection({ data }: { data: GeoDashboard }) {
   const topDomains = useMemo(() => {
-    const ranking = data.positioning?.brand_ranking || []
-    return ranking.slice(0, 5)
+    const breakdown = data.positioning?.brand_domain_breakdown || []
+    return breakdown.slice(0, 8)
   }, [data])
 
-  const totalMentions = (data.positioning as any)?.total_mentions || 0
+  const totalMentions = topDomains.reduce((sum, item) => sum + (item.mentions ?? 0), 0)
 
   // Correction factor: difference between corrected and observed citation rates
   // Note: requires citation_rate_corrected and citation_rate_observed from backend
@@ -592,8 +604,20 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                   <YAxis dataKey="brand" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
-                  <RechartsTooltip />
-                  <Bar dataKey="mentions" name="Menções" fill={domainBarColor} radius={[0, 6, 6, 0]} />
+                  <RechartsTooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null
+                      const item = payload[0].payload as any
+                      const share = item.share ?? (totalMentions ? (item.mentions / totalMentions) * 100 : 0)
+                      return (
+                        <div className="rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-sm shadow-sm">
+                          <p className="font-semibold text-slate-900">{label}</p>
+                          <p className="text-xs text-slate-500">{share.toFixed(1)}% das citações consolidadas</p>
+                        </div>
+                      )
+                    }}
+                  />
+                  <Bar dataKey="mentions" name="Participação" fill={domainBarColor} radius={[0, 6, 6, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -611,7 +635,7 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                 <div>
                   <p className="text-xs font-medium text-slate-500">Total consolidado</p>
                   <p className="text-2xl font-bold text-slate-900">{totalMentions.toLocaleString('pt-BR')}</p>
-                  <p className="text-xs text-slate-500">Todas as variantes de domínio combinadas</p>
+                  <p className="text-xs text-slate-500">Soma de domínios BB validados (pode diferir dos cards gerais por consolidar variações)</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -770,7 +794,6 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
                         />
                         <div className="min-w-0">
                           <p className="truncate font-medium text-slate-900">{item.domain}</p>
-                          <p className="text-[11px] text-slate-400">{item.mentions} citações</p>
                         </div>
                       </div>
                       <span

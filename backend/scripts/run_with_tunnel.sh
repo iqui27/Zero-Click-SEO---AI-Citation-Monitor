@@ -18,14 +18,19 @@ log() {
 
 start_tunnel() {
   local local_port remote_host remote_port ssh_host ssh_user ssh_opts
+  local ssh_key_path ssh_private_key ssh_private_key_base64
 
-  if [[ -z "${BASTION_SSH_HOST:-}" || -z "${BASTION_SSH_USER:-}" ]]; then
-    log "Tunnel requested but BASTION_SSH_HOST or BASTION_SSH_USER not set."
+  ssh_host="${DB_TUNNEL_SSH_HOST:-${BASTION_SSH_HOST:-}}"
+  ssh_user="${DB_TUNNEL_SSH_USER:-${BASTION_SSH_USER:-}}"
+  ssh_key_path="${DB_TUNNEL_SSH_KEY_PATH:-${BASTION_SSH_KEY_PATH:-}}"
+  ssh_private_key="${DB_TUNNEL_SSH_PRIVATE_KEY:-${BASTION_SSH_PRIVATE_KEY:-}}"
+  ssh_private_key_base64="${DB_TUNNEL_SSH_PRIVATE_KEY_BASE64:-${BASTION_SSH_PRIVATE_KEY_BASE64:-}}"
+
+  if [[ -z "${ssh_host}" || -z "${ssh_user}" ]]; then
+    log "Tunnel requested but DB_TUNNEL_SSH_HOST/DB_TUNNEL_SSH_USER not set."
     exit 1
   fi
 
-  ssh_host="${BASTION_SSH_HOST}"
-  ssh_user="${BASTION_SSH_USER}"
   local_port="${DB_TUNNEL_LOCAL_PORT:-14331}"
   remote_host="${DB_TUNNEL_REMOTE_HOST:-db-aigeo.database.windows.net}"
   remote_port="${DB_TUNNEL_REMOTE_PORT:-1433}"
@@ -40,16 +45,16 @@ start_tunnel() {
 
   # Private key handling.
   key_file=""
-  if [[ -n "${BASTION_SSH_PRIVATE_KEY_BASE64:-}" ]]; then
+  if [[ -n "${ssh_private_key_base64:-}" ]]; then
     key_file="/home/appuser/.ssh/id_rsa"
-    echo "${BASTION_SSH_PRIVATE_KEY_BASE64}" | base64 -d > "${key_file}"
+    echo "${ssh_private_key_base64}" | base64 -d > "${key_file}"
     chmod 600 "${key_file}" 2>/dev/null || log "warning: unable to chmod decoded SSH key"
-  elif [[ -n "${BASTION_SSH_PRIVATE_KEY:-}" ]]; then
+  elif [[ -n "${ssh_private_key:-}" ]]; then
     key_file="/home/appuser/.ssh/id_rsa"
-    printf '%s\n' "${BASTION_SSH_PRIVATE_KEY}" > "${key_file}"
+    printf '%s\n' "${ssh_private_key}" > "${key_file}"
     chmod 600 "${key_file}" 2>/dev/null || log "warning: unable to chmod inline SSH key"
-  elif [[ -n "${BASTION_SSH_KEY_PATH:-}" && -f "${BASTION_SSH_KEY_PATH}" ]]; then
-    key_file="${BASTION_SSH_KEY_PATH}"
+  elif [[ -n "${ssh_key_path:-}" && -f "${ssh_key_path}" ]]; then
+    key_file="${ssh_key_path}"
   fi
 
   if [[ -n "${key_file}" ]]; then

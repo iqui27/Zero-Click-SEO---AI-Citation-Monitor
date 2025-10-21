@@ -5785,15 +5785,15 @@ def get_geo_dashboard_filters(
     brand_presence_options = [
         {
             'value': 'all',
-            'label': f'Todas as respostas ({brand_stats.total_runs or 0})'
+            'label': 'Todas as respostas'
         },
         {
             'value': 'with_brand',
-            'label': f'Com citação da marca ({brand_stats.with_brand or 0})'
+            'label': 'Com citação da marca'
         },
         {
             'value': 'without_brand',
-            'label': f'Sem citação da marca ({brand_stats.without_brand or 0})'
+            'label': 'Sem citação da marca'
         }
     ]
     

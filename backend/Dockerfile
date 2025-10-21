@@ -70,6 +70,8 @@ FROM base AS production
 # Install runtime dependencies only
 RUN apt-get update -yq && apt-get install -yq --no-install-recommends \
     unixodbc \
+    bash \
+    openssh-client \
     libglib2.0-0 \
     libnss3 \
     libatk1.0-0 \
@@ -109,6 +111,7 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 COPY --chown=appuser:appuser backend/app /app/app
 COPY --chown=appuser:appuser backend/celery_app.py /app/celery_app.py
 COPY --chown=appuser:appuser backend/scripts /app/scripts
+RUN chmod +x /app/scripts/*.sh || true
 
 # Switch to non-root user
 USER appuser

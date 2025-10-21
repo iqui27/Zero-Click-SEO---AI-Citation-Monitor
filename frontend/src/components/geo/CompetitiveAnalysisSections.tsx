@@ -131,11 +131,6 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Ratio de Menção Competitiva</p>
-            <p className="text-2xl font-bold text-slate-900">{competitiveRatio.toFixed(2)}</p>
-            <p className="text-xs text-slate-500">nossa / total</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs text-slate-500">Co-Citações</p>
             <p className="text-2xl font-bold text-slate-900">{cocitationPercentage.toFixed(0)}%</p>
             <p className="text-xs text-slate-500">das respostas incluem concorrentes</p>
@@ -175,7 +170,6 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
         color: getGeoColorByIndex(9),
         count: summary.others_count ?? 0,
         coverage: summary.others_coverage_rate ?? 0,
-        isOther: true,
       })
     }
 
@@ -423,7 +417,7 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
           <MetricCard
             title="Total de Menções"
             value={String(contextInsights.reduce((sum: number, item: { brandMentions: number }) => sum + item.brandMentions, 0))}
-            description="Menções da marca no período"
+            description="Menções da marca no período (todas as fontes; pode diferir dos domínios consolidados)"
             icon={<MessageSquare className="h-5 w-5 text-purple-600" />}
             color="bg-purple-50"
           />
