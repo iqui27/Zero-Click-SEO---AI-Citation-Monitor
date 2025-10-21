@@ -91,14 +91,34 @@ jobs:
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'sudo docker builder prune -af || true'
 
+    - name: Sync repository on server
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          set -e
+          if [ ! -d '$DEPLOY_DIR' ]; then
+            git clone https://github.com/${{ github.repository }} '$DEPLOY_DIR'
+          fi
+          cd '$DEPLOY_DIR'
+          if [ -d .git ]; then
+            git fetch origin
+            git checkout -f ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
+          else
+            rm -rf *
+            git clone https://github.com/${{ github.repository }} tmp_repo
+            mv tmp_repo/.git .
+            rm -rf tmp_repo
+            git checkout -f ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
+          fi
+        '
+
     - name: Build and start services
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
           set -e
           export ALLOWED_HOSTS="${ALLOWED_HOSTS}"
           cd '$DEPLOY_DIR'
-          git fetch origin
-          git reset --hard origin/${{ github.ref_name }}
           docker compose -f docker-compose.prod.yml pull
           docker compose -f docker-compose.prod.yml build --no-cache api worker
           docker compose -f docker-compose.prod.yml up -d --force-recreate api worker
