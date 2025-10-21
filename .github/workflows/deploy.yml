@@ -93,25 +93,24 @@ jobs:
 
     - name: Sync repository on server
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+        REPO=${{ github.repository }}
+        REF=${{ github.ref_name }}
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST "
           set -e
-          if [ ! -d '$DEPLOY_DIR' ]; then
-            git clone https://github.com/${{ github.repository }} '$DEPLOY_DIR'
+          DEPLOY_DIR='$DEPLOY_DIR'
+          REPO='$REPO'
+          REF='$REF'
+          OWNER='$ORACLE_USER'
+          if [ ! -d \"\$DEPLOY_DIR/.git\" ]; then
+            sudo rm -rf \"\$DEPLOY_DIR\"
+            git clone https://github.com/\$REPO \"\$DEPLOY_DIR\"
           fi
-          cd '$DEPLOY_DIR'
-          if [ -d .git ]; then
-            git fetch origin
-            git checkout -f ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-          else
-            rm -rf *
-            git clone https://github.com/${{ github.repository }} tmp_repo
-            mv tmp_repo/.git .
-            rm -rf tmp_repo
-            git checkout -f ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-          fi
-        '
+          sudo chown -R \$OWNER:\$OWNER \"\$DEPLOY_DIR\"
+          cd \"\$DEPLOY_DIR\"
+          git fetch origin
+          git checkout -f \$REF
+          git reset --hard origin/\$REF
+        "
 
     - name: Build and start services
       run: |
