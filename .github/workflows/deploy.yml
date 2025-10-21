@@ -120,7 +120,6 @@ jobs:
           set -e
           export ALLOWED_HOSTS="${ALLOWED_HOSTS}"
           cd '$DEPLOY_DIR'
-          docker compose -f docker-compose.prod.yml pull
           docker compose -f docker-compose.prod.yml build --no-cache api worker
           docker compose -f docker-compose.prod.yml up -d --force-recreate api worker
         '
