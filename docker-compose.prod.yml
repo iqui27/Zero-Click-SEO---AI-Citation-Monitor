@@ -92,7 +92,7 @@ services:
     networks:
       - internal_net
     healthcheck:
-      test: ["CMD-SHELL", "bash -lc 'celery -A celery_app.celery_app inspect ping -d celery@$HOSTNAME || exit 1'"]
+      test: ["CMD-SHELL", "bash -lc 'celery -A celery_app.celery_app inspect ping || exit 1'"]
       interval: 30s
       timeout: 5s
       retries: 5
