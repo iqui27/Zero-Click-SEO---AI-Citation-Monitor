@@ -83,13 +83,60 @@ jobs:
         DB_COMMAND_TIMEOUT=120
         ENVEOF'
         
-    - name: Stop existing services
+    - name: Validate deployment files and stop existing services
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && if [ -f docker-compose.prod.yml ]; then sudo docker compose -f docker-compose.prod.yml down || true; fi'
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          cd '$DEPLOY_DIR'
+          echo "=== Validating deployment files ==="
+          if [ -f docker-compose.prod.yml ]; then
+            echo "✅ docker-compose.prod.yml found"
+            sudo docker compose -f docker-compose.prod.yml down || true
+          else
+            echo "❌ docker-compose.prod.yml not found!"
+            ls -la
+            exit 1
+          fi
+          
+          if [ -d deploy ]; then
+            echo "✅ deploy directory found"
+          else
+            echo "⚠️ deploy directory not found (not critical)"
+          fi
+          
+          if [ -d frontend/dist ]; then
+            echo "✅ frontend/dist found"
+          else
+            echo "❌ frontend/dist not found!"
+            exit 1
+          fi
+        '
 
-    - name: Prune Docker builder cache (server)
+    - name: Clean old backups and prune Docker cache
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'sudo docker builder prune -af || true'
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          cd '$DEPLOY_DIR'
+          
+          echo "=== Cleaning old backups (keep last 5) ==="
+          if [ -d backups ]; then
+            ls -1dt backups/* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+            echo "✅ Old backups cleaned"
+          fi
+          
+          echo "=== Pruning Docker builder cache ==="
+          sudo docker builder prune -af || true
+          
+          echo "=== Pruning unused Docker images ==="
+          sudo docker image prune -f --filter "until=72h" || true
+          
+          echo "=== Pruning dangling volumes ==="
+          sudo docker volume prune -f || true
+          
+          echo "=== Pruning dangling build cache ==="
+          sudo docker buildx prune -af --filter "until=72h" || true
+          
+          echo "=== Docker disk usage ==="
+          sudo du -sh /var/lib/docker || true
+        '
 
     - name: Sync repository on server
       run: |
@@ -114,24 +161,54 @@ jobs:
           git reset --hard origin/\$REF
         "
 
-    - name: Build and start services
+    - name: Build and start services (including reverse-proxy)
       run: |
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
           set -e
           export ALLOWED_HOSTS="${ALLOWED_HOSTS}"
           cd '$DEPLOY_DIR'
-          docker compose -f docker-compose.prod.yml build --no-cache api worker
-          docker compose -f docker-compose.prod.yml up -d --force-recreate api worker
+          echo "Building services..."
+          docker compose -f docker-compose.prod.yml build --no-cache
+          echo "Starting all services including reverse-proxy..."
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          echo "Verifying reverse-proxy is running..."
+          docker compose -f docker-compose.prod.yml ps reverse-proxy
         '
         
-    - name: Restart nginx to refresh container IPs
+    - name: Wait for services to start and validate reverse-proxy
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml restart reverse-proxy'
-        
-    - name: Wait for services to start
-      run: |
-        sleep 45
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml ps'
+        echo "Waiting for services to stabilize..."
+        sleep 30
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          cd '$DEPLOY_DIR'
+          echo "=== Container Status ==="
+          sudo docker compose -f docker-compose.prod.yml ps
+          
+          echo "=== Checking if reverse-proxy is running ==="
+          if sudo docker compose -f docker-compose.prod.yml ps --status running reverse-proxy > /dev/null; then
+            echo "✅ Reverse proxy is running"
+          else
+            echo "❌ Reverse proxy is not running!"
+            sudo docker compose -f docker-compose.prod.yml logs reverse-proxy
+            exit 1
+          fi
+          
+          echo "=== Testing ports 80 and 443 ==="
+          if command -v nc >/dev/null; then
+            if nc -z 127.0.0.1 80; then
+              echo "✅ Port 80 is open"
+            else
+              echo "❌ Port 80 is not responding"
+            fi
+            if nc -z 127.0.0.1 443; then
+              echo "✅ Port 443 is open"
+            else
+              echo "❌ Port 443 is not responding"
+            fi
+          else
+            echo "nc not available, skipping port check"
+          fi
+        '
 
     - name: Create keys payload (runner)
       run: |
@@ -199,18 +276,36 @@ jobs:
         echo "Waiting for API to be ready..."
         for i in {1..6}; do
           echo "Health check attempt $i/6"
-          if curl -f -s http://$ORACLE_HOST/health > /dev/null; then
-            echo "✅ Deployment successful - Health check passed"
+          # Try HTTPS first (preferred), then HTTP as fallback
+          if curl -k -f -s https://$ORACLE_HOST/health > /dev/null; then
+            echo "✅ Deployment successful - HTTPS Health check passed"
+            exit 0
+          elif curl -f -s http://$ORACLE_HOST/health > /dev/null; then
+            echo "✅ Deployment successful - HTTP Health check passed"
             exit 0
           fi
           echo "Health check failed, waiting 15 seconds..."
           sleep 15
         done
         echo "❌ Health check failed after 6 attempts"
+        echo "=== Checking reverse proxy logs ==="
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml logs reverse-proxy --tail=20'
+        echo "=== Checking API logs ==="
         ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'cd '$DEPLOY_DIR' && sudo docker compose -f docker-compose.prod.yml logs api --tail=10'
         exit 1
         
-    - name: Cleanup
+    - name: Final cleanup (remove old Docker images and cache)
+      if: always()
+      run: |
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST '
+          echo "=== Final Docker cleanup ==="
+          sudo docker system prune -f --filter "until=168h" || true
+          echo "✅ Cleanup complete"
+          echo "=== Current disk usage ==="
+          sudo df -h /var/lib/docker 2>/dev/null || sudo du -sh /var/lib/docker || echo "Docker disk info unavailable"
+        ' || true
+        
+    - name: Remove SSH key
       if: always()
       run: |
         rm -f ~/.ssh/oracle_key

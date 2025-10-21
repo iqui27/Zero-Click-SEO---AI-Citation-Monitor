@@ -1,0 +1,17 @@
+# SEO Analyzer - Deploy Configuration Defaults
+# These values are used by deploy scripts when environment variables are not set
+
+PROJECT_NAME=seo-analyzer-prod
+REMOTE_DIR=/opt/seo-analyzer
+COMPOSE_FILE=docker-compose.prod.yml
+ENV_FILE=.env.prod
+REVERSE_SERVICE=reverse-proxy
+BASE_URL=https://129.148.63.199
+HEALTHCHECK_URLS="/healthz /api/healthz /"
+PORTS_TO_CHECK="80 443"
+TIMEOUT_SECONDS=180
+
+# OCI Server Configuration
+SSH_KEY="/Users/hrocha/Documents/SSH Oracle/oci_ed25519"
+SSH_USER=ubuntu
+SSH_HOST=129.148.63.199
