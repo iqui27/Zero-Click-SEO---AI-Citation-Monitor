@@ -151,13 +151,13 @@ jobs:
     - name: Persist API keys into engines (save-keys)
       run: |
         # Grava chaves via endpoint interno e injeta api_key nas engines Gemini sem api_key
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost:8000/api/setup/save-keys \
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost/api/setup/save-keys \
           -H "Content-Type: application/json" \
           --data @/tmp/keys.json || true'
 
     - name: Test connections (Gemini/OpenAI/Perplexity/SerpAPI)
       run: |
-        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost:8000/api/setup/test-connections \
+        ssh -i ~/.ssh/oracle_key $ORACLE_USER@$ORACLE_HOST 'curl -sS -X POST http://localhost/api/setup/test-connections \
           -H "Content-Type: application/json" \
           --data @/tmp/keys.json || true'
 
