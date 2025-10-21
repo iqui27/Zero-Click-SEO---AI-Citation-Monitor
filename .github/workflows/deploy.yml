@@ -103,6 +103,8 @@ jobs:
           OWNER='$ORACLE_USER'
           if [ ! -d \"\$DEPLOY_DIR/.git\" ]; then
             sudo rm -rf \"\$DEPLOY_DIR\"
+            sudo mkdir -p \"\$DEPLOY_DIR\"
+            sudo chown -R \$OWNER:\$OWNER \"\$DEPLOY_DIR\"
             git clone https://github.com/\$REPO \"\$DEPLOY_DIR\"
           fi
           sudo chown -R \$OWNER:\$OWNER \"\$DEPLOY_DIR\"
