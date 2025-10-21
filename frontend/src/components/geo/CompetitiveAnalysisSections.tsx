@@ -148,18 +148,38 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
 
 // Componente 2: Co-citação
 export function CocitationSection({ data }: { data: GeoDashboard }) {
-  const cocitationByCompetitor = useMemo(() => {
-    const ranking = data.positioning?.brand_ranking || []
-    const totalMentions = (data.positioning as any)?.total_mentions || 1
+  const cocitationData = useMemo(() => {
+    const breakdown = Array.isArray(data.cocitation_breakdown) ? data.cocitation_breakdown : []
+    const summary = data.cocitation_summary || {}
 
-    return ranking
-      .slice(1, 11)
-      .map((item, index) => ({
-        name: item.brand,
-        value: (item.mentions / totalMentions) * 100,
-        color: getGeoColorByName(item.brand, index),
-      }))
-      .filter(item => item.value > 0)
+    const chart = breakdown.map((item, index) => ({
+      name: item.name,
+      rate: item.cocitation_rate ?? 0,
+      count: item.cocitation_count ?? 0,
+      coverage: item.coverage_rate ?? 0,
+      color: getGeoColorByName(item.name, index),
+    }))
+
+    const list = chart.map((entry) => ({
+      name: entry.name,
+      percentage: entry.rate,
+      color: entry.color,
+      count: entry.count,
+      coverage: entry.coverage,
+    }))
+
+    if (summary?.others_share && summary.others_share > 0) {
+      list.push({
+        name: 'Outros domínios',
+        percentage: summary.others_share,
+        color: getGeoColorByIndex(9),
+        count: summary.others_count ?? 0,
+        coverage: summary.others_coverage_rate ?? 0,
+        isOther: true,
+      })
+    }
+
+    return { chart, list, summary }
   }, [data])
 
   return (
@@ -167,25 +187,43 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
       <CardHeader>
         <CardTitle className="text-base">Co-citação</CardTitle>
         <CardDescription className="text-sm text-slate-600">
-          Concorrentes mencionados junto com sua marca
+          domínios mencionados junto com sua marca
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {cocitationByCompetitor.length ? (
+        {cocitationData.chart.length ? (
           <>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={cocitationByCompetitor}
+                  data={cocitationData.chart}
                   layout="vertical"
                   margin={{ top: 12, right: 20, bottom: 12, left: 160 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 'dataMax']} />
+                  <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 100]} />
                   <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={150} />
-                  <RechartsTooltip formatter={(value: any) => `${value.toFixed(1)}%`} />
-                  <Bar dataKey="value" name="% de Menções" radius={[0, 6, 6, 0]}>
-                    {cocitationByCompetitor.map((entry, index) => (
+                  <RechartsTooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const entry: any = payload[0].payload
+                        return (
+                          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                            <p className="text-sm font-semibold text-slate-900">{entry.name}</p>
+                            <p className="text-xs text-slate-600 mt-1">
+                              {entry.rate.toFixed(1)}% das co-citações monitoradas
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1">
+                              {entry.count} respostas · cobertura {entry.coverage?.toFixed?.(1) ?? '0.0'}% das runs
+                            </p>
+                          </div>
+                        )
+                      }
+                      return null
+                    }}
+                  />
+                  <Bar dataKey="rate" name="% de co-citações" radius={[0, 6, 6, 0]}>
+                    {cocitationData.chart.map((entry, index) => (
                       <Cell key={`cocitation-${entry.name}-${index}`} fill={entry.color} />
                     ))}
                   </Bar>
@@ -196,7 +234,7 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
             <div className="rounded-lg bg-slate-50/40 dark:bg-[color:var(--surface-subtle)] border border-slate-200/60 dark:border-[color:var(--border-strong)] p-4">
               <h4 className="text-sm font-semibold text-slate-900 dark:text-[color:var(--text-primary)] mb-4 text-center">Concorrentes Mencionados</h4>
               <ul className="space-y-2 text-sm text-slate-700 dark:text-[color:var(--text-muted)] max-h-64 overflow-y-auto pr-2">
-                {cocitationByCompetitor.map((item, index) => (
+                {cocitationData.list.map((item, index) => (
                   <li
                     key={`cocitation-list-${item.name}-${index}`}
                     className="flex items-center justify-center gap-2 text-center flex-wrap"
@@ -205,7 +243,7 @@ export function CocitationSection({ data }: { data: GeoDashboard }) {
                       {item.name}
                     </span>
                     <span>
-                      representa <strong>{item.value.toFixed(1)}%</strong> das menções
+                      representa <strong>{item.percentage.toFixed(1)}%</strong> das menções co-citadas
                     </span>
                   </li>
                 ))}

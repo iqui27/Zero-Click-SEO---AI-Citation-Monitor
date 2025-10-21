@@ -5,13 +5,13 @@ Endpoints para análise de presença de marca em LLMs (ChatGPT, Gemini, Perplexi
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List, Dict, Any, Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, and_, or_, desc
-from sqlalchemy.orm import Session
+from sqlalchemy import func, and_, or_, desc, Date
+from sqlalchemy.orm import Session, load_only
 
 from app.db.session import SessionLocal
 from app.models.models import (
@@ -22,6 +22,8 @@ from app.models.models import (
     ContentGap,
     Citation,
     Domain,
+    Prompt,
+    PromptVersion,
     gen_id,
 )
 from app.schemas.schemas import (
@@ -33,6 +35,7 @@ from app.schemas.schemas import (
     GeoCitationRateStats,
     GeoCoCitationAnalysis,
 )
+from app.services.geo_dashboard import normalize_llm_filter
 
 router = APIRouter(prefix="/api/projects", tags=["GEO"])
 
@@ -517,232 +520,496 @@ def get_cocitation_analysis(
 # AGGREGATION ENDPOINTS (Métricas por Segmento)
 # ========================================
 
-@router.get("/{project_id}/geo/stats-by-funnel")
-def get_geo_stats_by_funnel(
+QUESTION_TYPE_ORDER = ["informacional", "transacional", "navegacional", "comparativa", "outros"]
+QUESTION_TYPE_ALIASES = {
+    "informacional": "informacional",
+    "informacao": "informacional",
+    "informational": "informacional",
+    "marca": "informacional",
+    "brand": "informacional",
+    "transacional": "transacional",
+    "transactional": "transacional",
+    "produto": "transacional",
+    "product": "transacional",
+    "navegacional": "navegacional",
+    "navigational": "navegacional",
+    "comparativa": "comparativa",
+    "comparacao": "comparativa",
+    "comparative": "comparativa",
+}
+
+FUNNEL_STAGE_ORDER = ["consciencia", "consideracao", "decisao", "pos_compra", "outros"]
+FUNNEL_STAGE_ALIASES = {
+    "consciencia": "consciencia",
+    "reconhecimento": "consciencia",
+    "awareness": "consciencia",
+    "consideracao": "consideracao",
+    "consideration": "consideracao",
+    "avaliacao": "consideracao",
+    "decisao": "decisao",
+    "decisão": "decisao",
+    "conversao": "decisao",
+    "conversion": "decisao",
+    "pos_compra": "pos_compra",
+    "pos-venda": "pos_compra",
+    "retencao": "pos_compra",
+    "retention": "pos_compra",
+}
+
+PRODUCT_CATEGORY_ORDER = ["cartoes", "credito", "investimentos", "conta", "seguros", "empresarial", "digital", "multiproduto", "outros"]
+
+
+def _clean_filter_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped.lower() == "all":
+        return None
+    return stripped
+
+
+def _average(values: List[float]) -> Optional[float]:
+    return round(sum(values) / len(values), 2) if values else None
+
+
+def _percentage(part: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return round((part / total) * 100, 1)
+
+
+def _percentage_float(part: float, total: float) -> float:
+    if total <= 0:
+        return 0.0
+    return round((part / total) * 100, 1)
+
+
+def _collect_runs_for_geo_stats(
+    db: Session,
     project_id: str,
-    days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """
-    Retorna estatísticas GEO agregadas por estágio do funil.
-    
-    Returns:
-        {
-            "consciencia": {"runs": 10, "avg_citation_rate": 35.5, "avg_prominence": 65.2},
-            "consideracao": {...},
-            "decisao": {...}
-        }
-    """
-    # Verificar se projeto existe
-    project = db.get(Project, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Data de corte
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-    
-    # Query base: runs LLM do projeto
-    base_query = db.query(Run).filter(
-        Run.project_id == project_id,
-        Run.started_at >= cutoff_date,
-        Run.status == "completed",
-    ).join(Engine).filter(
-        or_(
-            Engine.name.ilike("%openai%"),
-            Engine.name.ilike("%chatgpt%"),
-            Engine.name.ilike("%gemini%"),
-            Engine.name.ilike("%perplexity%"),
-            Engine.name.ilike("%claude%"),
+    *,
+    days: int,
+    date_from: Optional[date],
+    date_to: Optional[date],
+    subproject_id: Optional[str],
+    llm_model: Optional[str],
+    prompt_id: Optional[str],
+    prompt_category: Optional[str],
+    prompt_text: Optional[str],
+    brand_presence: Optional[str],
+) -> List[Run]:
+    sanitized_subproject = _clean_filter_value(subproject_id)
+    sanitized_llm = _clean_filter_value(llm_model)
+    sanitized_prompt_id = _clean_filter_value(prompt_id)
+    sanitized_prompt_category = _clean_filter_value(prompt_category)
+    sanitized_prompt_text = _clean_filter_value(prompt_text)
+    sanitized_brand_presence = _clean_filter_value(brand_presence)
+
+    query = (
+        db.query(Run)
+        .join(Engine)
+        .filter(
+            Run.project_id == project_id,
+            Run.status == "completed",
+            or_(
+                Engine.name.ilike("%openai%"),
+                Engine.name.ilike("%chatgpt%"),
+                Engine.name.ilike("%gemini%"),
+                Engine.name.ilike("%perplexity%"),
+                Engine.name.ilike("%claude%"),
+            ),
         )
     )
-    
-    # Agrupar por funnel_stage
-    stats_by_funnel: Dict[str, Dict[str, Any]] = {}
-    
-    for stage in ["consciencia", "consideracao", "decisao", "pos_compra"]:
-        runs = base_query.filter(Run.funnel_stage == stage).all()
-        
-        if not runs:
-            stats_by_funnel[stage] = {
-                "runs_count": 0,
-                "avg_brand_mentions": None,
-                "avg_citation_rate": None,
-                "avg_prominence": None,
-                "avg_engagement": None,
-                "avg_conversion_potential": None,
-            }
-            continue
-        
-        # Calcular médias
-        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
-        citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
-        prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
-        engagements = [r.engagement_score for r in runs if r.engagement_score is not None]
-        conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
 
-        stats_by_funnel[stage] = {
-            "runs_count": len(runs),
-            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
-            "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
-            "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
-            "avg_engagement": round(sum(engagements) / len(engagements), 2) if engagements else None,
-            "avg_conversion_potential": round(sum(conversions) / len(conversions), 2) if conversions else None,
-        }
-    
-    return stats_by_funnel
+    # Date filters
+    dialect_name = db.bind.dialect.name if db.bind and db.bind.dialect else ""
+
+    if date_from:
+        if dialect_name == "mssql":
+            query = query.filter(func.cast(Run.started_at, Date) >= date_from)
+        else:
+            query = query.filter(func.date(Run.started_at) >= date_from)
+    else:
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        query = query.filter(Run.started_at >= cutoff_date)
+
+    if date_to:
+        if dialect_name == "mssql":
+            query = query.filter(func.cast(Run.started_at, Date) <= date_to)
+        else:
+            query = query.filter(func.date(Run.started_at) <= date_to)
+
+    if sanitized_subproject:
+        query = query.filter(Run.subproject_id == sanitized_subproject)
+
+    if sanitized_llm:
+        normalized_llm = normalize_llm_filter(sanitized_llm)
+        if normalized_llm:
+            like_pattern = f"%{normalized_llm}%"
+            query = query.filter(
+                or_(
+                    func.lower(func.coalesce(Run.model_name, "")).like(like_pattern),
+                    func.lower(func.coalesce(Engine.name, "")).like(like_pattern),
+                )
+            )
+
+    joined_prompt = False
+    if sanitized_prompt_id or sanitized_prompt_category or sanitized_prompt_text:
+        query = query.join(PromptVersion, Run.prompt_version_id == PromptVersion.id)
+        query = query.join(Prompt, PromptVersion.prompt_id == Prompt.id)
+        joined_prompt = True
+
+        if sanitized_prompt_id:
+            query = query.filter(Prompt.id == sanitized_prompt_id)
+
+        if sanitized_prompt_category:
+            like = f"%{sanitized_prompt_category}%"
+            query = query.filter(
+                or_(
+                    Prompt.name.ilike(like),
+                    Prompt.text.ilike(like),
+                )
+            )
+
+        if sanitized_prompt_text:
+            like = f"%{sanitized_prompt_text}%"
+            query = query.filter(
+                or_(
+                    Prompt.name.ilike(like),
+                    Prompt.text.ilike(like),
+                )
+            )
+    if sanitized_brand_presence == "with_brand":
+        query = query.filter(Run.our_citations_count > 0)
+    elif sanitized_brand_presence == "without_brand":
+        query = query.filter(or_(Run.our_citations_count == 0, Run.our_citations_count.is_(None)))
+
+    query = query.options(
+        load_only(
+            Run.id,
+            Run.product_category,
+            Run.brand_mention_count,
+            Run.citation_rate_observed,
+            Run.brand_prominence_score,
+            Run.share_of_voice_llm,
+            Run.engagement_score,
+            Run.conversion_potential_score,
+            Run.funnel_stage,
+            Run.question_type,
+        )
+    )
+
+    return query.distinct().all()
 
 
 @router.get("/{project_id}/geo/stats-by-question-type")
 def get_geo_stats_by_question_type(
     project_id: str,
     days: int = Query(30, ge=1, le=365),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    llm_model: Optional[str] = Query(None),
+    subproject_id: Optional[str] = Query(None),
+    prompt_id: Optional[str] = Query(None),
+    prompt_category: Optional[str] = Query(None),
+    prompt_text: Optional[str] = Query(None),
+    brand_presence: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """
-    Retorna estatísticas GEO agregadas por tipo de pergunta.
-    
-    Returns:
-        {
-            "informacional": {"runs": 15, "avg_citation_rate": 40.2, ...},
-            "transacional": {...},
-            "navegacional": {...}
-        }
-    """
-    # Verificar se projeto existe
+    """Retorna estatísticas GEO agregadas por tipo de pergunta."""
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Data de corte
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-    
-    # Query base: runs LLM do projeto
-    base_query = db.query(Run).filter(
-        Run.project_id == project_id,
-        Run.started_at >= cutoff_date,
-        Run.status == "completed",
-    ).join(Engine).filter(
-        or_(
-            Engine.name.ilike("%openai%"),
-            Engine.name.ilike("%chatgpt%"),
-            Engine.name.ilike("%gemini%"),
-            Engine.name.ilike("%perplexity%"),
-            Engine.name.ilike("%claude%"),
-        )
-    )
-    
-    # Agrupar por question_type
-    stats_by_type: Dict[str, Dict[str, Any]] = {}
-    
-    for qtype in ["informacional", "transacional", "navegacional", "comparativa"]:
-        runs = base_query.filter(Run.question_type == qtype).all()
-        
-        if not runs:
-            stats_by_type[qtype] = {
-                "runs_count": 0,
-                "avg_brand_mentions": None,
-                "avg_citation_rate": None,
-                "avg_prominence": None,
-                "avg_sov": None,
-                "avg_conversion_potential": None,
-            }
-            continue
-        
-        # Calcular médias
-        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
-        citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
-        prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
-        sovs = [r.share_of_voice_llm for r in runs if r.share_of_voice_llm is not None]
-        conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
 
-        stats_by_type[qtype] = {
-            "runs_count": len(runs),
-            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
-            "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
-            "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
-            "avg_sov": round(sum(sovs) / len(sovs), 2) if sovs else None,
-            "avg_conversion_potential": round(sum(conversions) / len(conversions), 2) if conversions else None,
+    runs = _collect_runs_for_geo_stats(
+        db,
+        project_id,
+        days=days,
+        date_from=date_from,
+        date_to=date_to,
+        subproject_id=subproject_id,
+        llm_model=llm_model,
+        prompt_id=prompt_id,
+        prompt_category=prompt_category,
+        prompt_text=prompt_text,
+        brand_presence=brand_presence,
+    )
+
+    accumulators: Dict[str, Dict[str, Any]] = {
+        key: {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
         }
-    
+        for key in QUESTION_TYPE_ORDER
+    }
+
+    total_runs = 0
+    for run in runs:
+        raw_type = (run.question_type or "").strip().lower()
+        key = QUESTION_TYPE_ALIASES.get(raw_type, "outros")
+        acc = accumulators.setdefault(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+        })
+        acc["runs"] += 1
+        total_runs += 1
+
+        if run.brand_mention_count is not None:
+            acc["brand_mentions"].append(float(run.brand_mention_count))
+        if run.citation_rate_observed is not None:
+            acc["citation_rates"].append(float(run.citation_rate_observed))
+        if run.brand_prominence_score is not None:
+            acc["prominence"].append(float(run.brand_prominence_score))
+        if run.share_of_voice_llm is not None:
+            acc["sov"].append(float(run.share_of_voice_llm))
+        if run.engagement_score is not None:
+            acc["engagement"].append(float(run.engagement_score))
+        if run.conversion_potential_score is not None:
+            acc["conversion"].append(float(run.conversion_potential_score))
+
+    stats_by_type: Dict[str, Dict[str, Any]] = {}
+    for key in QUESTION_TYPE_ORDER:
+        acc = accumulators.get(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+        })
+        runs_count = acc["runs"]
+        stats_by_type[key] = {
+            "runs_count": runs_count,
+            "avg_brand_mentions": _average(acc["brand_mentions"]),
+            "avg_citation_rate": _average(acc["citation_rates"]),
+            "avg_prominence": _average(acc["prominence"]),
+            "avg_sov": _average(acc["sov"]),
+            "avg_engagement": _average(acc["engagement"]),
+            "avg_conversion_potential": _average(acc["conversion"]),
+            "share_of_runs": _percentage(runs_count, total_runs),
+        }
+
     return stats_by_type
+
+
+@router.get("/{project_id}/geo/stats-by-funnel")
+def get_geo_stats_by_funnel(
+    project_id: str,
+    days: int = Query(30, ge=1, le=365),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    llm_model: Optional[str] = Query(None),
+    subproject_id: Optional[str] = Query(None),
+    prompt_id: Optional[str] = Query(None),
+    prompt_category: Optional[str] = Query(None),
+    prompt_text: Optional[str] = Query(None),
+    brand_presence: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Retorna estatísticas GEO agregadas por estágio do funil."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    runs = _collect_runs_for_geo_stats(
+        db,
+        project_id,
+        days=days,
+        date_from=date_from,
+        date_to=date_to,
+        subproject_id=subproject_id,
+        llm_model=llm_model,
+        prompt_id=prompt_id,
+        prompt_category=prompt_category,
+        prompt_text=prompt_text,
+        brand_presence=brand_presence,
+    )
+
+    accumulators: Dict[str, Dict[str, Any]] = {
+        key: {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+        }
+        for key in FUNNEL_STAGE_ORDER
+    }
+
+    total_runs = 0
+    for run in runs:
+        raw_stage = (run.funnel_stage or "").strip().lower()
+        key = FUNNEL_STAGE_ALIASES.get(raw_stage, "outros")
+        acc = accumulators.setdefault(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+        })
+        acc["runs"] += 1
+        total_runs += 1
+
+        if run.brand_mention_count is not None:
+            acc["brand_mentions"].append(float(run.brand_mention_count))
+        if run.citation_rate_observed is not None:
+            acc["citation_rates"].append(float(run.citation_rate_observed))
+        if run.brand_prominence_score is not None:
+            acc["prominence"].append(float(run.brand_prominence_score))
+        if run.share_of_voice_llm is not None:
+            acc["sov"].append(float(run.share_of_voice_llm))
+        if run.engagement_score is not None:
+            acc["engagement"].append(float(run.engagement_score))
+        if run.conversion_potential_score is not None:
+            acc["conversion"].append(float(run.conversion_potential_score))
+
+    stats_by_funnel: Dict[str, Dict[str, Any]] = {}
+    for key in FUNNEL_STAGE_ORDER:
+        acc = accumulators.get(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+        })
+        runs_count = acc["runs"]
+        stats_by_funnel[key] = {
+            "runs_count": runs_count,
+            "avg_brand_mentions": _average(acc["brand_mentions"]),
+            "avg_citation_rate": _average(acc["citation_rates"]),
+            "avg_prominence": _average(acc["prominence"]),
+            "avg_sov": _average(acc["sov"]),
+            "avg_engagement": _average(acc["engagement"]),
+            "avg_conversion_potential": _average(acc["conversion"]),
+            "share_of_runs": _percentage(runs_count, total_runs),
+        }
+
+    return stats_by_funnel
 
 
 @router.get("/{project_id}/geo/stats-by-product")
 def get_geo_stats_by_product(
     project_id: str,
     days: int = Query(30, ge=1, le=365),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    llm_model: Optional[str] = Query(None),
+    subproject_id: Optional[str] = Query(None),
+    prompt_id: Optional[str] = Query(None),
+    prompt_category: Optional[str] = Query(None),
+    prompt_text: Optional[str] = Query(None),
+    brand_presence: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """
-    Retorna estatísticas GEO agregadas por categoria de produto.
-
-    Returns:
-        {
-            "cartoes": {"runs": 8, "avg_citation_rate": 42.5, ...},
-            "credito": {...},
-            "investimentos": {...}
-        }
-    """
-    # Verificar se projeto existe
+    """Retorna estatísticas GEO agregadas por categoria de produto."""
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Data de corte
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-
-    # Query base: runs LLM do projeto
-    base_query = db.query(Run).filter(
-        Run.project_id == project_id,
-        Run.started_at >= cutoff_date,
-        Run.status == "completed",
-    ).join(Engine).filter(
-        or_(
-            Engine.name.ilike("%openai%"),
-            Engine.name.ilike("%chatgpt%"),
-            Engine.name.ilike("%gemini%"),
-            Engine.name.ilike("%perplexity%"),
-            Engine.name.ilike("%claude%"),
-        )
+    runs = _collect_runs_for_geo_stats(
+        db,
+        project_id,
+        days=days,
+        date_from=date_from,
+        date_to=date_to,
+        subproject_id=subproject_id,
+        llm_model=llm_model,
+        prompt_id=prompt_id,
+        prompt_category=prompt_category,
+        prompt_text=prompt_text,
+        brand_presence=brand_presence,
     )
 
-    # Agrupar por product_category
+    accumulators: Dict[str, Dict[str, Any]] = {
+        key: {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+            "total_mentions": 0.0,
+        }
+        for key in PRODUCT_CATEGORY_ORDER
+    }
+
+    total_runs = 0
+    total_mentions = 0.0
+
+    for run in runs:
+        raw_category = (run.product_category or "").strip().lower()
+        key = raw_category if raw_category in PRODUCT_CATEGORY_ORDER else "outros"
+        acc = accumulators.setdefault(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+            "total_mentions": 0.0,
+        })
+        acc["runs"] += 1
+        total_runs += 1
+
+        if run.brand_mention_count is not None:
+            mentions_value = float(run.brand_mention_count)
+            acc["brand_mentions"].append(mentions_value)
+            acc["total_mentions"] += mentions_value
+            total_mentions += mentions_value
+
+        if run.citation_rate_observed is not None:
+            acc["citation_rates"].append(float(run.citation_rate_observed))
+        if run.brand_prominence_score is not None:
+            acc["prominence"].append(float(run.brand_prominence_score))
+        if run.share_of_voice_llm is not None:
+            acc["sov"].append(float(run.share_of_voice_llm))
+        if run.engagement_score is not None:
+            acc["engagement"].append(float(run.engagement_score))
+        if run.conversion_potential_score is not None:
+            acc["conversion"].append(float(run.conversion_potential_score))
+
     stats_by_product: Dict[str, Dict[str, Any]] = {}
-
-    # Categorias possíveis
-    categories = ["cartoes", "credito", "investimentos", "conta", "seguros", "empresarial", "digital", "multiproduto"]
-
-    for category in categories:
-        runs = base_query.filter(Run.product_category == category).all()
-
-        if not runs:
-            stats_by_product[category] = {
-                "runs_count": 0,
-                "avg_brand_mentions": None,
-                "avg_citation_rate": None,
-                "avg_prominence": None,
-                "avg_sov": None,
-                "avg_engagement": None,
-                "avg_conversion_potential": None,
-            }
-            continue
-
-        # Calcular médias
-        brand_mentions = [r.brand_mention_count for r in runs if r.brand_mention_count is not None]
-        citation_rates = [r.citation_rate_observed for r in runs if r.citation_rate_observed is not None]
-        prominences = [r.brand_prominence_score for r in runs if r.brand_prominence_score is not None]
-        sovs = [r.share_of_voice_llm for r in runs if r.share_of_voice_llm is not None]
-        engagements = [r.engagement_score for r in runs if r.engagement_score is not None]
-        conversions = [r.conversion_potential_score for r in runs if r.conversion_potential_score is not None]
-
-        stats_by_product[category] = {
-            "runs_count": len(runs),
-            "avg_brand_mentions": round(sum(brand_mentions) / len(brand_mentions), 2) if brand_mentions else None,
-            "avg_citation_rate": round(sum(citation_rates) / len(citation_rates), 2) if citation_rates else None,
-            "avg_prominence": round(sum(prominences) / len(prominences), 2) if prominences else None,
-            "avg_sov": round(sum(sovs) / len(sovs), 2) if sovs else None,
-            "avg_engagement": round(sum(engagements) / len(engagements), 2) if engagements else None,
-            "avg_conversion_potential": round(sum(conversions) / len(conversions), 2) if conversions else None,
+    for key in PRODUCT_CATEGORY_ORDER:
+        acc = accumulators.get(key, {
+            "runs": 0,
+            "brand_mentions": [],
+            "citation_rates": [],
+            "prominence": [],
+            "sov": [],
+            "engagement": [],
+            "conversion": [],
+            "total_mentions": 0.0,
+        })
+        runs_count = acc["runs"]
+        stats_by_product[key] = {
+            "runs_count": runs_count,
+            "avg_brand_mentions": _average(acc["brand_mentions"]),
+            "avg_citation_rate": _average(acc["citation_rates"]),
+            "avg_prominence": _average(acc["prominence"]),
+            "avg_sov": _average(acc["sov"]),
+            "avg_engagement": _average(acc["engagement"]),
+            "avg_conversion_potential": _average(acc["conversion"]),
+            "share_of_runs": _percentage(runs_count, total_runs),
+            "share_of_mentions": _percentage_float(acc["total_mentions"], total_mentions),
         }
 
     return stats_by_product

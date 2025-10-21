@@ -644,6 +644,10 @@ export type GeoDashboardFilters = {
   date_from?: string
   date_to?: string
   bank_ids?: string[]
+  llm_model?: string
+  prompt_category?: string
+  prompt_text?: string
+  brand_presence?: string
 }
 
 export type GeoContextInsights = {
@@ -655,6 +659,22 @@ export type GeoContextInsights = {
     avg_engagement: number
   }>
   total_contexts?: number
+}
+
+export type GeoCocitationBreakdownItem = {
+  name: string
+  cocitation_count: number
+  cocitation_rate: number
+  coverage_rate?: number
+}
+
+export type GeoCocitationSummary = {
+  total_runs_with_cocitation?: number
+  total_runs?: number
+  others_count?: number
+  others_share?: number
+  others_coverage_rate?: number
+  competitors_tracked?: number
 }
 
 export type GeoDashboard = {
@@ -673,16 +693,22 @@ export type GeoDashboard = {
   timeline?: GeoTimelinePoint[]
   geo_summary?: GeoSummary
   context_insights?: GeoContextInsights
+  cocitation_breakdown?: GeoCocitationBreakdownItem[]
+  cocitation_summary?: GeoCocitationSummary
+  exclusive_citations_count?: number
 }
 
 export type GeoStatsByProductItem = {
   product_category: string | null
   runs_count: number
+  avg_brand_mentions: number | null
   avg_citation_rate: number | null
   avg_prominence: number | null
   avg_sov: number | null
   avg_engagement: number | null
   avg_conversion_potential: number | null
+  share_of_runs: number
+  share_of_mentions: number
 }
 
 export type GeoStatsByFunnelItem = {
@@ -693,6 +719,7 @@ export type GeoStatsByFunnelItem = {
   avg_sov: number | null
   avg_engagement: number | null
   avg_conversion_potential: number | null
+  share_of_runs: number
 }
 
 export type GeoStatsByQuestionTypeItem = {
@@ -703,6 +730,7 @@ export type GeoStatsByQuestionTypeItem = {
   avg_sov: number | null
   avg_engagement: number | null
   avg_conversion_potential: number | null
+  share_of_runs: number
 }
 
 export const getGeoDashboard = (
@@ -810,19 +838,55 @@ export const getGeoDashboardStatus = (projectId: string, taskId: string) => {
   return http.get<GeoDashboardStatusResponse>(`/projects/${projectId}/geo-dashboard/status/${taskId}`).then(r => r.data)
 }
 
-export const getGeoStatsByProduct = (projectId: string, days = 30) =>
+type GeoAggregationFilterParams = {
+  date_from?: string
+  date_to?: string
+  llm_model?: string
+  subproject_id?: string
+  prompt_id?: string
+  prompt_category?: string
+  prompt_text?: string
+  brand_presence?: string
+}
+
+const buildGeoAggregationParams = (days: number, filters?: GeoAggregationFilterParams) => {
+  const params: Record<string, any> = { days }
+  if (!filters) return params
+
+  if (filters.date_from) params.date_from = filters.date_from
+  if (filters.date_to) params.date_to = filters.date_to
+  if (filters.llm_model) params.llm_model = filters.llm_model
+  if (filters.subproject_id) params.subproject_id = filters.subproject_id
+  if (filters.prompt_id) params.prompt_id = filters.prompt_id
+  if (filters.prompt_category) params.prompt_category = filters.prompt_category
+  if (filters.prompt_text) params.prompt_text = filters.prompt_text
+  if (filters.brand_presence) params.brand_presence = filters.brand_presence
+
+  return params
+}
+
+export const getGeoStatsByProduct = (
+  projectId: string,
+  options: { days?: number; filters?: GeoAggregationFilterParams } = {},
+) =>
   http.get<Record<string, GeoStatsByProductItem>>(`/projects/${projectId}/geo/stats-by-product`, {
-    params: { days }
+    params: buildGeoAggregationParams(options.days ?? 30, options.filters),
   }).then(r => r.data)
 
-export const getGeoStatsByFunnel = (projectId: string, days = 30) =>
+export const getGeoStatsByFunnel = (
+  projectId: string,
+  options: { days?: number; filters?: GeoAggregationFilterParams } = {},
+) =>
   http.get<Record<string, GeoStatsByFunnelItem>>(`/projects/${projectId}/geo/stats-by-funnel`, {
-    params: { days }
+    params: buildGeoAggregationParams(options.days ?? 30, options.filters),
   }).then(r => r.data)
 
-export const getGeoStatsByQuestionType = (projectId: string, days = 30) =>
+export const getGeoStatsByQuestionType = (
+  projectId: string,
+  options: { days?: number; filters?: GeoAggregationFilterParams } = {},
+) =>
   http.get<Record<string, GeoStatsByQuestionTypeItem>>(`/projects/${projectId}/geo/stats-by-question-type`, {
-    params: { days }
+    params: buildGeoAggregationParams(options.days ?? 30, options.filters),
   }).then(r => r.data)
 
 // ---------- Analytics Dashboard (Aggregated) ----------

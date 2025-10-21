@@ -50,14 +50,17 @@ def get_engine_config() -> Dict[str, Any]:
     if database_url.startswith("mssql"):
         logger.info("Testing Azure SQL connection...")
         if not _test_connection(database_url, timeout=5):
-            if not settings.is_production:
+            if settings.allow_sqlite_fallback and not settings.is_production:
                 # Fallback to SQLite in development
                 sqlite_path = os.getenv("SQLITE_FALLBACK_PATH", "/app/data/app.db")
                 database_url = f"sqlite:///{sqlite_path}"
                 use_sqlite_fallback = True
                 logger.warning(f"⚠️  Azure SQL not accessible. Using SQLite fallback: {database_url}")
             else:
-                raise ConnectionError("Azure SQL connection failed in production")
+                raise ConnectionError(
+                    "Azure SQL connection failed and SQLite fallback is disabled. "
+                    "Verify DATABASE_URL and network access."
+                )
         else:
             logger.info("✓ Azure SQL connection successful")
 

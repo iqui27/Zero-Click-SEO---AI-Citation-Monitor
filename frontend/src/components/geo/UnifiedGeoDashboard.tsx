@@ -103,7 +103,7 @@ export function UnifiedGeoDashboard({ projectId, refreshToken = 0 }: UnifiedGeoD
   const [availableFilters, setAvailableFilters] = useState<GeoDashboardFiltersResponse | null>(null)
   const [loadingFilters, setLoadingFilters] = useState(true)
   const { data, loading, error, overview } = useGeoDashboard(projectId, filters, refreshToken)
-  const aggregations = useGeoAggregations(projectId, { refreshToken })
+  const aggregations = useGeoAggregations(projectId, { refreshToken, filters })
 
   // Load available filters
   useEffect(() => {
@@ -328,13 +328,6 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
 
   const bigNumbers: BigNumberMetric[] = [
     {
-      title: 'Total de Respostas Analisadas',
-      value: String(totalRuns).replace(/\B(?=(\d{3})+(?!\d))/g, '.'),
-      subtitle: null,
-      delta: null,
-      trend: null,
-    },
-    {
       title: 'Taxa de Citação',
       value: citationRateKpi?.value != null ? `${citationRateKpi.value.toFixed(1)}%` : '–',
       subtitle: (
@@ -358,7 +351,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     {
       title: 'PRZC (Presença Zero-Click)',
       value: zeroClickKpi?.value != null ? `${zeroClickKpi.value.toFixed(1)}%` : '–',
-      subtitle: <span className="text-xs text-slate-500">respostas com recursos IA</span>,
+      subtitle: null,
       delta: zeroClickKpi?.delta,
       trend: zeroClickKpi?.trendDirection,
     },
@@ -372,7 +365,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       {bigNumbers.map((metric) => {
         const delta = metric.delta
         const deltaClass = delta != null ? (delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-500') : 'text-slate-500'
@@ -453,14 +446,23 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     <div className="flex items-center justify-between text-sm mb-1.5">
                       <span className="text-slate-700 font-medium">{PRODUCT_LABELS[item.product_category] || item.product_category}</span>
                       <span className="font-semibold text-slate-900">
-                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                        {item.share_of_mentions != null
+                          ? `${item.share_of_mentions.toFixed(1)}%`
+                          : item.share_of_runs != null
+                            ? `${item.share_of_runs.toFixed(1)}%`
+                            : item.avg_citation_rate != null
+                              ? `${item.avg_citation_rate.toFixed(1)}%`
+                              : '–'}
                       </span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full"
                         style={{
-                          width: `${item.avg_citation_rate || 0}%`,
+                          width: `${Math.min(
+                            item.share_of_mentions ?? item.share_of_runs ?? item.avg_citation_rate ?? 0,
+                            100,
+                          )}%`,
                           backgroundColor: geoColorWithAlpha(productColor, 0.8),
                         }}
                       />
@@ -486,14 +488,18 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     <div className="flex items-center justify-between text-sm mb-1.5">
                       <span className="text-slate-700 font-medium">{FUNNEL_LABELS[item.funnel_stage] || item.funnel_stage}</span>
                       <span className="font-semibold text-slate-900">
-                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                        {item.share_of_runs != null
+                          ? `${item.share_of_runs.toFixed(1)}%`
+                          : item.avg_citation_rate != null
+                            ? `${item.avg_citation_rate.toFixed(1)}%`
+                            : '–'}
                       </span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full"
                         style={{
-                          width: `${item.avg_citation_rate || 0}%`,
+                          width: `${Math.min(item.share_of_runs ?? item.avg_citation_rate ?? 0, 100)}%`,
                           backgroundColor: geoColorWithAlpha(funnelColor, 0.8),
                         }}
                       />
@@ -519,14 +525,18 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     <div className="flex items-center justify-between text-sm mb-1.5">
                       <span className="text-slate-700 font-medium">{QUESTION_LABELS[item.question_type] || item.question_type}</span>
                       <span className="font-semibold text-slate-900">
-                        {item.avg_citation_rate != null ? `${item.avg_citation_rate.toFixed(0)}%` : '–'}
+                        {item.share_of_runs != null
+                          ? `${item.share_of_runs.toFixed(1)}%`
+                          : item.avg_citation_rate != null
+                            ? `${item.avg_citation_rate.toFixed(1)}%`
+                            : '–'}
                       </span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full"
                         style={{
-                          width: `${item.avg_citation_rate || 0}%`,
+                          width: `${Math.min(item.share_of_runs ?? item.avg_citation_rate ?? 0, 100)}%`,
                           backgroundColor: geoColorWithAlpha(questionColor, 0.8),
                         }}
                       />

@@ -200,11 +200,14 @@ export function useGeoDashboard(projectId: string | undefined, filters?: GeoDash
   }
 }
 
-export function useGeoAggregations(projectId: string | undefined, options: { days?: number; refreshToken?: number } = {}) {
+export function useGeoAggregations(
+  projectId: string | undefined,
+  options: { days?: number; refreshToken?: number; filters?: GeoDashboardFilters } = {},
+) {
   const [loading, setLoading] = useState<boolean>(!!projectId)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<GeoAggregations | null>(null)
-  const { days = 30, refreshToken = 0 } = options
+  const { days = 30, refreshToken = 0, filters } = options
 
   useEffect(() => {
     if (!projectId) {
@@ -218,10 +221,30 @@ export function useGeoAggregations(projectId: string | undefined, options: { day
     setLoading(true)
     setError(null)
 
+    const sanitize = (value: string | undefined) => (value && value !== 'all' ? value : undefined)
+    const sanitizedDateFrom = sanitize(filters?.date_from)
+    const sanitizedDateTo = sanitize(filters?.date_to)
+    const effectiveDateFrom = sanitizedDateFrom ?? (() => {
+      const date = new Date()
+      date.setDate(date.getDate() - days)
+      return date.toISOString().split('T')[0]
+    })()
+
+    const aggregationFilters = {
+      date_from: effectiveDateFrom,
+      date_to: sanitizedDateTo,
+      llm_model: sanitize(filters?.llm_model),
+      subproject_id: sanitize(filters?.subproject_id),
+      prompt_id: sanitize(filters?.prompt_id),
+      prompt_category: sanitize(filters?.prompt_category),
+      prompt_text: sanitize(filters?.prompt_text),
+      brand_presence: sanitize(filters?.brand_presence),
+    }
+
     Promise.all([
-      getGeoStatsByProduct(projectId, days),
-      getGeoStatsByFunnel(projectId, days),
-      getGeoStatsByQuestionType(projectId, days),
+      getGeoStatsByProduct(projectId, { days, filters: aggregationFilters }),
+      getGeoStatsByFunnel(projectId, { days, filters: aggregationFilters }),
+      getGeoStatsByQuestionType(projectId, { days, filters: aggregationFilters }),
     ])
       .then(([product, funnel, question]) => {
         if (!mounted) return
@@ -258,7 +281,19 @@ export function useGeoAggregations(projectId: string | undefined, options: { day
     return () => {
       mounted = false
     }
-  }, [projectId, days, refreshToken])
+  }, [
+    projectId,
+    days,
+    refreshToken,
+    filters?.date_from,
+    filters?.date_to,
+    filters?.llm_model,
+    filters?.subproject_id,
+    filters?.prompt_id,
+    filters?.prompt_category,
+    filters?.prompt_text,
+    filters?.brand_presence,
+  ])
 
   return { loading, error, data }
 }

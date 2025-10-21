@@ -736,4 +736,5 @@ class GeoDashboardOut(BaseModel):
     geo_summary: Optional[GeoSummary] = None
     context_insights: Optional[GeoContextInsights] = None
     cocitation_breakdown: Optional[List[Dict[str, Any]]] = None
+    cocitation_summary: Optional[Dict[str, Any]] = None
     exclusive_citations_count: Optional[int] = None

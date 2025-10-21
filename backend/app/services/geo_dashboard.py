@@ -549,7 +549,31 @@ def compute_geo_dashboard(
     raw_samples = _get_raw_samples(db, run_ids, limit=10)
 
     timeline, geo_summary = _compute_geo_timeline_and_summary(runs)
-    cocitation_breakdown = _compute_cocitation_breakdown(db, run_ids, our_domains)
+    our_brand_aliases: Set[str] = {our_label.strip().lower()} if our_label else set()
+    if project and project.name:
+        our_brand_aliases.add(project.name.strip().lower())
+    for domain in our_domains:
+        alias = domain.strip().lower()
+        if alias:
+            our_brand_aliases.add(alias)
+            primary_label = alias.split(".")[0]
+            if primary_label:
+                our_brand_aliases.add(primary_label)
+    for label in our_domain_labels.values():
+        normalized_label = label.strip().lower()
+        if normalized_label:
+            our_brand_aliases.add(normalized_label)
+            if "." in normalized_label:
+                primary_label = normalized_label.split(".")[0]
+                if primary_label:
+                    our_brand_aliases.add(primary_label)
+
+    cocitation_breakdown, cocitation_meta = _compute_cocitation_breakdown(
+        db,
+        run_ids,
+        our_domains,
+        our_brand_aliases,
+    )
     context_insights = _compute_context_insights(runs)
     exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)
 
@@ -610,6 +634,7 @@ def compute_geo_dashboard(
         "timeline": timeline,
         "geo_summary": geo_summary,
         "cocitation_breakdown": cocitation_breakdown,
+        "cocitation_summary": cocitation_meta,
         "context_insights": context_insights,
         "exclusive_citations_count": exclusive_citations_count,
     }
@@ -1855,7 +1880,12 @@ def _compute_swot(runs: List[Run]) -> Dict[str, List[str]]:
     }
 
 
-def _compute_cocitation_breakdown(db: Session, run_ids: List[str], our_domains: Set[str]) -> List[Dict[str, Any]]:
+def _compute_cocitation_breakdown(
+    db: Session,
+    run_ids: List[str],
+    our_domains: Set[str],
+    our_aliases: Set[str],
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Compute co-citation breakdown by competitor.
     
@@ -1865,37 +1895,98 @@ def _compute_cocitation_breakdown(db: Session, run_ids: List[str], our_domains: 
     
     competitor_cocitations: Dict[str, int] = Counter()
     total_runs_with_cocitation = 0
+    total_runs_considered = len(run_ids)
     
+    normalized_aliases = {alias.strip().lower() for alias in our_aliases if alias}
+
+    def _is_ours(name: str) -> bool:
+        candidate = (name or "").strip().lower()
+        if not candidate:
+            return False
+        if candidate in normalized_aliases:
+            return True
+        candidate_domain = normalize_domain(candidate)
+        if candidate_domain and candidate_domain in normalized_aliases:
+            return True
+        if candidate_domain and _domain_matches(candidate_domain, our_domains):
+            return True
+        if candidate_domain:
+            base = candidate_domain.split(".")[0]
+            if base and base in normalized_aliases:
+                return True
+        base_candidate = candidate.split(".")[0]
+        if base_candidate and base_candidate in normalized_aliases:
+            return True
+        return False
+
     for run in runs:
         if not run.cocitation_competitors:
             continue
-            
+
         try:
             competitors = json.loads(run.cocitation_competitors)
-            if isinstance(competitors, list) and competitors:
-                total_runs_with_cocitation += 1
-                for competitor in competitors:
-                    if isinstance(competitor, dict):
-                        name = competitor.get("name") or competitor.get("domain")
-                    else:
-                        name = str(competitor)
-                    
-                    if name:
-                        competitor_cocitations[name] += 1
         except (json.JSONDecodeError, TypeError):
             continue
+
+        if not isinstance(competitors, list) or not competitors:
+            continue
+
+        filtered_names: List[str] = []
+        for competitor in competitors:
+            if isinstance(competitor, dict):
+                raw_name = competitor.get("name") or competitor.get("domain")
+            else:
+                raw_name = str(competitor)
+
+            if not raw_name:
+                continue
+
+            clean_name = raw_name.strip()
+            if not clean_name or _is_ours(clean_name):
+                continue
+
+            filtered_names.append(clean_name)
+
+        if not filtered_names:
+            continue
+
+        total_runs_with_cocitation += 1
+        seen_names: Set[str] = set()
+        for name in filtered_names:
+            key = name.lower()
+            if key in seen_names:
+                continue
+            competitor_cocitations[name] += 1
+            seen_names.add(key)
     
     # Calculate percentages and sort
-    breakdown = []
-    for competitor, count in competitor_cocitations.most_common(10):
-        percentage = (count / len(run_ids)) * 100 if run_ids else 0
+    breakdown: List[Dict[str, Any]] = []
+    sorted_competitors = competitor_cocitations.most_common()
+
+    for competitor, count in sorted_competitors[:10]:
+        share = (count / total_runs_with_cocitation) * 100 if total_runs_with_cocitation else 0.0
+        coverage = (count / total_runs_considered) * 100 if total_runs_considered else 0.0
         breakdown.append({
             "name": competitor,
             "cocitation_count": count,
-            "cocitation_rate": round(percentage, 1),
+            "cocitation_rate": round(share, 1),
+            "coverage_rate": round(coverage, 1),
         })
-    
-    return breakdown
+
+    others_count = sum(count for _, count in sorted_competitors[10:])
+    others_share = (others_count / total_runs_with_cocitation) * 100 if total_runs_with_cocitation else 0.0
+    others_coverage = (others_count / total_runs_considered) * 100 if total_runs_considered else 0.0
+
+    meta = {
+        "total_runs_with_cocitation": total_runs_with_cocitation,
+        "total_runs": total_runs_considered,
+        "others_count": others_count,
+        "others_share": round(others_share, 1),
+        "others_coverage_rate": round(others_coverage, 1),
+        "competitors_tracked": len(sorted_competitors),
+    }
+
+    return breakdown, meta
 
 
 def _compute_context_insights(runs: List[Run]) -> Dict[str, Any]:
