@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, date, timedelta
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy import func, and_, or_, case, desc, text, Date
 from collections import Counter, defaultdict
 import json
+import math
 import re
 import statistics
 from urllib.parse import urlparse
@@ -38,6 +39,7 @@ from app.models.models import (
     RunSemanticInsight,
     PromptVersion,
     Engine,
+    GeoDailyMetric,
 )
 from app.services.normalization import normalize_domain, normalize_url
 
@@ -71,6 +73,159 @@ OFFICIAL_BANK_DOMAINS: Set[str] = {
     "digio.com.br",
     "inter.co",
 }
+
+MATERIALIZED_WINDOWS: tuple[int, ...] = (1, 7, 30)
+
+
+def normalize_llm_filter(value: Optional[str]) -> Optional[str]:
+    """Normalize LLM identifiers to stable tokens used in aggregations."""
+    if not value:
+        return None
+
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return None
+
+    if any(token in cleaned for token in ("chatgpt", "gpt", "openai")):
+        return "gpt"
+    if "claude" in cleaned:
+        return "claude"
+    if "gemini" in cleaned:
+        return "gemini"
+    if "perplexity" in cleaned:
+        return "perplexity"
+    if "llama" in cleaned:
+        return "llama"
+    if "mistral" in cleaned:
+        return "mistral"
+
+    return cleaned
+
+
+def _infer_materialized_window(date_from: Optional[date], date_to: Optional[date]) -> Optional[int]:
+    """Infer materialized window size (in days) based on request filters."""
+    if date_from and date_to:
+        span = (date_to - date_from).days + 1
+        return span if span in MATERIALIZED_WINDOWS else None
+    if date_to and not date_from:
+        return 1
+    if not date_from and not date_to:
+        # Default to 7-day window when no explicit range is provided.
+        return 7
+    return None
+
+
+def _apply_materialized_scope_filters(
+    query,
+    *,
+    prompt_id: Optional[str],
+    prompt_version_id: Optional[str],
+    subproject_id: Optional[str],
+    llm_model: Optional[str],
+):
+    if prompt_version_id:
+        query = query.filter(GeoDailyMetric.prompt_version_id == prompt_version_id)
+        if prompt_id:
+            query = query.filter(GeoDailyMetric.prompt_id == prompt_id)
+    elif prompt_id:
+        query = query.filter(
+            GeoDailyMetric.prompt_id == prompt_id,
+            GeoDailyMetric.prompt_version_id.is_(None),
+        )
+    else:
+        query = query.filter(
+            GeoDailyMetric.prompt_id.is_(None),
+            GeoDailyMetric.prompt_version_id.is_(None),
+        )
+
+    if subproject_id:
+        query = query.filter(GeoDailyMetric.subproject_id == subproject_id)
+    else:
+        query = query.filter(GeoDailyMetric.subproject_id.is_(None))
+
+    if llm_model:
+        query = query.filter(GeoDailyMetric.llm_model == llm_model)
+    else:
+        query = query.filter(GeoDailyMetric.llm_model.is_(None))
+
+    return query
+
+
+def _try_get_materialized_payload(
+    db: Session,
+    *,
+    project_id: str,
+    window_days: int,
+    metric_date: Optional[date],
+    brand_presence: str,
+    prompt_id: Optional[str],
+    prompt_version_id: Optional[str],
+    subproject_id: Optional[str],
+    llm_model: Optional[str],
+) -> Optional[tuple[Dict[str, Any], GeoDailyMetric]]:
+    query = (
+        db.query(GeoDailyMetric)
+        .filter(
+            GeoDailyMetric.project_id == project_id,
+            GeoDailyMetric.window_days == window_days,
+            GeoDailyMetric.brand_presence == brand_presence,
+        )
+    )
+    query = _apply_materialized_scope_filters(
+        query,
+        prompt_id=prompt_id,
+        prompt_version_id=prompt_version_id,
+        subproject_id=subproject_id,
+        llm_model=llm_model,
+    )
+
+    record = None
+    if metric_date:
+        record = (
+            query.filter(GeoDailyMetric.metric_date == metric_date)
+            .order_by(GeoDailyMetric.updated_at.desc())
+            .one_or_none()
+        )
+
+    if not record and not metric_date:
+        record = query.order_by(GeoDailyMetric.metric_date.desc()).first()
+
+    if not record:
+        return None
+
+    payload_data = json.loads(json.dumps(record.metrics_payload or {}))
+    payload_data["materialized"] = True
+    payload_data["materialized_window_days"] = record.window_days
+    payload_data["materialized_metric_date"] = record.metric_date.isoformat()
+    payload_data["materialized_brand_presence"] = record.brand_presence
+
+    return payload_data, record
+
+
+def _apply_web_structure_page(payload: Dict[str, Any], page: int, page_size: int) -> bool:
+    """Apply pagination to web_structure section. Returns False when not enough data."""
+    page = max(1, page)
+    page_size = max(1, page_size)
+
+    items = list(payload.get("web_structure") or [])
+    meta = payload.get("web_structure_meta") or {}
+    total_items = int(meta.get("total_items", len(items)))
+
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    # If stored payload does not contain requested slice, signal caller to recompute
+    if start >= len(items) and total_items > len(items):
+        return False
+
+    payload["web_structure"] = items[start:end]
+    payload["web_structure_meta"] = {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": max(1, math.ceil(total_items / page_size)),
+    }
+    return True
 
 
 def _is_official_bank_domain(domain: str) -> bool:
@@ -122,6 +277,10 @@ def compute_geo_dashboard(
     prompt_category: Optional[str] = None,
     prompt_text: Optional[str] = None,
     brand_presence: Optional[str] = None,
+    *,
+    force_materialized: bool = True,
+    web_structure_page: int = 1,
+    web_structure_page_size: int = 30,
 ) -> Dict[str, Any]:
     """
     Compute aggregated GEO dashboard data with filtering.
@@ -144,10 +303,113 @@ def compute_geo_dashboard(
         Dictionary with all dashboard sections
     """
 
+    brand_scope = brand_presence if brand_presence in {"with_brand", "without_brand"} else "all"
+    normalized_llm = normalize_llm_filter(llm_model)
+
+    use_materialized = force_materialized
+    if bank_ids:
+        use_materialized = False
+    if prompt_category or prompt_text:
+        use_materialized = False
+    if web_structure_page > 1:
+        use_materialized = False
+
+    materialized_payload: Optional[Dict[str, Any]] = None
+
+    if use_materialized:
+        window_days = _infer_materialized_window(date_from, date_to)
+        if window_days:
+            metric_date = date_to
+            materialized = _try_get_materialized_payload(
+                db,
+                project_id=project_id,
+                window_days=window_days,
+                metric_date=metric_date,
+                brand_presence=brand_scope,
+                prompt_id=prompt_id,
+                prompt_version_id=prompt_version_id,
+                subproject_id=subproject_id,
+                llm_model=normalized_llm,
+            )
+            if materialized:
+                materialized_payload, _ = materialized
+                # Adjust pagination if possible; otherwise fall back to raw computation.
+                if _apply_web_structure_page(materialized_payload, web_structure_page, web_structure_page_size):
+                    materialized_payload["project_id"] = project_id
+                    materialized_payload["filters_applied"] = {
+                        "prompt_id": prompt_id,
+                        "prompt_version_id": prompt_version_id,
+                        "subproject_id": subproject_id,
+                        "date_from": date_from.isoformat() if date_from else None,
+                        "date_to": date_to.isoformat() if date_to else None,
+                        "bank_ids": bank_ids,
+                        "llm_model": llm_model,
+                        "prompt_category": prompt_category,
+                        "prompt_text": prompt_text,
+                        "brand_presence": brand_presence,
+                        "web_structure_page": web_structure_page,
+                        "web_structure_page_size": web_structure_page_size,
+                    }
+                    return materialized_payload
+                else:
+                    # Requested page exceeds stored payload; force raw computation.
+                    materialized_payload = None
+
     # Build base query with filters
     query = db.query(Run).filter(
         Run.project_id == project_id,
         Run.status == "completed"
+    )
+
+    query = query.options(
+        load_only(
+            Run.id,
+            Run.project_id,
+            Run.prompt_version_id,
+            Run.subproject_id,
+            Run.started_at,
+            Run.finished_at,
+            Run.model_name,
+            Run.brand_mention_count,
+            Run.our_citations_count,
+            Run.brand_prominence_score,
+            Run.zero_click_presence,
+            Run.citation_rate_observed,
+            Run.citation_rate_corrected,
+            Run.engagement_score,
+            Run.conversion_potential_score,
+            Run.conversion_potential,
+            Run.citations_count,
+            Run.zcrs,
+            Run.amr_flag,
+            Run.dcr_flag,
+            Run.brand_first_mention_position,
+            Run.brand_mention_density,
+            Run.share_of_voice_llm,
+            Run.competitor_mention_ratio,
+            Run.conversational_trigger_count,
+            Run.ia_ready_score,
+            Run.entities_detected,
+            Run.entities_relevance_score,
+            Run.entity_connection_score,
+            Run.perceived_value_category,
+            Run.response_text,
+            Run.cocitation_competitors,
+            Run.im_seo_score,
+            Run.im_seoia_score,
+            Run.has_lists,
+            Run.has_faqs,
+            Run.has_tables,
+            Run.has_step_by_step,
+            Run.cost_usd,
+            Run.tokens_total,
+            Run.brand_positioning,
+            Run.response_type,
+            Run.question_type,
+            Run.funnel_stage,
+            Run.schedule_date,
+            Run.schedule_slot,
+        )
     )
 
     # Filter by prompt category or text
@@ -275,12 +537,18 @@ def compute_geo_dashboard(
     )
     keywords_entities = _compute_keywords_entities(db, run_ids)
     panorama = _compute_panorama(db, run_ids, runs)
-    web_structure = _compute_web_structure(db, run_ids, bank_ids)
+    web_structure_items, web_structure_meta = _compute_web_structure(
+        db,
+        run_ids,
+        bank_ids,
+        page=web_structure_page,
+        page_size=web_structure_page_size,
+    )
     alerts = _compute_alerts(runs)
     swot = _compute_swot(runs)
     raw_samples = _get_raw_samples(db, run_ids, limit=10)
 
-    timeline, geo_summary = _compute_geo_timeline_and_summary(runs)
+    timeline, geo_summary = _compute_geo_timeline_and_summary(db, run_ids)
     cocitation_breakdown = _compute_cocitation_breakdown(db, run_ids, our_domains)
     context_insights = _compute_context_insights(runs)
     exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)
@@ -321,14 +589,21 @@ def compute_geo_dashboard(
             "prompt_category": prompt_category,
             "prompt_text": prompt_text,
             "brand_presence": brand_presence,
+            "web_structure_page": web_structure_page,
+            "web_structure_page_size": web_structure_page_size,
         },
         "total_runs": len(runs),
+        "materialized": False,
+        "materialized_window_days": None,
+        "materialized_metric_date": None,
+        "materialized_brand_presence": None,
         "kpis": kpis,
         "radar": radar,
         "positioning": positioning,
         "keywords_entities": keywords_entities,
         "panorama": panorama,
-        "web_structure": web_structure,
+        "web_structure": web_structure_items,
+        "web_structure_meta": web_structure_meta,
         "alerts": alerts,
         "swot": swot,
         "raw_samples": raw_samples,
@@ -346,12 +621,22 @@ def _empty_dashboard() -> Dict[str, Any]:
         "project_id": None,
         "filters_applied": {},
         "total_runs": 0,
+        "materialized": False,
+        "materialized_window_days": None,
+        "materialized_metric_date": None,
+        "materialized_brand_presence": None,
         "kpis": [],
         "radar": [],
         "positioning": {"brand_ranking": [], "perception_breakdown": []},
         "keywords_entities": {"word_cloud": [], "entities": []},
         "panorama": {"cards": [], "chart": []},
         "web_structure": [],
+        "web_structure_meta": {
+            "page": 1,
+            "page_size": 0,
+            "total_items": 0,
+            "total_pages": 0,
+        },
         "alerts": [],
         "swot": {"strengths": [], "weaknesses": [], "opportunities": [], "threats": []},
         "raw_samples": [],
@@ -584,7 +869,19 @@ def _compute_positioning(
     """Compute brand ranking, share of voice and perception breakdown."""
 
     # Get all citations from runs
-    citations = db.query(Citation).filter(Citation.run_id.in_(run_ids)).all()
+    citations = (
+        db.query(
+            Citation.run_id,
+            Citation.domain,
+            Citation.url,
+            Citation.anchor,
+            Citation.position,
+            Citation.type,
+            Citation.is_ours,
+        )
+        .filter(Citation.run_id.in_(run_ids))
+        .all()
+    )
 
     # Aggregate mentions by normalized domain and capture sample URLs
     domain_counts: Counter[str] = Counter()
@@ -1226,7 +1523,14 @@ def _compute_panorama(db: Session, run_ids: List[str], runs: List[Run]) -> Dict[
     }
 
 
-def _compute_web_structure(db: Session, run_ids: List[str], bank_ids: Optional[List[str]]) -> List[Dict[str, Any]]:
+def _compute_web_structure(
+    db: Session,
+    run_ids: List[str],
+    bank_ids: Optional[List[str]],
+    *,
+    page: int = 1,
+    page_size: int = 30,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Compute web structure checklist from Citations, aggregating by official bank domains."""
     from app.models.models import UrlMetadata
 
@@ -1431,7 +1735,20 @@ def _compute_web_structure(db: Session, run_ids: List[str], bank_ids: Optional[L
     if checklist:
         print(f"[DEBUG] First item keys: {list(checklist[0].keys())}")
 
-    return checklist
+    total_items = len(checklist)
+    page = max(1, page)
+    page_size = max(1, page_size)
+    start = (page - 1) * page_size
+    paginated = checklist[start:start + page_size]
+
+    meta = {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": max(1, math.ceil(total_items / page_size)),
+    }
+
+    return paginated, meta
 
 
 def _compute_alerts(runs: List[Run]) -> List[Dict[str, Any]]:

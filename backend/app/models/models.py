@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, Any
 from uuid import uuid4
 
 from sqlalchemy import (
     String,
+    Date,
     DateTime,
     ForeignKey,
     Boolean,
@@ -605,6 +606,66 @@ class ContentGap(Base):
     __table_args__ = (
         Index("ix_content_gaps_project_status", "project_id", "status"),
         Index("ix_content_gaps_priority", "priority"),
+    )
+
+
+class GeoDailyMetric(Base):
+    """
+    Aggregated GEO dashboard metrics grouped by project and day.
+
+    Each row stores pre-computed aggregates for a specific slice (prompt, subproject,
+    LLM model, brand presence) so the dashboard can be materialized without scanning
+    the raw runs/citations tables on each request.
+    """
+
+    __tablename__ = "geo_daily_metrics"
+
+    id: Mapped[str] = mapped_column(VARCHAR(50), primary_key=True, default=lambda: gen_id("gdm"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    window_days: Mapped[int] = mapped_column(Integer, default=1)  # 1 = daily, 7, 30 etc.
+
+    prompt_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompts.id"), nullable=True)
+    prompt_version_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompt_versions.id"), nullable=True)
+    subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
+    llm_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    brand_presence: Mapped[str] = mapped_column(String, default="all")  # all|with_brand|without_brand
+
+    runs_total: Mapped[int] = mapped_column(Integer, default=0)
+    runs_with_brand: Mapped[int] = mapped_column(Integer, default=0)
+    brand_mentions_total: Mapped[int] = mapped_column(Integer, default=0)
+    exclusive_mentions_total: Mapped[int] = mapped_column(Integer, default=0)
+
+    brand_prominence_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    zero_click_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    engagement_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    conversion_potential_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    authority_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    relevance_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    clarity_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    im_seo_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    im_seoia_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_rate_observed_sum: Mapped[float] = mapped_column(Float, default=0.0)
+    citation_rate_corrected_sum: Mapped[float] = mapped_column(Float, default=0.0)
+
+    metrics_payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "metric_date",
+            "window_days",
+            "prompt_id",
+            "prompt_version_id",
+            "subproject_id",
+            "llm_model",
+            "brand_presence",
+            name="uq_geo_daily_metrics_scope",
+        ),
+        Index("ix_geo_daily_metrics_project_date", "project_id", "metric_date"),
     )
 
 

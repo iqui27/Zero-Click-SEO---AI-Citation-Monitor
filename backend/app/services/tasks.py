@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 import json
 import time
 import os
@@ -41,6 +41,11 @@ from app.services.gemini_integration import GeminiClassificationIntegrator
 from app.services.semantic_payload import store_insight_payload, load_insight_payload
 from app.services.evidence_payload import store_evidence_payload, load_evidence_payload
 from app.services.geo_dashboard import compute_geo_dashboard
+from app.services.geo_daily_metrics import (
+    recompute_geo_daily_metrics,
+    DEFAULT_WINDOWS,
+    DEFAULT_BRAND_PRESENCE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +168,26 @@ def _finalize_run(db: Session, run: Run, message: str | None = None) -> None:
     if run.finished_at is None:
         run.finished_at = datetime.utcnow()
     db.commit()
+    if not already_completed and run.project_id:
+        metric_dt = (run.finished_at or run.started_at or datetime.utcnow()).date()
+        try:
+            refresh_geo_daily_metrics_task.delay(run.project_id, metric_dt.isoformat())
+            logger.info(
+                "Queued geo_daily_metrics refresh",
+                extra={
+                    "project_id": run.project_id,
+                    "metric_date": metric_dt.isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue geo_daily_metrics refresh",
+                extra={
+                    "project_id": run.project_id,
+                    "metric_date": metric_dt.isoformat(),
+                    "error": str(exc),
+                },
+            )
     if not already_completed or message:
         _log(db, run.id, "completed", "ok", message)
 
@@ -1205,6 +1230,9 @@ def compute_geo_dashboard_task(
     prompt_category: str | None = None,
     prompt_text: str | None = None,
     brand_presence: str | None = None,
+    web_structure_page: int = 1,
+    web_structure_page_size: int = 30,
+    force_materialized: bool = True,
 ) -> dict:
     """
     Task Celery para processar GEO Dashboard em background.
@@ -1235,6 +1263,9 @@ def compute_geo_dashboard_task(
             prompt_category=prompt_category,
             prompt_text=prompt_text,
             brand_presence=brand_presence,
+            force_materialized=force_materialized,
+            web_structure_page=web_structure_page,
+            web_structure_page_size=web_structure_page_size,
         )
         
         print(f"[GEO-TASK] Processamento concluído para projeto {project_id}")
@@ -1259,6 +1290,59 @@ def compute_geo_dashboard_task(
             "status": "error",
             "error": str(exc),
             "project_id": project_id,
+        }
+    finally:
+        db.close()
+
+
+@celery.task(name="tasks.refresh_geo_daily_metrics", queue="runs", soft_time_limit=600, time_limit=720)
+def refresh_geo_daily_metrics_task(
+    project_id: str,
+    metric_date_str: str,
+    windows: list[int] | None = None,
+    brand_presences: list[str] | None = None,
+) -> dict:
+    """
+    Materializa as métricas agregadas do GEO Dashboard para um projeto/data.
+    """
+    db = SessionLocal()
+    try:
+        metric_date = date.fromisoformat(metric_date_str)
+    except ValueError:
+        return {
+            "status": "error",
+            "error": f"Invalid metric_date '{metric_date_str}' - expected YYYY-MM-DD",
+        }
+
+    try:
+        result = recompute_geo_daily_metrics(
+            db=db,
+            project_id=project_id,
+            metric_date=metric_date,
+            windows=windows or DEFAULT_WINDOWS,
+            brand_presences=brand_presences or DEFAULT_BRAND_PRESENCE,
+        )
+        return {
+            "status": "completed",
+            "project_id": project_id,
+            "metric_date": metric_date.isoformat(),
+            "metadata": result,
+        }
+    except Exception as exc:
+        logger.error(
+            "Failed to recompute geo_daily_metrics",
+            extra={
+                "project_id": project_id,
+                "metric_date": metric_date_str,
+                "error": str(exc),
+            },
+            exc_info=True,
+        )
+        return {
+            "status": "error",
+            "error": str(exc),
+            "project_id": project_id,
+            "metric_date": metric_date_str,
         }
     finally:
         db.close()

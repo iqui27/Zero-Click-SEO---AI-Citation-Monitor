@@ -130,9 +130,9 @@ const ENGINE_OPTIONS = [
   { label: 'OpenAI GPT-5 (web search — low context)', name: 'openai', config_json: { model: 'gpt-5', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
   { label: 'OpenAI GPT-5 mini (web search — low context)', name: 'openai', config_json: { model: 'gpt-5-mini', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
   { label: 'OpenAI GPT-4.1 (web search — low context)', name: 'openai', config_json: { model: 'gpt-4.1', web_search: true, search_context_size: 'low', reasoning_effort: 'low' } },
-  { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro' } },
-  { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash' } },
-  { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro' } },
+  { label: 'Gemini 2.5 Pro (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-pro', web_search: true, search_context_size: 'medium' } },
+  { label: 'Gemini 2.5 Flash (web search)', name: 'gemini', config_json: { model: 'gemini-2.5-flash', web_search: true, search_context_size: 'medium' } },
+  { label: 'Perplexity Sonar Pro (web search)', name: 'perplexity', config_json: { model: 'sonar-pro', web_search: true, search_context_size: 'medium' } },
   { label: 'Google SERP (AI Overview via SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true, serpapi_ai_overview: true, serpapi_no_cache: false } },
   { label: 'Google AI Mode (SerpAPI)', name: 'google_serp', config_json: { use_serpapi: true, serpapi_ai_mode: true, serpapi_no_cache: false } },
 ]

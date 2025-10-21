@@ -534,6 +534,14 @@ class GeoPanorama(BaseModel):
     chart: List[GeoPanoramaChart]
 
 
+class PaginationMeta(BaseModel):
+    """Generic pagination metadata."""
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+
+
 class GeoWebStructureItem(BaseModel):
     """Web structure checklist item."""
     domain: Optional[str] = None
@@ -668,6 +676,8 @@ class GeoDashboardFilters(BaseModel):
     prompt_category: Optional[str] = None
     prompt_text: Optional[str] = None
     brand_presence: Optional[str] = None
+    web_structure_page: Optional[int] = None
+    web_structure_page_size: Optional[int] = None
 
 
 class GeoTimelinePoint(BaseModel):
@@ -708,12 +718,17 @@ class GeoDashboardOut(BaseModel):
     project_id: Optional[str]
     filters_applied: GeoDashboardFilters
     total_runs: int
+    materialized: Optional[bool] = None
+    materialized_window_days: Optional[int] = None
+    materialized_metric_date: Optional[str] = None
+    materialized_brand_presence: Optional[str] = None
     kpis: List[GeoKPI]
     radar: List[GeoRadarSeries]
     positioning: GeoPositioning
     keywords_entities: GeoKeywordsEntities
     panorama: GeoPanorama
     web_structure: List[GeoWebStructureItem]
+    web_structure_meta: Optional[PaginationMeta] = None
     alerts: List[GeoAlert]
     swot: GeoSWOT
     raw_samples: List[GeoRawSample]

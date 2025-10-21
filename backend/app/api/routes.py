@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Body
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy import func, text, literal_column, and_, or_, Date, select, case
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone, timedelta
@@ -67,6 +67,7 @@ from app.services.semantic_payload import load_insight_payload
 from app.services.engine_registry import apply_overrides, get_engine_base_config
 from app.services.scheduler import stop_scheduler, start_scheduler
 from app.services.kpis import compute_run_report
+from app.services.engine_registry import ensure_engine
 from app.services.engine_runner import run_engine
 from app.services.insights import generate_basic_insights, generate_subproject_insights as svc_generate_subproject_insights
 import httpx
@@ -1258,7 +1259,22 @@ def list_run_evidences(run_id: str, db: Session = Depends(get_db)):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run não encontrado")
-    evs = db.query(Evidence).filter(Evidence.run_id == run_id).all()
+    evs = (
+        db.query(Evidence)
+        .options(
+            load_only(
+                Evidence.id,
+                Evidence.run_id,
+                Evidence.response_text,
+                Evidence.has_text,
+                Evidence.response_links_json,
+                Evidence.response_meta_json,
+                Evidence.payload_blob_path,
+            )
+        )
+        .filter(Evidence.run_id == run_id)
+        .all()
+    )
     return [
         EvidenceOut(
             id=e.id,
@@ -1589,7 +1605,22 @@ def list_runs_grouped_by_subproject(
         run_ids.extend([rr["id"] for rr in g["runs"]])
     evidences_by_run: dict[str, list[Evidence]] = {}
     if run_ids:
-        evs = db.query(Evidence).filter(Evidence.run_id.in_(run_ids)).all()
+        evs = (
+            db.query(Evidence)
+            .options(
+                load_only(
+                    Evidence.id,
+                    Evidence.run_id,
+                    Evidence.response_text,
+                    Evidence.has_text,
+                    Evidence.response_links_json,
+                    Evidence.response_meta_json,
+                    Evidence.payload_blob_path,
+                )
+            )
+            .filter(Evidence.run_id.in_(run_ids))
+            .all()
+        )
         for e in evs:
             evidences_by_run.setdefault(e.run_id, []).append(e)
 
@@ -3237,70 +3268,14 @@ def run_monitor_now(monitor_id: str, db: Session = Depends(get_db)):
         db.refresh(pv)
         # engines
         for e in (mon.engines_json.get("engines") or []):
-            engine = (
-                db.query(Engine)
-                .filter(
-                    Engine.project_id == mon.project_id,
-                    Engine.name == e.get("name"),
-                    Engine.region == e.get("region"),
-                    Engine.device == e.get("device"),
-                )
-                .first()
+            canonical_engine, override = ensure_engine(
+                db=db,
+                project_id=mon.project_id,
+                name=e.get("name"),
+                region=e.get("region"),
+                device=e.get("device"),
+                requested_config=e.get("config_json") or {},
             )
-            if not engine:
-                cfg_json = dict(e.get("config_json") or {})
-                # Default Gemini tokens if not set
-                try:
-                    if str(e.get("name") or "").lower() == "gemini" and "max_output_tokens" not in cfg_json:
-                        cfg_json["max_output_tokens"] = 9000
-                    if str(e.get("name") or "").lower() == "gemini" and cfg_json.get("use_search") is None:
-                        cfg_json["use_search"] = True
-                except Exception:
-                    pass
-                engine = Engine(
-                    project_id=mon.project_id,
-                    name=e.get("name"),
-                    region=e.get("region"),
-                    device=e.get("device"),
-                    config_json=cfg_json,
-                )
-                db.add(engine)
-                db.commit()
-                db.refresh(engine)
-            else:
-                # If exists, MERGE requested config over current one to preserve credentials (e.g., api_key)
-                req_cfg = dict(e.get("config_json") or {})
-                cur_cfg = dict(engine.config_json or {})
-                merged_cfg = dict(cur_cfg)
-                try:
-                    merged_cfg.update(req_cfg)
-                except Exception:
-                    pass
-                # Ephemeral mark and clean flags
-                try:
-                    merged_cfg.setdefault("_ephemeral", True)
-                    merged_cfg.pop("_main", None)
-                except Exception:
-                    pass
-                # Defaults for Gemini
-                try:
-                    if str(e.get("name") or "").lower() == "gemini":
-                        merged_cfg.setdefault("use_search", True)
-                        merged_cfg.setdefault("max_output_tokens", 9000)
-                except Exception:
-                    pass
-                # Only create a temp engine if merged differs from current
-                if merged_cfg != cur_cfg:
-                    engine = Engine(
-                        project_id=mon.project_id,
-                        name=e.get("name"),
-                        region=e.get("region"),
-                        device=e.get("device"),
-                        config_json=merged_cfg,
-                    )
-                    db.add(engine)
-                    db.commit()
-                    db.refresh(engine)
             # schedule metadata (run-now)
             from datetime import datetime, timezone
             now_utc = datetime.now(timezone.utc)
@@ -3308,13 +3283,14 @@ def run_monitor_now(monitor_id: str, db: Session = Depends(get_db)):
             run = Run(
                 project_id=mon.project_id,
                 prompt_version_id=pv.id,
-                engine_id=engine.id,
+                engine_id=canonical_engine.id,
                 subproject_id=(tpl.subproject_id or mon.subproject_id),
                 monitor_id=mon.id,
                 status="queued",
                 schedule_source="monitor_now",
                 schedule_date=now_utc.replace(hour=0, minute=0, second=0, microsecond=0),
                 schedule_slot=slot,
+                engine_override_json=override,
             )
             db.add(run)
             db.commit()
@@ -5531,6 +5507,8 @@ def get_geo_dashboard(
     prompt_category: Optional[str] = None,
     prompt_text: Optional[str] = None,
     brand_presence: Optional[str] = None,
+    web_structure_page: int = 1,
+    web_structure_page_size: int = 30,
     force_refresh: bool = False,
     db: Session = Depends(get_db)
 ) -> GeoDashboardOut:
@@ -5576,6 +5554,12 @@ def get_geo_dashboard(
     if bank_ids:
         bank_ids_list = [b.strip() for b in bank_ids.split(",") if b.strip()]
 
+    if web_structure_page < 1:
+        raise HTTPException(status_code=400, detail="web_structure_page must be >= 1")
+
+    if web_structure_page_size < 1 or web_structure_page_size > 200:
+        raise HTTPException(status_code=400, detail="web_structure_page_size must be between 1 and 200")
+
     # Gerar chave de cache Redis
     cache_filters = {
         "prompt_id": prompt_id,
@@ -5588,6 +5572,8 @@ def get_geo_dashboard(
         "prompt_category": prompt_category,
         "prompt_text": prompt_text,
         "brand_presence": brand_presence,
+        "web_structure_page": web_structure_page,
+        "web_structure_page_size": web_structure_page_size,
     }
     cache_key = get_geo_cache_key(project_id, cache_filters)
 
@@ -5639,6 +5625,8 @@ def get_geo_dashboard(
         prompt_category=prompt_category,
         prompt_text=prompt_text,
         brand_presence=brand_presence,
+        web_structure_page=web_structure_page,
+        web_structure_page_size=web_structure_page_size,
     )
 
     # Armazenar no cache Redis (6 horas = 21600 segundos)
