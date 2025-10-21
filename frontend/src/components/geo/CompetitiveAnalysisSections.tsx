@@ -129,12 +129,10 @@ export function ShareOfVoiceSection({ data }: { data: GeoDashboard }) {
           <p className="text-sm text-slate-500">Sem dados disponíveis.</p>
         )}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Co-Citações</p>
-            <p className="text-2xl font-bold text-slate-900">{cocitationPercentage.toFixed(0)}%</p>
-            <p className="text-xs text-slate-500">das respostas incluem concorrentes</p>
-          </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 text-center flex flex-col items-center">
+          <p className="text-xs text-slate-500 uppercase tracking-[0.12em]">Co-Citações</p>
+          <p className="mt-2 text-3xl font-bold text-slate-900">{cocitationPercentage.toFixed(0)}%</p>
+          <p className="mt-1 text-xs text-slate-500">das respostas incluem concorrentes</p>
         </div>
       </CardContent>
     </Card>
@@ -282,39 +280,6 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
   }, [data])
 
   // Performance por Categoria de Produto
-  const productPerformance = useMemo(() => {
-    const byProduct = (aggregations?.byProduct || []) as Array<{
-      product_category: string | null
-      avg_brand_mentions: number | null
-      avg_engagement_score: number | null
-      avg_citation_rate?: number | null
-      avg_conversion_score?: number | null
-    }>
-
-    return byProduct
-      .filter((item) => item.product_category)
-      .map((item) => ({
-        category: item.product_category as string,
-        brandMentions: item.avg_brand_mentions ?? 0,
-        engagement: item.avg_engagement_score ?? 0,
-        citationRate: item.avg_citation_rate ?? 0,
-        conversion: item.avg_conversion_score ?? 0,
-      }))
-      .slice(0, 6)
-  }, [aggregations])
-
-  // Question Type Performance
-  const questionTypePerformance = useMemo(() => {
-    return contextInsights
-      .filter((item: { type: string }) => item.type === 'question_type')
-      .map((item: { context: string; runsCount: number; brandMentions: number; avgEngagement: number }) => ({
-        type: item.context,
-        runs: item.runsCount,
-        mentions: item.brandMentions,
-        engagement: item.avgEngagement,
-      }))
-  }, [contextInsights])
-
   // Componentes auxiliares
   const MetricCard = ({ title, value, description, icon, color }: {
     title: string
@@ -366,18 +331,14 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
     </div>
   )
 
-  const ProgressBar = ({ label, value, count, color }: {
+  const ProgressBar = ({ label, value, color }: {
     label: string
     value: number
-    count: string
     color: string
   }) => (
     <div className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg p-4 border border-gray-200 dark:border-[color:var(--border-strong)] hover:border-gray-300 dark:hover:border-[color:var(--accent-primary)] transition-colors">
       <div className="flex justify-between mb-3">
-        <div className="flex flex-col">
-          <span className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)]">{label}</span>
-          <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)] mt-1">{count}</span>
-        </div>
+        <span className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)]">{label}</span>
         <span className="font-bold text-lg" style={{ color }}>{value.toFixed(0)}%</span>
       </div>
       <div className="w-full bg-gray-200 dark:bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
@@ -403,14 +364,14 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
           <MetricCard
             title="Total de Contextos"
             value={String(data.context_insights?.total_contexts || 0)}
-            description="Categorias e tipos analisados"
+            description="Combinação de categorias e tipos de pergunta identificadas nas respostas analisadas"
             icon={<Grid3x3 className="h-5 w-5 text-blue-600" />}
             color="bg-blue-50"
           />
           <MetricCard
             title="Engajamento Médio"
             value={contextInsights.length ? (contextInsights.reduce((sum: number, item: { avgEngagement: number }) => sum + item.avgEngagement, 0) / contextInsights.length).toFixed(0) : '0'}
-            description="Score médio de engajamento"
+            description="Média do score de engajamento das respostas com contexto classificado"
             icon={<TrendingUp className="h-5 w-5 text-green-600" />}
             color="bg-green-50"
           />
@@ -436,7 +397,6 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
                   key={index}
                   label={cat.label.charAt(0).toUpperCase() + cat.label.slice(1)}
                   value={cat.percentage}
-                  count={`${cat.value} runs`}
                   color={cat.color}
                 />
               ))}
@@ -444,70 +404,8 @@ export function ContextSection({ data, aggregations }: { data: GeoDashboard; agg
           </div>
         )}
 
-        {/* Performance por Categoria de Produto */}
-        {productPerformance.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-[color:var(--text-primary)]">Performance por Categoria de Produto</h3>
-              <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Taxa de Citação por Categoria</span>
-            </div>
-            
-            {/* Lista de barras horizontais */}
-            <div className="space-y-4">
-              {productPerformance.map((item, index) => (
-                <div key={index} className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg p-4 border border-gray-200 dark:border-[color:var(--border-strong)]">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-base font-semibold text-gray-800 dark:text-[color:var(--text-primary)] capitalize">
-                      {item.category}
-                    </span>
-                    <span className="text-lg font-bold text-gray-900 dark:text-[color:var(--text-primary)]">
-                      {item.citationRate > 0 ? `${item.citationRate.toFixed(1)}%` : '–'}
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700/50 h-3 rounded-full overflow-hidden">
-                    <div
-                      className="bg-blue-500 dark:bg-blue-400 h-3 rounded-full transition-all"
-                      style={{ width: `${Math.min(item.citationRate, 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Performance por Tipo de Pergunta */}
-        {questionTypePerformance.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-[color:var(--text-primary)]">Performance por Tipo de Pergunta</h3>
-              <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)]">Análise por intent</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {questionTypePerformance.map((item: { type: string; runs: number; mentions: number; engagement: number }, index: number) => (
-                <div key={index} className="bg-white dark:bg-[color:var(--surface-card)] rounded-lg border border-gray-200 dark:border-[color:var(--border-strong)] p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100 dark:border-[color:var(--border-strong)]">
-                    <h4 className="font-semibold text-gray-800 dark:text-[color:var(--text-primary)] capitalize">{item.type}</h4>
-                    <span className="text-xs text-gray-500 dark:text-[color:var(--text-muted)] bg-gray-100 dark:bg-[color:var(--surface-subtle)] px-2 py-1 rounded">{item.runs} runs</span>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600 dark:text-[color:var(--text-muted)]">Menções</span>
-                      <span className="text-xl font-bold text-gray-900 dark:text-[color:var(--text-primary)]">{item.mentions}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600 dark:text-[color:var(--text-muted)]">Engajamento</span>
-                      <span className="text-xl font-bold text-green-600 dark:text-green-400">{item.engagement.toFixed(0)}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Empty State */}
-        {contextInsights.length === 0 && productPerformance.length === 0 && (
+        {contextInsights.length === 0 && (
           <div className="flex h-64 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center">
             <svg className="h-12 w-12 text-slate-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />

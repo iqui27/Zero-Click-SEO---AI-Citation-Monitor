@@ -90,6 +90,18 @@ decoded = urllib.parse.unquote(odbc[0])
 decoded = decoded.replace(f"SERVER={remote_host},1433", f"SERVER=127.0.0.1,{local_port}")
 decoded = decoded.replace(f"SERVER={remote_host}\\,1433", f"SERVER=127.0.0.1,{local_port}")
 decoded = decoded.replace(f"SERVER={remote_host}%2C1433", f"SERVER=127.0.0.1,{local_port}")
+azure_suffix = None
+host_lower = remote_host.lower()
+if host_lower.endswith(".database.windows.net"):
+    azure_suffix = remote_host.split(".database.windows.net", 1)[0]
+if azure_suffix:
+    parts = decoded.split(";")
+    for idx, part in enumerate(parts):
+        if part.upper().startswith("UID="):
+            value = part[4:]
+            if value and "@" not in value:
+                parts[idx] = f"UID={value}@{azure_suffix}"
+    decoded = ";".join(parts)
 encoded = urllib.parse.quote(decoded, safe="")
 new_url = f"{parsed.scheme}:///?odbc_connect={encoded}"
 print(new_url)

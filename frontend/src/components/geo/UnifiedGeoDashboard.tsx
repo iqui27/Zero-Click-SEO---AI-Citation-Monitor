@@ -353,7 +353,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
     {
       title: 'Posição Média da Citação',
       value: avgCitationPositionNormalized != null ? formatNumber(avgCitationPositionNormalized) : '–',
-      subtitle: <span className="text-xs text-slate-500">posição normalizada</span>,
+      subtitle: null,
       delta: null,
       trend: null,
     },
@@ -374,7 +374,7 @@ function BigNumbersSection({ data, overview }: { data: GeoDashboard; overview: a
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
       {bigNumbers.map((metric) => {
         const delta = metric.delta
         const deltaClass = delta != null ? (delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-500') : 'text-slate-500'
@@ -481,6 +481,9 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     </div>
                   </div>
                 ))}
+                <p className="text-xs text-slate-400">
+                  "Outros" agrupa runs sem estágio definido ou fora das categorias mapeadas.
+                </p>
               </div>
             ) : (
               <p className="text-sm text-slate-500">Sem dados disponíveis</p>
@@ -518,6 +521,9 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     </div>
                   </div>
                 ))}
+                <p className="text-xs text-slate-400">
+                  "Outros" agrupa runs sem estágio definido ou fora das categorias mapeadas.
+                </p>
               </div>
             ) : (
               <p className="text-sm text-slate-500">Sem dados disponíveis</p>
@@ -555,7 +561,10 @@ function CitationMonitoringSection({ data, aggregations }: { data: GeoDashboard;
                     </div>
                   </div>
                 ))}
-              </div>
+                 <p className="text-xs text-slate-400">
+                  "Outros" agrupa runs sem estágio definido ou fora das categorias mapeadas.
+                </p>
+              </div>  
             ) : (
               <p className="text-sm text-slate-500">Sem dados disponíveis</p>
             )}
@@ -583,7 +592,7 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
   }, [data])
 
   const domainBarColor = getGeoColorByIndex(2)
-  const accentIconColor = getGeoColorByIndex(9)
+  const accentIconColor = getGeoColorByIndex(0)
 
   return (
     <Card>
@@ -603,7 +612,7 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                  <YAxis dataKey="brand" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={90} />
+                  <YAxis dataKey="domain" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} width={160} />
                   <RechartsTooltip
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null
@@ -653,8 +662,13 @@ function DomainTrackingSection({ data }: { data: GeoDashboard }) {
                     {correctionFactor != null ? `${correctionFactor > 0 ? '+' : ''}${correctionFactor.toFixed(1)}%` : '–'}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {correctionFactor != null ? 'Variação em relação ao período anterior' : 'Dados não disponíveis'}
+                    {correctionFactor != null ? 'Diferença percentual na taxa de citação versus o período anterior' : 'Dados não disponíveis'}
                   </p>
+                  {correctionFactor != null && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      Valores positivos indicam ganho de presença; negativos apontam queda na visibilidade da marca.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -848,7 +862,7 @@ function CitationsSection({ data }: { data: GeoDashboard }) {
                       className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold"
                       style={{
                         backgroundColor: geoColorWithAlpha(cat.color, 0.18),
-                        color: cat.color,
+                        color: cat.color.toLowerCase() === '#fcfc30' ? '#7a5d00' : cat.color,
                       }}
                     >
                       {cat.label} ({cat.value}%)

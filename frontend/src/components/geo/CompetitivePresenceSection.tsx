@@ -91,7 +91,7 @@ export function CompetitivePresenceSection({ data }: { data: GeoDashboard }) {
                 <div>
                   <p className="text-sm font-semibold text-slate-900">{item.productLabel}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {item.totalMentions} menções · {item.percentage?.toFixed?.(1) ?? '0.0'}% do total
+                    {item.percentage?.toFixed?.(1) ?? '0.0'}% do total
                   </p>
                 </div>
               </div>
@@ -140,7 +140,6 @@ export function CompetitivePresenceSection({ data }: { data: GeoDashboard }) {
                               <p className="text-xs text-slate-500 mt-1">
                                 {brandData.share?.toFixed?.(1) ?? '0.0'}% das menções
                               </p>
-                              <p className="text-xs text-slate-500 mt-1">{brandData.mentions} menções</p>
                             </div>
                           )
                         }
@@ -159,18 +158,6 @@ export function CompetitivePresenceSection({ data }: { data: GeoDashboard }) {
           ))}
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Total de Produtos</p>
-            <p className="text-2xl font-bold text-slate-900">{productPresence.length}</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Total de Menções</p>
-            <p className="text-2xl font-bold text-slate-900">
-              {productPresence.reduce((sum: number, p: any) => sum + p.total_mentions, 0)}
-            </p>
-          </div>
-        </div>
       </CardContent>
     </Card>
   )
