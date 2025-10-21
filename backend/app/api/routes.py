@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 import logging
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy import func, text, literal_column, and_, or_, Date, select, case
 from fastapi.responses import StreamingResponse

@@ -99,7 +99,7 @@ def normalize_llm_filter(value: Optional[str]) -> Optional[str]:
     if "mistral" in cleaned:
         return "mistral"
 
-    return cleaned
+    return cleaned[:64]
 
 
 def _infer_materialized_window(date_from: Optional[date], date_to: Optional[date]) -> Optional[int]:
@@ -548,7 +548,7 @@ def compute_geo_dashboard(
     swot = _compute_swot(runs)
     raw_samples = _get_raw_samples(db, run_ids, limit=10)
 
-    timeline, geo_summary = _compute_geo_timeline_and_summary(db, run_ids)
+    timeline, geo_summary = _compute_geo_timeline_and_summary(runs)
     cocitation_breakdown = _compute_cocitation_breakdown(db, run_ids, our_domains)
     context_insights = _compute_context_insights(runs)
     exclusive_citations_count = _compute_exclusive_citations(runs, our_domains)

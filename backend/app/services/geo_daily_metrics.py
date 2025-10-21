@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import time
 from typing import Iterable, Optional, Tuple, Dict, Any, Set
 
 from sqlalchemy import func, case, and_, or_, Date, cast
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import DBAPIError
 
 from app.models.models import (
     Run,
@@ -142,6 +144,111 @@ def _build_stats_query(
     return query
 
 
+def _persist_geo_metric(
+    db: Session,
+    *,
+    project_id: str,
+    metric_date: date,
+    window_days: int,
+    prompt_id: Optional[str],
+    prompt_version_id: Optional[str],
+    subproject_id: Optional[str],
+    llm_model: Optional[str],
+    brand_presence: str,
+    stats,
+    payload: Dict[str, Any],
+    max_retries: int = 3,
+) -> bool:
+    """Insert or update a GeoDailyMetric row with basic deadlock retry."""
+
+    def _build_query() -> Any:
+        query = (
+            db.query(GeoDailyMetric)
+            .filter(
+                GeoDailyMetric.project_id == project_id,
+                GeoDailyMetric.metric_date == metric_date,
+                GeoDailyMetric.window_days == window_days,
+                GeoDailyMetric.brand_presence == brand_presence,
+            )
+        )
+
+        if prompt_id:
+            query = query.filter(GeoDailyMetric.prompt_id == prompt_id)
+        else:
+            query = query.filter(GeoDailyMetric.prompt_id.is_(None))
+
+        if prompt_version_id:
+            query = query.filter(GeoDailyMetric.prompt_version_id == prompt_version_id)
+        else:
+            query = query.filter(GeoDailyMetric.prompt_version_id.is_(None))
+
+        if subproject_id:
+            query = query.filter(GeoDailyMetric.subproject_id == subproject_id)
+        else:
+            query = query.filter(GeoDailyMetric.subproject_id.is_(None))
+
+        if llm_model:
+            query = query.filter(GeoDailyMetric.llm_model == llm_model)
+        else:
+            query = query.filter(GeoDailyMetric.llm_model.is_(None))
+
+        return query
+
+    for attempt in range(max_retries):
+        try:
+            record = _build_query().one_or_none()
+
+            if not record:
+                record = GeoDailyMetric(
+                    project_id=project_id,
+                    metric_date=metric_date,
+                    window_days=window_days,
+                    prompt_id=prompt_id,
+                    prompt_version_id=prompt_version_id,
+                    subproject_id=subproject_id,
+                    llm_model=llm_model,
+                    brand_presence=brand_presence,
+                )
+                db.add(record)
+
+            record.runs_total = stats.runs_total or 0
+            record.runs_with_brand = stats.runs_with_brand or 0
+            record.brand_mentions_total = stats.brand_mentions_total or 0
+            record.exclusive_mentions_total = payload.get("exclusive_citations_count", 0) or 0
+            record.brand_prominence_sum = float(stats.brand_prominence_sum or 0.0)
+            record.zero_click_sum = float(stats.zero_click_sum or 0.0)
+            record.engagement_sum = float(stats.engagement_sum or 0.0)
+            record.conversion_potential_sum = float(stats.conversion_potential_sum or 0.0)
+            record.authority_sum = float(stats.authority_sum or 0.0)
+            record.relevance_sum = float(stats.relevance_sum or 0.0)
+            record.clarity_sum = float(stats.clarity_sum or 0.0)
+            record.im_seo_sum = float(stats.im_seo_sum or 0.0)
+            record.im_seoia_sum = float(stats.im_seoia_sum or 0.0)
+            record.citation_rate_observed_sum = float(stats.citation_rate_observed_sum or 0.0)
+            record.citation_rate_corrected_sum = float(stats.citation_rate_corrected_sum or 0.0)
+            record.metrics_payload = payload
+            record.llm_model = llm_model
+            record.updated_at = datetime.utcnow()
+
+            db.flush()
+            db.commit()
+            return True
+        except DBAPIError as exc:
+            db.rollback()
+            orig = getattr(exc, "orig", None)
+            if orig and getattr(orig, "args", None):
+                message = " ".join(str(arg) for arg in orig.args)
+            else:
+                message = str(exc)
+            if "1205" in message or "deadlock" in message.lower():
+                backoff = 0.5 * (attempt + 1)
+                time.sleep(backoff)
+                continue
+            raise
+
+    return False
+
+
 def recompute_geo_daily_metrics(
     db: Session,
     project_id: str,
@@ -174,6 +281,8 @@ def recompute_geo_daily_metrics(
         for scope in scopes:
             prompt_id, prompt_version_id, subproject_id, llm_model_raw = scope
             normalized_llm = llm_model_raw.strip().lower() if llm_model_raw else None
+            if normalized_llm:
+                normalized_llm = normalized_llm[:64]
 
             for brand_presence in brand_presences:
                 stats_query = _build_stats_query(
@@ -212,77 +321,24 @@ def recompute_geo_daily_metrics(
                     web_structure_page_size=limit_web_structure,
                 )
 
-                record_query = (
-                    db.query(GeoDailyMetric)
-                    .filter(
-                        GeoDailyMetric.project_id == project_id,
-                        GeoDailyMetric.metric_date == metric_date,
-                        GeoDailyMetric.window_days == window_days,
-                        GeoDailyMetric.brand_presence == brand_presence,
-                    )
+                saved = _persist_geo_metric(
+                    db=db,
+                    project_id=project_id,
+                    metric_date=metric_date,
+                    window_days=window_days,
+                    prompt_id=prompt_id,
+                    prompt_version_id=prompt_version_id,
+                    subproject_id=subproject_id,
+                    llm_model=normalized_llm,
+                    brand_presence=brand_presence,
+                    stats=stats,
+                    payload=payload,
                 )
-
-                if prompt_id:
-                    record_query = record_query.filter(GeoDailyMetric.prompt_id == prompt_id)
-                else:
-                    record_query = record_query.filter(GeoDailyMetric.prompt_id.is_(None))
-
-                if prompt_version_id:
-                    record_query = record_query.filter(GeoDailyMetric.prompt_version_id == prompt_version_id)
-                else:
-                    record_query = record_query.filter(GeoDailyMetric.prompt_version_id.is_(None))
-
-                if subproject_id:
-                    record_query = record_query.filter(GeoDailyMetric.subproject_id == subproject_id)
-                else:
-                    record_query = record_query.filter(GeoDailyMetric.subproject_id.is_(None))
-
-                if normalized_llm:
-                    record_query = record_query.filter(GeoDailyMetric.llm_model == normalized_llm)
-                else:
-                    record_query = record_query.filter(GeoDailyMetric.llm_model.is_(None))
-
-                record = record_query.one_or_none()
-
-                if not record:
-                    record = GeoDailyMetric(
-                        project_id=project_id,
-                        metric_date=metric_date,
-                        window_days=window_days,
-                        prompt_id=prompt_id,
-                        prompt_version_id=prompt_version_id,
-                        subproject_id=subproject_id,
-                        llm_model=normalized_llm,
-                        brand_presence=brand_presence,
-                    )
-                    db.add(record)
-
-                record.runs_total = runs_total
-                record.runs_with_brand = stats.runs_with_brand or 0
-                record.brand_mentions_total = stats.brand_mentions_total or 0
-                record.exclusive_mentions_total = payload.get("exclusive_citations_count", 0) or 0
-                record.brand_prominence_sum = float(stats.brand_prominence_sum or 0.0)
-                record.zero_click_sum = float(stats.zero_click_sum or 0.0)
-                record.engagement_sum = float(stats.engagement_sum or 0.0)
-                record.conversion_potential_sum = float(stats.conversion_potential_sum or 0.0)
-                record.authority_sum = float(stats.authority_sum or 0.0)
-                record.relevance_sum = float(stats.relevance_sum or 0.0)
-                record.clarity_sum = float(stats.clarity_sum or 0.0)
-                record.im_seo_sum = float(stats.im_seo_sum or 0.0)
-                record.im_seoia_sum = float(stats.im_seoia_sum or 0.0)
-                record.citation_rate_observed_sum = float(stats.citation_rate_observed_sum or 0.0)
-                record.citation_rate_corrected_sum = float(stats.citation_rate_corrected_sum or 0.0)
-                record.metrics_payload = payload
-                record.llm_model = normalized_llm
-                record.updated_at = datetime.utcnow()
-
-                db.flush()
-                window_meta["rows_upserted"] += 1
+                if saved:
+                    window_meta["rows_upserted"] += 1
 
             window_meta["scopes_processed"] += 1
 
         processed["windows"].append(window_meta)
-
-    db.commit()
 
     return processed

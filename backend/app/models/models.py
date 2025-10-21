@@ -628,8 +628,8 @@ class GeoDailyMetric(Base):
     prompt_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompts.id"), nullable=True)
     prompt_version_id: Mapped[Optional[str]] = mapped_column(ForeignKey("prompt_versions.id"), nullable=True)
     subproject_id: Mapped[Optional[str]] = mapped_column(ForeignKey("subprojects.id"), nullable=True)
-    llm_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    brand_presence: Mapped[str] = mapped_column(String, default="all")  # all|with_brand|without_brand
+    llm_model: Mapped[Optional[str]] = mapped_column(FixedVarchar(64), nullable=True)
+    brand_presence: Mapped[str] = mapped_column(FixedVarchar(32), default="all")  # all|with_brand|without_brand
 
     runs_total: Mapped[int] = mapped_column(Integer, default=0)
     runs_with_brand: Mapped[int] = mapped_column(Integer, default=0)
