@@ -65,7 +65,7 @@ jobs:
         ENVIRONMENT=production
         LOG_LEVEL=INFO
         SECRET_KEY=${{ secrets.SECRET_KEY }}
-        ALLOWED_HOSTS='$ORACLE_HOST',localhost,127.0.0.1
+        ALLOWED_HOSTS=${{ secrets.AIO_ALLOWED_HOSTS }}
         OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
         GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
         GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
